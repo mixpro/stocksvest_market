@@ -45,10 +45,10 @@ def run_json(r: sqlite3.Row, include_result: bool = True) -> dict:
 
 def add_run(conn, kind: str, subject_id: str | None, definition: dict, duration_ms: int,
             result: dict | None = None, error: str | None = None, retention_days: int = 183,
-            status: str | None = None) -> dict:
+            status: str | None = None, run_id: str | None = None) -> dict:
     """Store a run and drop runs older than the retention window.
     `status` defaults to FAILED when there is an error, else SUCCEEDED (automations also use PARTIAL and SKIPPED)."""
-    run_id = new_id("run")
+    run_id = run_id or new_id("run")
     with conn:
         conn.execute(
             "INSERT INTO runs(id, kind, subject_id, ran_at, duration_ms, status, definition, result, error) "

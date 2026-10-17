@@ -179,23 +179,128 @@ class NotifyAction(BaseModel):
 class LaterAction(BaseModel):
     """Action types from the design that arrive in later phases."""
 
-    type: Literal["ADD_TO_WATCHLIST", "PLACE_ORDER"]
+    type: Literal["ADD_TO_WATCHLIST"]
 
     @model_validator(mode="after")
     def not_yet(self):
         raise ValueError(f"{self.type} actions are not available yet")
 
 
-Action = Annotated[Union[NotifyAction, LaterAction], Field(discriminator="type")]
+class SelectionMode(str, Enum):
+    ALL_MATCHES = "ALL_MATCHES"
+    TOP_N = "TOP_N"
+
+
+class RankingKey(str, Enum):
+    LAST_PRICE = "LAST_PRICE"
+    DAILY_CHANGE_PERCENT = "DAILY_CHANGE_PERCENT"
+    DAILY_VOLUME = "DAILY_VOLUME"
+    POSITION_VALUE = "POSITION_VALUE"  # value of the automation's own shares
+    UNREALIZED_PNL_PERCENT = "UNREALIZED_PNL_PERCENT"
+
+
+class SymbolSelection(BaseModel):
+    mode: SelectionMode = SelectionMode.ALL_MATCHES
+    topN: int | None = Field(default=None, ge=1, le=100)
+    rankBy: RankingKey | None = None
+    descending: bool = True
+
+    @model_validator(mode="after")
+    def check(self):
+        if self.mode == SelectionMode.TOP_N and (self.topN is None or self.rankBy is None):
+            raise ValueError("TOP_N needs topN and rankBy")
+        return self
+
+
+class SizingMode(str, Enum):
+    QUANTITY = "QUANTITY"  # shares
+    CASH_AMOUNT = "CASH_AMOUNT"  # buy: money per symbol
+    PERCENT_OF_BUDGET = "PERCENT_OF_BUDGET"  # buy: % of the budget available when the run starts
+    PERCENT_OF_POSITION = "PERCENT_OF_POSITION"  # sell: % of the automation's shares of that symbol
+
+
+class OrderSizing(BaseModel):
+    mode: SizingMode
+    value: Decimal = Field(gt=0)
+
+    @model_validator(mode="after")
+    def check(self):
+        if self.mode in (SizingMode.PERCENT_OF_BUDGET, SizingMode.PERCENT_OF_POSITION) and self.value > 100:
+            raise ValueError("a percentage must be at most 100")
+        return self
+
+
+BUY_SIZINGS = {SizingMode.QUANTITY, SizingMode.CASH_AMOUNT, SizingMode.PERCENT_OF_BUDGET}
+SELL_SIZINGS = {SizingMode.QUANTITY, SizingMode.PERCENT_OF_POSITION}
+
+
+class PlaceOrderAction(BaseModel):
+    """Turn the matched symbols into orders. ALL_MATCHES: one sizing for every symbol.
+    TOP_N: one sizing for all ranks, or N sizings where sizings[i] is for rank i+1."""
+
+    type: Literal["PLACE_ORDER"]
+    side: Literal["BUY", "SELL"]
+    orderType: Literal["MARKET", "LIMIT", "STOP", "STOP_LIMIT", "TRAILING_STOP"] = "MARKET"
+    timeInForce: Literal["DAY", "GTC", "OPG", "CLS", "IOC", "FOK"] = "DAY"
+    limitOffsetPercent: Decimal | None = Field(default=None, ge=-50, le=50)  # limit = price x (1 + offset%)
+    stopOffsetPercent: Decimal | None = Field(default=None, ge=-50, le=50)
+    trailPercent: Decimal | None = Field(default=None, gt=0, le=50)
+    extendedHours: bool = False
+    selection: SymbolSelection = SymbolSelection()
+    sizings: list[OrderSizing] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def check(self):
+        allowed = BUY_SIZINGS if self.side == "BUY" else SELL_SIZINGS
+        bad = [s.mode.value for s in self.sizings if s.mode not in allowed]
+        if bad:
+            raise ValueError(f"{self.side} orders can't be sized by {', '.join(bad)}")
+        if self.selection.mode == SelectionMode.ALL_MATCHES and len(self.sizings) != 1:
+            raise ValueError("ALL_MATCHES takes exactly one sizing")
+        if self.selection.mode == SelectionMode.TOP_N and len(self.sizings) not in (1, self.selection.topN):
+            raise ValueError(f"TOP_N takes 1 sizing or {self.selection.topN} (one per rank)")
+        if self.orderType in ("LIMIT", "STOP_LIMIT") and self.limitOffsetPercent is None:
+            raise ValueError(f"{self.orderType} needs limitOffsetPercent")
+        if self.orderType in ("STOP", "STOP_LIMIT") and self.stopOffsetPercent is None:
+            raise ValueError(f"{self.orderType} needs stopOffsetPercent")
+        if self.orderType == "TRAILING_STOP" and self.trailPercent is None:
+            raise ValueError("TRAILING_STOP needs trailPercent")
+        if self.extendedHours and not (self.orderType == "LIMIT" and self.timeInForce == "DAY"):
+            raise ValueError("extended hours need a LIMIT + DAY order")
+        return self
+
+
+class OrderGuards(BaseModel):
+    maxOrdersPerRun: int | None = Field(default=10, ge=1)
+    maxPositionValue: Decimal | None = Field(default=None, gt=0)  # per symbol, the automation's shares
+    maxPositionPercent: Decimal | None = Field(default=None, gt=0, le=100)  # of the automation's equity
+    regularHoursOnly: bool = True
+    skipBuyIfHeld: bool = True
+    maxDataAgeMinutes: int = Field(default=30, ge=1)
+
+
+Action = Annotated[Union[NotifyAction, PlaceOrderAction, LaterAction], Field(discriminator="type")]
 
 
 class AutomationIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = ""
     portfolioId: str | None = None  # required for automations that place orders
+    orderGuards: OrderGuards | None = None  # defaults apply when an automation places orders
     runTargets: list[RunTarget] = Field(min_length=1)
     schedules: list[Schedule] = Field(min_length=1)
     actions: list[Action] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def check_trading(self):
+        if any(a.type == "PLACE_ORDER" for a in self.actions):
+            if not self.portfolioId:
+                raise ValueError("automations that place orders need a portfolioId")
+            if any(s.missedPolicy == MissedPolicy.RUN_ALL for s in self.schedules):
+                raise ValueError("missedPolicy RUN_ALL is not allowed for automations that place orders")
+            if self.orderGuards is None:
+                self.orderGuards = OrderGuards()
+        return self
 
 
 class BudgetChangeIn(BaseModel):

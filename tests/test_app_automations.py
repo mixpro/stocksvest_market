@@ -168,7 +168,7 @@ def test_crud_versions_and_events(client, tech_filter):
 def test_validation(client, tech_filter):
     bad_target = automation_body("flt_missing")
     assert client.post("/v1/automations", headers=KEY, json=bad_target).status_code == 422
-    order = automation_body(tech_filter["id"], actions=[{"type": "PLACE_ORDER"}])
+    order = automation_body(tech_filter["id"], actions=[{"type": "ADD_TO_WATCHLIST"}])
     r = client.post("/v1/automations", headers=KEY, json=order)
     assert r.status_code == 422 and "not available yet" in r.text
     fast = automation_body(tech_filter["id"], schedules=[{"type": "INTERVAL", "every": 1, "unit": "MINUTE"}])
