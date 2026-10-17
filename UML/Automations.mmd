@@ -1,16 +1,32 @@
 classDiagram
+  %% ------------------------------------------------------------------ definition
+
   class Automation {
     - id: string
     - name: string
     - description: string
     - createdAt: datetime
     - updatedAt: datetime
-    - isActive: bool
+    - status: AutomationStatus
+    - configVersion: int
     - portfolioId: string?
     - runTargets: List~FilterRunTarget~
     - schedules: List~Schedule~
     - actions: List~AutomationAction~
     - orderGuards: OrderGuards?
+    - budget: BudgetPool?
+  }
+
+  class AutomationStatus {
+    <<enumeration>>
+    ACTIVE
+    PAUSED
+  }
+
+  class AutomationSwitch {
+    - automationsEnabled: bool
+    - changedAt: datetime
+    - reason: string?
   }
 
   class FilterRunTargetType {
@@ -26,7 +42,7 @@ classDiagram
 
   class AutomationAction {
     <<abstract>>
-    + execute(matchedSymbols: List~string~, run: AutomationRun) void
+    + execute(context: RunContext) ActionResult
   }
 
   class NotifyAction {
@@ -82,7 +98,7 @@ classDiagram
     <<enumeration>>
     QUANTITY
     CASH_AMOUNT
-    PERCENT_OF_CASH
+    PERCENT_OF_BUDGET
     PERCENT_OF_POSITION
   }
 
@@ -92,19 +108,95 @@ classDiagram
     - maxPositionPercent: Decimal?
     - regularHoursOnly: bool
     - skipBuyIfHeld: bool
+    - maxDataAgeMinutes: int
   }
+
+  %% ------------------------------------------------------------------ budget pool
+
+  class BudgetPool {
+    - automationId: string
+    - currency: string
+    - allocated: Decimal
+    - cash: Decimal
+    - reserved: Decimal
+    - invested: Decimal
+    - realizedPnL: Decimal
+    - fees: Decimal
+    + available() Decimal
+  }
+
+  class BudgetEntry {
+    - id: string
+    - automationId: string
+    - type: BudgetEntryType
+    - amount: Decimal
+    - cashAfter: Decimal
+    - reservedAfter: Decimal
+    - runId: string?
+    - orderId: string?
+    - fillId: string?
+    - note: string?
+    - createdAt: datetime
+  }
+
+  class BudgetEntryType {
+    <<enumeration>>
+    ALLOCATE
+    WITHDRAW
+    RESERVE
+    RELEASE
+    BUY_FILL
+    SELL_FILL
+    FEE
+    ADJUSTMENT
+  }
+
+  %% ------------------------------------------------------------------ scheduling state
+
+  class ScheduleState {
+    - scheduleId: string
+    - lastFiredFor: datetime?
+    - nextFireAt: datetime?
+  }
+
+  class ScheduleFire {
+    - id: string
+    - automationId: string
+    - scheduleId: string
+    - scheduledFor: datetime
+    - firedAt: datetime
+    - runId: string
+  }
+
+  %% ------------------------------------------------------------------ history
 
   class AutomationRun {
     - id: string
     - automationId: string
-    - scheduledFor: datetime
+    - trigger: RunTrigger
+    - scheduleFireId: string?
+    - configVersion: int
+    - definition: json
+    - brokerAccountId: string?
+    - environment: BrokerEnvironment?
     - startedAt: datetime
     - finishedAt: datetime?
     - status: RunStatus
-    - matchedSymbols: List~string~
-    - orderIds: List~string~
-    - skipped: List~string~
+    - skipReason: RunSkipReason?
+    - market: MarketContext
+    - budgetBefore: BudgetSnapshot?
+    - budgetAfter: BudgetSnapshot?
+    - targets: List~TargetResult~
+    - matched: List~MatchedSymbol~
+    - actions: List~ActionResult~
+    - metrics: RunMetrics
     - errors: List~string~
+  }
+
+  class RunTrigger {
+    <<enumeration>>
+    SCHEDULE
+    MANUAL
   }
 
   class RunStatus {
@@ -113,9 +205,167 @@ classDiagram
     SUCCEEDED
     PARTIAL
     FAILED
+    SKIPPED
   }
 
+  class RunSkipReason {
+    <<enumeration>>
+    OVERLAP
+    PAUSED
+    SWITCH_OFF
+    MISSED
+  }
+
+  class MarketContext {
+    - session: MarketSession
+    - marketLastSyncAt: datetime?
+    - dataAgeMinutes: int?
+  }
+
+  class MarketSession {
+    <<enumeration>>
+    PRE_MARKET
+    REGULAR
+    AFTER_HOURS
+    CLOSED
+  }
+
+  class BudgetSnapshot {
+    - cash: Decimal
+    - reserved: Decimal
+    - invested: Decimal
+    - positionsValue: Decimal
+    - equity: Decimal
+  }
+
+  class TargetResult {
+    - targetId: string
+    - type: FilterRunTargetType
+    - steps: List~StepCount~
+    - count: int
+  }
+
+  class MatchedSymbol {
+    - ticker: string
+    - symbolId: string
+    - price: Decimal?
+    - priceTime: datetime?
+    - dailyChangePercent: Decimal?
+    - heldQuantity: Decimal
+  }
+
+  class ActionResult {
+    - index: int
+    - type: string
+    - status: RunStatus
+    - intents: List~OrderIntent~
+    - notificationId: string?
+    - addedSymbols: List~string~
+    - error: string?
+  }
+
+  class OrderIntent {
+    - ticker: string
+    - side: OrderSide
+    - rank: int?
+    - sizing: OrderSizing
+    - quantity: Decimal
+    - estimatedPrice: Decimal?
+    - estimatedCost: Decimal?
+    - limitPrice: Decimal?
+    - stopPrice: Decimal?
+    - decision: IntentDecision
+    - skipReason: SkipReason?
+    - orderId: string?
+  }
+
+  class IntentDecision {
+    <<enumeration>>
+    PLACE
+    SKIP
+    FAILED
+  }
+
+  class SkipReason {
+    <<enumeration>>
+    ALREADY_HELD
+    NOT_HELD
+    INSUFFICIENT_BUDGET
+    MAX_ORDERS_REACHED
+    MAX_POSITION
+    OUTSIDE_REGULAR_HOURS
+    NO_PRICE
+    ZERO_QUANTITY
+    STALE_DATA
+    NOT_SUPPORTED_BY_BROKER
+  }
+
+  class RunMetrics {
+    - durationMs: int
+    - matchedCount: int
+    - intentCount: int
+    - placedCount: int
+    - skippedCount: int
+    - failedCount: int
+    - estimatedBuyCost: Decimal
+    - estimatedSellProceeds: Decimal
+  }
+
+  class AutomationEvent {
+    - id: string
+    - automationId: string
+    - type: AutomationEventType
+    - configVersion: int
+    - changes: json
+    - createdAt: datetime
+  }
+
+  class AutomationEventType {
+    <<enumeration>>
+    CREATED
+    UPDATED
+    PAUSED
+    RESUMED
+    BUDGET_ALLOCATED
+    BUDGET_WITHDRAWN
+    DELETED
+  }
+
+  class PerformanceSnapshot {
+    - automationId: string
+    - date: Date
+    - cash: Decimal
+    - reserved: Decimal
+    - invested: Decimal
+    - positionsValue: Decimal
+    - equity: Decimal
+    - realizedPnL: Decimal
+    - unrealizedPnL: Decimal
+    - fees: Decimal
+    - returnPercent: Decimal
+    - openPositions: int
+    - ordersPlaced: int
+    - fills: int
+  }
+
+  class Notification {
+    - id: string
+    - automationId: string
+    - runId: string
+    - title: string
+    - message: string
+    - symbols: List~string~
+    - createdAt: datetime
+    - readAt: datetime?
+  }
+
+  %% ------------------------------------------------------------------ other files
+
   class InvestmentPortfolio {
+    <<from InvestmentPortfolio.mmd>>
+  }
+
+  class PositionLot {
     <<from InvestmentPortfolio.mmd>>
   }
 
@@ -135,6 +385,14 @@ classDiagram
     <<from WatchlistPage.mmd>>
   }
 
+  class Order {
+    <<from Orders.mmd>>
+  }
+
+  class Fill {
+    <<from Orders.mmd>>
+  }
+
   class OrderSide {
     <<from Orders.mmd>>
   }
@@ -147,24 +405,34 @@ classDiagram
     <<from Orders.mmd>>
   }
 
-  class Order {
-    <<from Orders.mmd>>
+  class BrokerEnvironment {
+    <<from Brokers.mmd>>
   }
 
+  %% ------------------------------------------------------------------ relations
+
+  Automation --> AutomationStatus
   Automation "*" --> "0..1" InvestmentPortfolio : trades in
   Automation "1" *-- "1..*" FilterRunTarget : runs
   FilterRunTarget "1" --> "1" FilterRunTargetType
   FilterRunTarget ..> Filter : when type is FILTER
   FilterRunTarget ..> FilterGroup : when type is FILTER_GROUP
   Automation "1" *-- "1..*" Schedule : at least one
+  Schedule "1" *-- "1" ScheduleState
+  Automation "1" *-- "*" ScheduleFire : fired
   Automation "1" *-- "*" AutomationAction : ordered
   Automation "1" *-- "0..1" OrderGuards
-  Automation "1" *-- "*" AutomationRun : history
-  AutomationRun --> RunStatus
+  Automation "1" *-- "0..1" BudgetPool
+  BudgetPool "1" *-- "*" BudgetEntry : ledger
+  BudgetEntry --> BudgetEntryType
+  BudgetEntry ..> Order : orderId
+  BudgetEntry ..> Fill : fillId
+  Automation "1" *-- "*" PositionLot : owns shares
   AutomationAction <|-- NotifyAction
   AutomationAction <|-- AddToWatchlistAction
   AutomationAction <|-- PlaceOrderAction
   AddToWatchlistAction ..> Watchlist : adds matched symbols
+  NotifyAction ..> Notification : creates
   PlaceOrderAction "1" *-- "1" SymbolSelection
   PlaceOrderAction "1" *-- "1..*" OrderSizing
   SymbolSelection --> SelectionMode
@@ -173,9 +441,36 @@ classDiagram
   PlaceOrderAction --> OrderSide
   PlaceOrderAction --> OrderType
   PlaceOrderAction --> TimeInForce
-  PlaceOrderAction ..> Order : creates
-  AutomationRun ..> Order : orderIds
 
-  note for Automation "Matched symbols = UNION of all runTargets' results.\nportfolioId is required when any action is a PlaceOrderAction.\nMissedPolicy.RUN_ALL is not allowed when any action is a PlaceOrderAction."
-  note for PlaceOrderAction "ALL_MATCHES: sizings has 1 entry, applied to each match.\nTOP_N: sizings has N entries, sizings[i] applies to rank i+1.\nBUY sizing: QUANTITY, CASH_AMOUNT or PERCENT_OF_CASH.\nSELL sizing: QUANTITY or PERCENT_OF_POSITION; only held matches, capped at held quantity.\nSum of estimated BUY cost must be ≤ portfolio availableCash();\norders go in rank order and one that would exceed it is skipped and logged.\nLimit/stop prices = last price adjusted by the offset percents."
-  note for OrderGuards "maxOrdersPerRun: extra orders are skipped in rank order.\nmaxPositionValue / maxPositionPercent cap each BUY.\nregularHoursOnly: no orders outside the REGULAR session (TradingCalendar); forces extendedHours = false.\nskipBuyIfHeld: no BUY for symbols already in the portfolio."
+  Automation "1" *-- "*" AutomationRun : history
+  ScheduleFire "1" --> "1" AutomationRun
+  AutomationRun --> RunTrigger
+  AutomationRun --> RunStatus
+  AutomationRun --> RunSkipReason
+  AutomationRun --> BrokerEnvironment
+  AutomationRun "1" *-- "1" MarketContext
+  MarketContext --> MarketSession
+  AutomationRun "1" *-- "0..2" BudgetSnapshot : before / after
+  AutomationRun "1" *-- "*" TargetResult
+  AutomationRun "1" *-- "*" MatchedSymbol
+  AutomationRun "1" *-- "*" ActionResult
+  AutomationRun "1" *-- "1" RunMetrics
+  ActionResult "1" *-- "*" OrderIntent
+  OrderIntent --> IntentDecision
+  OrderIntent --> SkipReason
+  OrderIntent ..> Order : orderId when placed
+  Automation "1" *-- "*" AutomationEvent : audit trail
+  AutomationEvent --> AutomationEventType
+  Automation "1" *-- "*" PerformanceSnapshot : daily
+  AutomationSwitch ..> Automation : pauses all
+
+  %% ------------------------------------------------------------------ rules
+
+  note for Automation "configVersion goes up on every change; each run stores the definition it used.\nportfolioId and budget are required when any action is a PlaceOrderAction.\nMissedPolicy.RUN_ALL is not allowed when any action is a PlaceOrderAction."
+  note for BudgetPool "The automation's own money, carved out of the portfolio's cash.\navailable() = cash - reserved. Sum of all pools in a portfolio <= portfolio cash.\nEvery change is a BudgetEntry; the pool is the sum of its ledger."
+  note for BudgetEntry "ALLOCATE/WITHDRAW: you move money in/out. RESERVE: buy order placed.\nRELEASE: order cancelled/expired/partly filled. BUY_FILL / SELL_FILL / FEE: from broker fills.\namount is signed; cashAfter/reservedAfter make the history readable without replaying."
+  note for ScheduleFire "UNIQUE (automationId, scheduleId, scheduledFor): a time fires once, even after a crash."
+  note for AutomationRun "Stored in the shared runs table (kind AUTOMATION), kept 6 months.\nOrders, fills and the budget ledger are kept permanently."
+  note for OrderIntent "The plan for one symbol. SELL only from the automation's own lots.\nslippage = order averageFillPrice vs estimatedPrice."
+  note for PerformanceSnapshot "Written once a day after the close; the series behind gain analysis per automation.\nreturnPercent = (equity - allocated) / allocated."
+  note for AutomationSwitch "One switch pauses every automation (runs are recorded as SKIPPED / SWITCH_OFF)."

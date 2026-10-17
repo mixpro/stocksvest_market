@@ -2,6 +2,7 @@ classDiagram
   class Order {
     - id: string
     - portfolioId: string
+    - brokerAccountId: string
     - symbolId: string
     - automationId: string?
     - automationRunId: string?
@@ -20,6 +21,8 @@ classDiagram
     - status: OrderStatus
     - rejectReason: string?
     - averageFillPrice: Decimal?
+    - estimatedPrice: Decimal?
+    - rawBrokerStatus: string?
     - createdAt: datetime
     - updatedAt: datetime
     - submittedAt: datetime?
@@ -31,6 +34,7 @@ classDiagram
   class Fill {
     - id: string
     - orderId: string
+    - brokerFillId: string
     - quantity: Decimal
     - price: Decimal
     - fee: Decimal
@@ -56,6 +60,7 @@ classDiagram
     <<enumeration>>
     DAY
     GTC
+    GTD
     OPG
     CLS
     IOC
@@ -79,4 +84,4 @@ classDiagram
   Order "1" --> "1" OrderStatus
   Order "1" *-- "*" Fill
 
-  note for Order "clientOrderId is unique: resubmitting the same id never creates a second order.\nlimitPrice: LIMIT, STOP_LIMIT. stopPrice: STOP, STOP_LIMIT.\nTRAILING_STOP: exactly one of trailPrice / trailPercent.\nextendedHours requires LIMIT + DAY (Alpaca rule).\naverageFillPrice is cached from fills.\nAlpaca statuses (accepted, pending_cancel, replaced...) map onto OrderStatus."
+  note for Order "clientOrderId is unique: resubmitting the same id never creates a second order.\nlimitPrice: LIMIT, STOP_LIMIT. stopPrice: STOP, STOP_LIMIT.\nTRAILING_STOP: exactly one of trailPrice / trailPercent.\nWhich types / time-in-force / extended hours are allowed depends on BrokerCapabilities (Brokers.mmd).\nstatus is normalized by the broker adapter; rawBrokerStatus keeps the broker's own value.\nestimatedPrice comes from the automation's OrderIntent (slippage = averageFillPrice - estimatedPrice).\nOrders and fills are kept permanently."

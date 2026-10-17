@@ -1,0 +1,204 @@
+classDiagram
+  %% Broker-agnostic trading: the app only talks to the Broker interface.
+  %% Each provider (Alpaca, IBKR, ...) is an adapter that translates symbols, order
+  %% statuses and features to the app's normalized models.
+
+  class BrokerAccount {
+    - id: string
+    - name: string
+    - provider: BrokerProvider
+    - environment: BrokerEnvironment
+    - credentialsRef: string
+    - baseCurrency: string
+    - status: BrokerAccountStatus
+    - allowLive: bool
+    - lastSyncAt: datetime?
+    - createdAt: datetime
+    - updatedAt: datetime
+  }
+
+  class BrokerProvider {
+    <<enumeration>>
+    ALPACA
+    IBKR
+  }
+
+  class BrokerEnvironment {
+    <<enumeration>>
+    PAPER
+    LIVE
+  }
+
+  class BrokerAccountStatus {
+    <<enumeration>>
+    CONNECTED
+    ERROR
+    DISABLED
+  }
+
+  class Broker {
+    <<interface>>
+    + capabilities() BrokerCapabilities
+    + accountSnapshot() BrokerAccountSnapshot
+    + submitOrder(request: BrokerOrderRequest) BrokerOrder
+    + cancelOrder(brokerOrderId: string) BrokerOrder
+    + getOrder(brokerOrderId: string) BrokerOrder
+    + getOrderByClientId(clientOrderId: string) BrokerOrder?
+    + listOrders(since: datetime) List~BrokerOrder~
+    + listFills(since: datetime) List~BrokerFill~
+    + positions() List~BrokerPosition~
+    + toBrokerSymbol(symbolId: string) string
+    + fromBrokerSymbol(brokerSymbol: string) string
+  }
+
+  class AlpacaBroker {
+    - account: BrokerAccount
+  }
+
+  class IbkrBroker {
+    - account: BrokerAccount
+  }
+
+  class FakeBroker {
+    <<tests only>>
+  }
+
+  class BrokerCapabilities {
+    - orderTypes: List~OrderType~
+    - timeInForce: List~TimeInForce~
+    - fractionalShares: bool
+    - extendedHours: bool
+    - shortSelling: bool
+    - maxOrdersPerMinute: int
+  }
+
+  class BrokerOrderRequest {
+    - clientOrderId: string
+    - symbol: string
+    - side: OrderSide
+    - type: OrderType
+    - quantity: Decimal
+    - limitPrice: Decimal?
+    - stopPrice: Decimal?
+    - trailPercent: Decimal?
+    - timeInForce: TimeInForce
+    - extendedHours: bool
+  }
+
+  class BrokerOrder {
+    - brokerOrderId: string
+    - clientOrderId: string
+    - status: OrderStatus
+    - rawStatus: string
+    - filledQuantity: Decimal
+    - averageFillPrice: Decimal?
+    - rejectReason: string?
+    - submittedAt: datetime
+    - updatedAt: datetime
+  }
+
+  class BrokerFill {
+    - brokerFillId: string
+    - brokerOrderId: string
+    - quantity: Decimal
+    - price: Decimal
+    - fee: Decimal
+    - executedAt: datetime
+  }
+
+  class BrokerPosition {
+    - symbol: string
+    - quantity: Decimal
+    - averageCost: Decimal
+    - marketValue: Decimal
+  }
+
+  class BrokerAccountSnapshot {
+    - cash: Decimal
+    - buyingPower: Decimal
+    - equity: Decimal
+    - currency: string
+    - at: datetime
+  }
+
+  class SymbolMapping {
+    - symbolId: string
+    - provider: BrokerProvider
+    - brokerSymbol: string
+    - brokerInstrumentId: string?
+  }
+
+  class BrokerSync {
+    - id: string
+    - brokerAccountId: string
+    - ranAt: datetime
+    - ordersUpdated: int
+    - fillsImported: int
+    - mismatches: List~SyncMismatch~
+  }
+
+  class SyncMismatch {
+    - kind: MismatchKind
+    - symbol: string?
+    - appValue: Decimal?
+    - brokerValue: Decimal?
+    - detail: string
+  }
+
+  class MismatchKind {
+    <<enumeration>>
+    POSITION_QUANTITY
+    CASH
+    UNKNOWN_ORDER
+    MISSING_ORDER
+  }
+
+  class OrderSide {
+    <<from Orders.mmd>>
+  }
+
+  class OrderType {
+    <<from Orders.mmd>>
+  }
+
+  class TimeInForce {
+    <<from Orders.mmd>>
+  }
+
+  class OrderStatus {
+    <<from Orders.mmd>>
+  }
+
+  class InvestmentPortfolio {
+    <<from InvestmentPortfolio.mmd>>
+  }
+
+  BrokerAccount --> BrokerProvider
+  BrokerAccount --> BrokerEnvironment
+  BrokerAccount --> BrokerAccountStatus
+  Broker <|.. AlpacaBroker
+  Broker <|.. IbkrBroker
+  Broker <|.. FakeBroker
+  AlpacaBroker --> BrokerAccount
+  IbkrBroker --> BrokerAccount
+  Broker ..> BrokerCapabilities
+  Broker ..> BrokerOrderRequest : accepts
+  Broker ..> BrokerOrder : returns
+  Broker ..> BrokerFill : returns
+  Broker ..> BrokerPosition : returns
+  Broker ..> BrokerAccountSnapshot : returns
+  Broker ..> SymbolMapping : translates via
+  BrokerOrder --> OrderStatus : normalized
+  BrokerOrderRequest --> OrderSide
+  BrokerOrderRequest --> OrderType
+  BrokerOrderRequest --> TimeInForce
+  BrokerAccount "1" *-- "*" BrokerSync : history
+  BrokerSync "1" *-- "*" SyncMismatch
+  SyncMismatch --> MismatchKind
+  InvestmentPortfolio "*" --> "1" BrokerAccount : trades through
+
+  note for BrokerAccount "Paper accounts only for now: LIVE is refused unless allowLive is set explicitly.\ncredentialsRef names a secret in .env (e.g. ALPACA_PAPER_1); keys are never stored in the DB."
+  note for Broker "The app never calls a broker API directly. Adapters map statuses to OrderStatus\n(rawStatus keeps the original) and symbols via SymbolMapping (IBKR uses contract ids)."
+  note for BrokerCapabilities "The order planner checks every intent against these before submitting\n(e.g. no fractional shares, TIF not supported, no extended hours) and skips with a reason."
+  note for BrokerSync "Runs every minute: imports order updates and fills, then compares positions and cash\nwith the broker. Mismatches are recorded and shown; the broker is the source of truth."
+  note for FakeBroker "In-memory broker for automated tests. Simulations use the brokers' paper accounts."

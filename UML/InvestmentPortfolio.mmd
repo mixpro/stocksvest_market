@@ -9,11 +9,13 @@ classDiagram
       - description: string
       - createdAt: datetime
       - updatedAt: datetime
+      - brokerAccountId: string
       - cash: Decimal
       - currency: string
       - positions: List~Position~
       - orders: List~Order~
       + availableCash() Decimal
+      + unallocatedCash() Decimal
     }
 
     class Position {
@@ -29,8 +31,25 @@ classDiagram
       + unrealizedPnL(lastPrice: Decimal) Decimal
     }
 
+    class PositionLot {
+      - id: string
+      - positionId: string
+      - automationId: string?
+      - buyFillId: string
+      - quantity: Decimal
+      - remainingQuantity: Decimal
+      - costPerShare: Decimal
+      - openedAt: datetime
+      - closedAt: datetime?
+      - realizedPnL: Decimal
+    }
+
     class Order {
       <<from Orders.mmd>>
+    }
+
+    class BrokerAccount {
+      <<from Brokers.mmd>>
     }
 
     class Fill {
@@ -42,10 +61,13 @@ classDiagram
     }
 
     InvestmentPortfolio "1" *-- "*" Position : holds
+    Position "1" *-- "*" PositionLot : bought in lots
+    InvestmentPortfolio "*" --> "1" BrokerAccount : trades through
     InvestmentPortfolio "1" *-- "*" Order : places
     Order "1" *-- "*" Fill
     Fill ..> Position : updates quantity, averageCost, realizedPnL
     Automation "*" --> "0..1" InvestmentPortfolio : trades in
 
-    note for InvestmentPortfolio "availableCash() = cash minus cash reserved by open BUY orders"
+    note for InvestmentPortfolio "cash is synced from the broker account (the broker is the source of truth).\navailableCash() = cash minus cash reserved by open BUY orders.\nunallocatedCash() = availableCash() minus money given to automation budget pools."
     note for Position "One position per (portfolioId, symbolId).\nMaintained from fills, not by replaying orders.\nquantity 0 = closed, kept for realizedPnL history.\nunrealizedPnL is calculated from the synced price, never stored."
+    note for PositionLot "Each buy fill opens a lot, tagged with the automation that bought it (null = manual).\nSells close lots FIFO within the same automation, so P&L and budgets are per automation."
