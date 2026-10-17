@@ -11,8 +11,14 @@ const el = (tag, attrs = {}, ...children) => {
   for (const c of children.flat()) if (c !== null && c !== undefined) node.append(c);
   return node;
 };
+// replaceChildren that skips null/false and flattens nested lists (optional parts of a view).
+const setChildren = (node, ...children) =>
+  node.replaceChildren(...children.flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false));
 const fmt = (v, digits = 2) => (v === null || v === undefined ? "—" : Number(v).toFixed(digits));
 const when = (iso) => (iso ? new Date(iso).toLocaleString() : "—");
+const money = (v) => (v === null || v === undefined ? "—" : Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+const signed = (v) => (v === null || v === undefined ? "—" : `${v > 0 ? "+" : ""}${money(v)}`);
+const tone = (v) => (v > 0 ? "up" : v < 0 ? "down" : "");
 
 // ------------------------------------------------------------------ API key
 
@@ -81,7 +87,7 @@ function initHeader(page) {
   const link = (href, label) => el("a", { href, class: page === href ? "active" : "" }, label);
   $("header").replaceChildren(
     el("strong", {}, "StocksVest"),
-    el("nav", {}, link("index.html", "Filters"), link("automations.html", "Automations")),
+    el("nav", {}, link("index.html", "Filters"), link("automations.html", "Automations"), link("portfolio.html", "Portfolio")),
     el("span", { id: "market-status", class: "muted" }),
     el("span", { class: "spacer" }),
     el("a", { id: "bell", href: "automations.html#inbox", title: "Notifications" }, "🔔"),

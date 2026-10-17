@@ -38,8 +38,8 @@ function renderSidebar() {
       class: state.selected && state.selected.kind === kind && state.selected.id === obj.id ? "active" : "",
       onclick: () => select(kind, obj.id),
     }, el("span", {}, obj.name), tag ? el("span", { class: "tag" }, tag) : null);
-  $("#filter-list").replaceChildren(...state.filters.map((f) => item("filter", f, f.isActive ? "" : "inactive")));
-  $("#group-list").replaceChildren(...state.groups.map((g) => item("group", g, `${g.filterIds.length}`)));
+  setChildren($("#filter-list"), ...state.filters.map((f) => item("filter", f, f.isActive ? "" : "inactive")));
+  setChildren($("#group-list"), ...state.groups.map((g) => item("group", g, `${g.filterIds.length}`)));
 }
 
 function select(kind, id) {
@@ -78,7 +78,7 @@ function renderEditor() {
   if (!state.draft) return;
   const isFilter = state.selected.kind === "filter";
   const saved = Boolean(state.selected.id);
-  box.replaceChildren(
+  setChildren(box,
     el("div", { class: "section-head" }, el("h2", {}, isFilter ? "Filter" : "Filter group"),
       saved ? el("span", { class: "muted" }, state.selected.id) : el("span", { class: "muted" }, "not saved")),
     textField("Name", "name"),
@@ -258,7 +258,7 @@ const remove = () => guard(async () => {
   const base = state.selected.kind === "filter" ? "/v1/filters" : "/v1/filter-groups";
   await api(`${base}/${state.selected.id}`, { method: "DELETE" });
   state.selected = null; state.draft = null; state.result = null;
-  $("#editor").replaceChildren(el("p", { class: "muted empty" }, "Deleted."));
+  setChildren($("#editor"), el("p", { class: "muted empty" }, "Deleted."));
   await loadAll();
   renderResults();
 });
@@ -273,8 +273,8 @@ const showHistory = () => guard(async () => {
   const base = state.selected.kind === "filter" ? "/v1/filters" : "/v1/filter-groups";
   const { runs } = await api(`${base}/${state.selected.id}/runs?limit=50`);
   state.result = null;
-  $("#result-head").replaceChildren(el("h2", {}, `Run history · ${runs.length}`));
-  $("#table-wrap").replaceChildren(el("table", {},
+  setChildren($("#result-head"), el("h2", {}, `Run history · ${runs.length}`));
+  setChildren($("#table-wrap"), el("table", {},
     el("thead", {}, el("tr", {}, el("th", {}, "Ran at"), el("th", {}, "Status"), el("th", { class: "num" }, "ms"))),
     el("tbody", {}, ...runs.map((r) => el("tr", { onclick: () => guard(async () => showRun(await api(`/v1/runs/${r.id}`))) },
       el("td", {}, new Date(r.ranAt).toLocaleString()),
@@ -295,21 +295,21 @@ function renderResults() {
   const r = state.result;
   $("#chart-box").hidden = true;
   if (!r) {
-    $("#result-head").replaceChildren(el("p", { class: "muted empty" }, "Preview or run to see matching symbols."));
-    $("#table-wrap").replaceChildren();
+    setChildren($("#result-head"), el("p", { class: "muted empty" }, "Preview or run to see matching symbols."));
+    setChildren($("#table-wrap"), );
     return;
   }
   const funnel = (steps) => el("div", { class: "funnel" }, ...steps.flatMap((s, i) => [
     i ? el("span", { class: "muted" }, "→") : null,
     el("span", { class: "step" }, s.step.replace("_", " ").toLowerCase(), el("b", {}, s.count)),
   ]));
-  $("#result-head").replaceChildren(
+  setChildren($("#result-head"), 
     el("div", { class: "section-head" }, el("h2", {}, r.title), el("span", { class: "muted" }, `${r.symbols.length} symbols`)),
     r.steps ? funnel(r.steps) : null,
     ...(r.filters || []).map((m) => el("div", {}, el("b", {}, m.name), funnel(m.steps))),
   );
   const sectorName = Object.fromEntries((actionMeta("SECTOR")?.fields[0].options || []).map((o) => [o.value, o.label]));
-  $("#table-wrap").replaceChildren(el("table", {},
+  setChildren($("#table-wrap"), el("table", {},
     el("thead", {}, el("tr", {},
       el("th", {}, "Ticker"), el("th", {}, "Name"), el("th", {}, "Sector"),
       el("th", { class: "num" }, "Price"), el("th", { class: "num" }, "Day %"))),

@@ -13,12 +13,20 @@ const SCHEDULE_DEFAULTS = {
   ONCE: { at: null },
 };
 
-const st = { automations: [], filters: [], groups: [], selectedId: null, draft: null };
+const st = { automations: [], filters: [], groups: [], portfolios: [], selectedId: null, draft: null };
+const RANK_KEYS = ["DAILY_CHANGE_PERCENT", "LAST_PRICE", "DAILY_VOLUME", "POSITION_VALUE", "UNREALIZED_PNL_PERCENT"];
+const ORDER_DEFAULT = {
+  type: "PLACE_ORDER", side: "BUY", orderType: "MARKET", timeInForce: "DAY", extendedHours: false,
+  selection: { mode: "TOP_N", topN: 3, rankBy: "DAILY_CHANGE_PERCENT", descending: true },
+  sizings: [{ mode: "CASH_AMOUNT", value: 500 }],
+};
+const GUARD_DEFAULT = { maxOrdersPerRun: 10, maxPositionValue: null, maxPositionPercent: null, regularHoursOnly: true, skipBuyIfHeld: true, maxDataAgeMinutes: 30 };
 
 // ------------------------------------------------------------------ loading
 
 async function loadAll() {
-  const [a, f, g] = await Promise.all([api("/v1/automations"), api("/v1/filters"), api("/v1/filter-groups")]);
+  const [a, f, g, p] = await Promise.all([api("/v1/automations"), api("/v1/filters"), api("/v1/filter-groups"), api("/v1/portfolios")]);
+  st.portfolios = p.portfolios;
   st.automations = a.automations;
   st.filters = f.filters;
   st.groups = g.groups;
@@ -32,7 +40,7 @@ async function renderSwitch() {
   const sched = sw.scheduler.running
     ? `scheduler ✓ ${sw.scheduler.lastTickAt ? new Date(sw.scheduler.lastTickAt).toLocaleTimeString() : ""}`
     : "scheduler not running";
-  $("#switch").replaceChildren(el("div", { class: `switch ${on ? "on" : "off"}` },
+  setChildren($("#switch"), el("div", { class: `switch ${on ? "on" : "off"}` },
     el("b", {}, on ? "Scheduled runs ON" : "Scheduled runs OFF"),
     el("span", { class: "grow muted" }, sched),
     el("button", { onclick: () => guard(async () => {
@@ -60,7 +68,7 @@ function nextRunText(a) {
 }
 
 function renderSidebar() {
-  $("#automation-list").replaceChildren(...st.automations.map((a) =>
+  setChildren($("#automation-list"), ...st.automations.map((a) =>
     el("li", { class: `stacked ${a.id === st.selectedId ? "active" : ""}`, onclick: () => select(a.id) },
       el("div", { class: "line" }, el("span", {}, a.name), el("span", { class: `badge ${a.status}` }, a.status.toLowerCase())),
       el("div", { class: "sub" }, nextRunText(a)),
@@ -185,7 +193,55 @@ function targetRow(t, i) {
     el("button", { class: "link", onclick: () => { d.runTargets.splice(i, 1); rerender(); } }, "✕"));
 }
 
+function orderActionRow(a, i) {
+  const d = st.draft;
+  const sel = a.selection;
+  const sizingModes = a.side === "BUY" ? ["CASH_AMOUNT", "QUANTITY", "PERCENT_OF_BUDGET"] : ["PERCENT_OF_POSITION", "QUANTITY"];
+  const wantSizings = sel.mode === "TOP_N" ? Math.max(1, a.sizings.length) : 1;
+  const sizingRow = (z, k) => el("span", {}, sel.mode === "TOP_N" && a.sizings.length > 1 ? `#${k + 1} ` : "",
+    select_(sizingModes, z.mode, (v) => (z.mode = v)), numInput(z, "value", { style: "width:80px", min: 0 }));
+  return el("div", { class: "row" },
+    el("span", { class: "num" }, `${i + 1}.`), el("span", { class: "title" }, "Place order"),
+    select_([["BUY", "Buy"], ["SELL", "Sell (own shares)"]], a.side, (v) => {
+      a.side = v; a.sizings = [{ mode: v === "BUY" ? "CASH_AMOUNT" : "PERCENT_OF_POSITION", value: v === "BUY" ? 500 : 100 }]; rerender();
+    }),
+    select_(["MARKET", "LIMIT", "STOP", "STOP_LIMIT", "TRAILING_STOP"], a.orderType, (v) => { a.orderType = v; rerender(); }),
+    ["LIMIT", "STOP_LIMIT"].includes(a.orderType) ? ["limit offset %", numInput(a, "limitOffsetPercent", { style: "width:60px", step: "0.1" })] : null,
+    ["STOP", "STOP_LIMIT"].includes(a.orderType) ? ["stop offset %", numInput(a, "stopOffsetPercent", { style: "width:60px", step: "0.1" })] : null,
+    a.orderType === "TRAILING_STOP" ? ["trail %", numInput(a, "trailPercent", { style: "width:60px", step: "0.1" })] : null,
+    select_(["DAY", "GTC", "IOC", "FOK", "OPG", "CLS"], a.timeInForce, (v) => (a.timeInForce = v)),
+    el("span", { class: "grow" }),
+    el("button", { class: "link", onclick: () => { d.actions.splice(i, 1); rerender(); } }, "✕"),
+    el("div", { style: "flex-basis:100%" }),
+    select_([["ALL_MATCHES", "all matches"], ["TOP_N", "top N"]], sel.mode, (v) => {
+      a.selection = v === "TOP_N" ? { mode: v, topN: 3, rankBy: "DAILY_CHANGE_PERCENT", descending: true } : { mode: v };
+      a.sizings = a.sizings.slice(0, 1); rerender();
+    }),
+    sel.mode === "TOP_N" ? [numInput(sel, "topN", { style: "width:50px", min: 1 }), "by",
+      select_(RANK_KEYS, sel.rankBy, (v) => (sel.rankBy = v)),
+      select_([["true", "highest first"], ["false", "lowest first"]], String(sel.descending), (v) => (sel.descending = v === "true"))] : null,
+    el("div", { style: "flex-basis:100%" }),
+    "size", ...a.sizings.map(sizingRow),
+    sel.mode === "TOP_N" ? el("button", { class: "link", onclick: () => {
+      a.sizings = a.sizings.length > 1 ? a.sizings.slice(0, 1)
+        : Array.from({ length: sel.topN || 1 }, () => structuredClone(a.sizings[0]));
+      rerender();
+    } }, a.sizings.length > 1 ? "same size for all ranks" : "size per rank") : null);
+}
+
+function guardsEditor() {
+  const g = (st.draft.orderGuards ??= structuredClone(GUARD_DEFAULT));
+  const check = (key, label) => el("label", {}, el("input", { type: "checkbox", checked: g[key], onchange: (e) => (g[key] = e.target.checked) }), ` ${label}`);
+  return el("div", { class: "row" },
+    "max orders/run", numInput(g, "maxOrdersPerRun", { style: "width:60px", min: 1 }),
+    "max per symbol $", numInput(g, "maxPositionValue", { style: "width:80px", placeholder: "—" }),
+    "or %", numInput(g, "maxPositionPercent", { style: "width:60px", placeholder: "—" }),
+    "max data age", numInput(g, "maxDataAgeMinutes", { style: "width:50px", min: 1 }), "min",
+    check("regularHoursOnly", "regular hours only"), check("skipBuyIfHeld", "skip buy if held"));
+}
+
 function actionRow(a, i) {
+  if (a.type === "PLACE_ORDER") return orderActionRow(a, i);
   const d = st.draft;
   const check = (key, label) => el("label", {}, el("input", { type: "checkbox", checked: a[key],
     onchange: (e) => (a[key] = e.target.checked) }), ` ${label}`);
@@ -202,7 +258,7 @@ function renderEditor() {
   if (!d) return;
   const saved = Boolean(st.selectedId);
   const paused = d.status === "PAUSED";
-  $("#editor").replaceChildren(
+  setChildren($("#editor"), 
     el("div", { class: "section-head" }, el("h2", {}, "Automation"),
       el("span", { class: "muted" }, saved ? `${st.selectedId} · v${d.configVersion}` : "not saved")),
     saved ? el("p", { class: "next-run" }, nextRunText(d),
@@ -215,14 +271,18 @@ function renderEditor() {
     el("h3", {}, "Schedules"),
     ...d.schedules.map(scheduleRow),
     el("button", { onclick: () => { d.schedules.push({ type: "DAILY", ...structuredClone(SCHEDULE_DEFAULTS.DAILY) }); rerender(); } }, "+ Add schedule"),
+    el("h3", {}, "Portfolio ", el("span", { class: "muted" }, "(needed to place orders)")),
+    select_([["", "— none —"], ...st.portfolios.map((p) => [p.id, p.name])], d.portfolioId || "", (v) => { d.portfolioId = v || null; rerender(); }),
     el("h3", {}, "Actions ", el("span", { class: "muted" }, "(in order)")),
     ...d.actions.map(actionRow),
-    select_([["", "+ Add action…"], ["NOTIFY", "Notify"], ["PLACE_ORDER", "Place order (phase 2)"], ["ADD_TO_WATCHLIST", "Add to watchlist (phase 3)"]], "",
+    select_([["", "+ Add action…"], ["NOTIFY", "Notify"], ["PLACE_ORDER", "Place order"], ["ADD_TO_WATCHLIST", "Add to watchlist (phase 3)"]], "",
       (v) => {
         if (v === "NOTIFY") d.actions.push({ type: "NOTIFY", title: "{name}: {count} matches", message: "", includeMatchedSymbols: true, skipWhenNoMatches: false });
+        else if (v === "PLACE_ORDER") d.actions.push(structuredClone(ORDER_DEFAULT));
         else if (v) d.actions.push({ type: v });  // the API explains these are not available yet
         rerender();
       }),
+    d.actions.some((a) => a.type === "PLACE_ORDER") ? [el("h3", {}, "Order guards"), guardsEditor()] : null,
     el("div", { class: "toolbar" },
       el("button", { onclick: preview }, "Preview"),
       el("button", { onclick: nextRuns }, "Next runs"),
@@ -231,13 +291,16 @@ function renderEditor() {
       el("button", { onclick: togglePause, disabled: !saved }, paused ? "Resume" : "Pause"),
       el("button", { onclick: history, disabled: !saved }, "History"),
       el("button", { onclick: changes, disabled: !saved }, "Changes"),
+      el("button", { onclick: budgetView, disabled: !saved || !d.portfolioId }, "Budget"),
       el("button", { class: "danger", onclick: remove, disabled: !saved }, "Delete")),
   );
 }
 
 function body() {
   const d = st.draft;
-  return { name: d.name, description: d.description, runTargets: d.runTargets, schedules: d.schedules, actions: d.actions };
+  const trades = d.actions.some((a) => a.type === "PLACE_ORDER");
+  return { name: d.name, description: d.description, portfolioId: d.portfolioId || null,
+    orderGuards: trades ? d.orderGuards : null, runTargets: d.runTargets, schedules: d.schedules, actions: d.actions };
 }
 
 // ------------------------------------------------------------------ actions
@@ -274,7 +337,7 @@ const remove = () => guard(async () => {
   if (!confirm(`Delete "${st.draft.name}"? Its run history is kept.`)) return;
   await api(`/v1/automations/${st.selectedId}`, { method: "DELETE" });
   st.selectedId = null; st.draft = null;
-  $("#editor").replaceChildren(el("p", { class: "muted empty" }, "Deleted."));
+  setChildren($("#editor"), el("p", { class: "muted empty" }, "Deleted."));
   await loadAll();
 });
 
@@ -297,6 +360,35 @@ const history = () => guard(async () => {
       el("td", { class: "num" }, r.durationMs))))));
 });
 
+const budgetView = () => guard(async () => {
+  const id = st.selectedId;
+  const { pool, entries } = await api(`/v1/automations/${id}/budget`);
+  const form = { amount: 1000, note: "" };
+  const move = (verb) => guard(async () => {
+    await api(`/v1/automations/${id}/budget/${verb}`, { method: "POST", body: { amount: form.amount, note: form.note || null } });
+    await budgetView();
+  });
+  showResults(
+    el("h2", {}, "Budget"),
+    pool ? el("dl", { class: "kv" },
+      el("dt", {}, "Allocated"), el("dd", {}, money(pool.allocated)),
+      el("dt", {}, "Cash"), el("dd", {}, `${money(pool.cash)} (available ${money(pool.available)}, reserved ${money(pool.reserved)})`),
+      el("dt", {}, "Invested"), el("dd", {}, money(pool.invested)),
+      el("dt", {}, "Realized P&L"), el("dd", { class: tone(pool.realizedPnL) }, signed(pool.realizedPnL)),
+      el("dt", {}, "Fees"), el("dd", {}, money(pool.fees))) : el("p", { class: "muted" }, "No budget yet."),
+    el("div", { class: "row" }, "amount", numInput(form, "amount", { style: "width:100px", min: 0, step: "0.01" }),
+      textInput(form, "note", { placeholder: "note (optional)", class: "grow" }),
+      el("button", { class: "primary", onclick: () => move("allocate") }, "Allocate"),
+      el("button", { onclick: () => move("withdraw"), disabled: !pool }, "Withdraw")),
+    el("h3", {}, "Ledger"),
+    entries.length ? el("table", {},
+      el("thead", {}, el("tr", {}, ...["Time", "Type", "Amount", "Cash after", "Reserved after", "Note"].map((h, i) => el("th", { class: i > 1 && i < 5 ? "num" : "" }, h)))),
+      el("tbody", {}, ...entries.map((e) => el("tr", { title: [e.orderId, e.runId].filter(Boolean).join(" · ") },
+        el("td", {}, when(e.createdAt)), el("td", {}, e.type.toLowerCase().replace("_", " ")),
+        el("td", { class: `num ${tone(e.amount)}` }, signed(e.amount)), el("td", { class: "num" }, money(e.cashAfter)),
+        el("td", { class: "num" }, money(e.reservedAfter)), el("td", {}, e.note || ""))))) : el("p", { class: "muted" }, "No entries yet."));
+});
+
 const changes = () => guard(async () => {
   const { events } = await api(`/v1/automations/${st.selectedId}/events`);
   showResults(el("h2", {}, "Changes"), ...events.map((e) => el("div", { class: "note" },
@@ -307,7 +399,7 @@ const changes = () => guard(async () => {
 // ------------------------------------------------------------------ results
 
 function showResults(...nodes) {
-  $("#results").replaceChildren(...nodes.filter(Boolean));
+  setChildren($("#results"), ...nodes.filter(Boolean));
 }
 
 function showRun(run) {
@@ -335,6 +427,18 @@ function showRun(run) {
         a.notificationId ? el("div", { class: "muted" }, "notification sent to inbox") : null,
         a.error ? el("div", { class: "down" }, a.error) : null);
     }),
+    ...(r.actions || []).filter((a) => a.intents).map((a) => el("div", {},
+      el("h3", {}, `${a.index + 1}. ${a.side === "SELL" ? "Sell" : "Buy"} orders`,
+        el("span", { class: "muted" }, ` · ${a.intents.filter((x) => x.decision === "PLACE").length} placed${a.notHeld ? ` · ${a.notHeld} matches not held` : ""}`)),
+      el("table", {},
+        el("thead", {}, el("tr", {}, ...["#", "Symbol", "Qty", "Price", "Cost", "Decision", "Why"].map((h) => el("th", {}, h)))),
+        el("tbody", {}, ...a.intents.map((x) => el("tr", { title: x.orderId || "" },
+          el("td", {}, x.rank ?? ""), el("td", {}, el("b", {}, x.ticker)), el("td", { class: "num" }, fmt(x.quantity, 0)),
+          el("td", { class: "num" }, money(x.limitPrice ?? x.estimatedPrice)), el("td", { class: "num" }, money(x.estimatedCost)),
+          el("td", {}, el("span", { class: `badge ${x.decision === "PLACE" ? "SUCCEEDED" : x.decision === "FAILED" ? "FAILED" : "SKIPPED"}` },
+            x.decision === "PLACE" && run.preview ? "would place" : x.orderStatus ? x.orderStatus.toLowerCase() : x.decision.toLowerCase())),
+          el("td", { class: "muted" }, [x.skipReason, x.detail].filter(Boolean).join(": ")))))))),
+    r.budgetBefore ? el("p", { class: "muted" }, `Budget available ${money(r.budgetBefore.available)} → ${money(r.budgetAfter?.available)}`) : null,
     (r.matched || []).length ? el("table", {},
       el("thead", {}, el("tr", {}, el("th", {}, "Ticker"), el("th", {}, "Name"), el("th", { class: "num" }, "Price"), el("th", { class: "num" }, "Day %"))),
       el("tbody", {}, ...r.matched.map((s) => el("tr", {}, el("td", {}, el("b", {}, s.ticker)), el("td", {}, (s.name || "").slice(0, 36)),
