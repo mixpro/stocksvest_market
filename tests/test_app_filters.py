@@ -20,6 +20,7 @@ PRICE_10_TO_50 = {"type": "SYMBOL_PRICE", "priceReference": "LATEST_BAR", "condi
 def settings(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("APP_API_KEYS", "app-key")
+    monkeypatch.setenv("APP_RUN_SCHEDULER", "false")
     return Settings()
 
 

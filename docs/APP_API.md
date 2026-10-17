@@ -1,4 +1,4 @@
-# StocksVest App API: filters
+# StocksVest App API: filters and automations
 
 Filters narrow the halal stock universe step by step, for example "price $10–100, up more than 3% in 5 days".
 The app service stores filters, filter groups and the history of every run. It reads market data from the
@@ -145,9 +145,99 @@ A group is a named set of filters. Running it runs every member, and its result 
 
 ---
 
+## Automations
+
+An automation runs filters on a schedule and acts on the matched symbols. Phase 1 has one action:
+**Notify** (in-app inbox). Placing orders and adding to watchlists come in later phases; the API rejects
+them with `422 … not available yet`.
+
+```bash
+curl -X POST -H "X-API-Key: $APP_KEY" -H "Content-Type: application/json" \
+  http://localhost:8100/v1/automations -d '{
+    "name": "Momentum alert",
+    "runTargets": [{"type": "FILTER", "id": "flt_…"}],
+    "schedules": [{"type": "MARKET", "anchor": "REGULAR_OPEN", "offsetMinutes": 30}],
+    "actions": [{"type": "NOTIFY", "title": "{name}: {count} matches", "message": "", "skipWhenNoMatches": true}]
+  }'
+```
+
+- **`runTargets`:** filters or filter groups. The matched symbols are the union of their results.
+- **`actions`:** run in order. In `NOTIFY` titles and messages, `{name}` is the automation's name and `{count}` the number of matches.
+- **Saving:** every schedule gets a stable `id`, and every save raises `configVersion`.
+- **New automations** start `ACTIVE`.
+
+### Schedules
+
+| `type` | Fields | Example |
+|---|---|---|
+| `MARKET` | `anchor` (`PRE_MARKET_OPEN`, `REGULAR_OPEN`, `REGULAR_CLOSE`, `AFTER_HOURS_CLOSE`), `offsetMinutes`, optional `repeatEveryMinutes` (≥ 5) and `repeatUntil` | `{"type": "MARKET", "anchor": "REGULAR_CLOSE", "offsetMinutes": -15}` = 15 min before the close |
+| `DAILY` | `atTimes` | `{"type": "DAILY", "atTimes": ["09:45", "15:30"]}` |
+| `WEEKLY` | `onDays`, `atTimes`, `everyNWeeks` | `{"type": "WEEKLY", "onDays": ["MON"], "atTimes": ["10:00"]}` |
+| `INTERVAL` | `every` (minutes ≥ 5), `unit` (`MINUTE`, `HOUR`, `DAY`), optional `onDays`, `window` | `{"type": "INTERVAL", "every": 30, "unit": "MINUTE", "window": {"start": "09:30", "end": "16:00"}}` |
+| `ONCE` | `at` (with time zone offset) | `{"type": "ONCE", "at": "2026-10-20T10:00:00-04:00"}` |
+
+**`MARKET` schedules:**
+- They follow the trading calendar: they run only on trading days, use that day's session times (early closes included), and always use New York time.
+- Repeats stop *before* `repeatUntil` (default: the regular close).
+
+**All types also take:**
+- **`timezone`:** default `America/New_York`, e.g. `Asia/Jerusalem`. `MARKET` ignores it.
+- **`startAt`:** no runs before this time.
+- **`end`:** `{"type": "UNTIL", "until": …}` or `{"type": "COUNT", "count": 10}`.
+- **`exceptions`:** a list of dates with no runs.
+- **`missedPolicy`:** what happens to times missed while the app was down:
+  - `RUN_ONCE` (default): one catch-up run
+  - `SKIP`: recorded as one `SKIPPED` / `MISSED` run
+  - `RUN_ALL`: one run per missed time
+
+**Rules:**
+- Each scheduled time runs **at most once**, even after a crash or restart.
+- New, edited and resumed schedules start counting from now, so nothing is replayed.
+
+### Endpoints
+
+| Call | Notes |
+|---|---|
+| `GET /v1/automations?status=ACTIVE` | List |
+| `POST /v1/automations`, `GET` / `PUT` / `DELETE /v1/automations/{id}` | Manage. `DELETE` keeps the run history |
+| `POST /v1/automations/{id}/pause`, `/resume` | Paused automations don't run on schedule |
+| `POST /v1/automations/{id}/preview` | What a run would do now. Nothing is stored or sent |
+| `POST /v1/automations/preview` | Same for an unsaved automation (body = automation) |
+| `POST /v1/automations/{id}/run` | Run now and store the run (works when paused or switched off) |
+| `GET /v1/automations/{id}/runs` | Run history |
+| `GET /v1/automations/{id}/next-runs?count=5` | Upcoming run times per schedule |
+| `POST /v1/automations/schedule-preview?count=5` | Upcoming times for schedules being edited: `{"schedules": [...]}` |
+| `GET /v1/automations/{id}/events` | Change log: created, updated (what changed), paused, resumed |
+| `GET` / `PUT /v1/automations/switch` | Global switch: `{"automationsEnabled": false, "reason": "…"}`. While off, scheduled runs are recorded as `SKIPPED` / `SWITCH_OFF`. `GET` also shows scheduler health |
+
+### A run
+
+`status` is `SUCCEEDED`, `PARTIAL` (an action failed), `FAILED` (e.g. market API down) or `SKIPPED`
+(`OVERLAP`, `PAUSED`, `SWITCH_OFF`, `MISSED`). `result` holds:
+
+| Field | Contents |
+|---|---|
+| `trigger` | `SCHEDULE` (with `scheduleId`, `scheduledFor`) or `MANUAL` |
+| `configVersion` | The automation version that ran (the full definition is in `definition`) |
+| `market` | Session (`PRE_MARKET`, `REGULAR`, `AFTER_HOURS`, `CLOSED`) and how old the market data was |
+| `targets` | Each filter's steps and count (groups: each member) |
+| `matched` | Matched symbols with prices at run time |
+| `actions` | Each action's status; `notificationId` for notifications sent |
+| `metrics` | Duration and counts |
+
+### Notifications
+
+| Call | Notes |
+|---|---|
+| `GET /v1/notifications?unreadOnly=true&limit=50` | `{"unread": 3, "notifications": [...]}`, newest first. Each has `runId` |
+| `POST /v1/notifications/{id}/read` | Mark one read |
+| `POST /v1/notifications/read-all` | Mark all read |
+
+---
+
 ## Run history (for analysis)
 
-Every stored run, of filters now and of automations and other actions later, is kept for **6 months**
+Every stored run, of filters and automations now and of other actions later, is kept for **6 months**
 (`RUN_RETENTION_DAYS`, default 183). Each run saves the definition and the prices at run time, so you can later
 check how the selected symbols performed.
 
@@ -187,12 +277,17 @@ curl -H "X-API-Key: $APP_KEY" "http://localhost:8100/v1/market/bars/AAPL?timefra
 
 ## Sample app
 
-Open `http://<server>:8100/ui/` and enter an app key, which is stored in your browser only. You can:
+Open `http://<server>:8100/ui/` and enter an app key, which is stored in your browser only. The **Filters**
+page lets you:
 
 - create, edit, reorder and delete filters and groups
 - **Preview** while editing, and see how each step narrows the symbols
 - **Run & store**, then open **History** to see past runs
 - click a symbol to see its candlestick chart (1 min to 1 month bars)
+
+The **Automations** page lets you build automations (filters, schedules, notify actions), preview them, see
+upcoming run times, run now, pause or resume, see history and the change log, use the global switch, and read
+the inbox. The bell in the header shows unread notifications.
 
 ## Python example
 

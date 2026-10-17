@@ -1,16 +1,4 @@
-// StocksVest Filters sample app: exercises every filter, group and run endpoint of the app API.
-
-const $ = (sel) => document.querySelector(sel);
-const el = (tag, attrs = {}, ...children) => {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === "class") node.className = v;
-    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
-    else if (v !== undefined && v !== null && v !== false) node.setAttribute(k, v === true ? "" : v);
-  }
-  for (const c of children.flat()) if (c !== null && c !== undefined) node.append(c);
-  return node;
-};
+// Filters page: exercises every filter, group and run endpoint of the app API. Helpers are in common.js.
 
 const state = {
   meta: null,
@@ -22,50 +10,6 @@ const state = {
   result: null,          // last preview / run shown on the right
   chartTicker: null,
 };
-
-// ------------------------------------------------------------------ API
-
-function apiKey() {
-  try { return localStorage.getItem("svApiKey") || ""; } catch { return ""; }
-}
-
-function askKey() {
-  return new Promise((resolve) => {
-    const dlg = $("#key-dialog");
-    $("#key-input").value = apiKey();
-    dlg.onclose = () => {
-      try { localStorage.setItem("svApiKey", $("#key-input").value.trim()); } catch {}
-      resolve();
-    };
-    dlg.showModal();
-  });
-}
-
-async function api(path, { method = "GET", body } = {}) {
-  const res = await fetch(path, {
-    method,
-    headers: { "X-API-Key": apiKey(), ...(body ? { "Content-Type": "application/json" } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (res.status === 401) {
-    await askKey();
-    return api(path, { method, body });
-  }
-  if (res.status === 204) return null;
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(formatError(res.status, data.detail));
-  return data;
-}
-
-function formatError(status, detail) {
-  if (Array.isArray(detail)) {
-    // FastAPI validation errors: [{loc: ["body", "actions", 1, "maxValue"], msg}]
-    // Positions are shown 1-based to match the numbering in the editor.
-    const where = (loc) => loc.filter((p) => p !== "body").map((p) => (typeof p === "number" ? p + 1 : p)).join(" → ");
-    return detail.map((d) => `${where(d.loc)}: ${d.msg.replace(/^Value error, /, "")}`).join("\n");
-  }
-  return `${status}: ${detail || "request failed"}`;
-}
 
 // ------------------------------------------------------------------ loading
 
@@ -79,17 +23,11 @@ async function loadAll() {
   renderSidebar();
 }
 
-async function loadMarket() {
+async function loadUniverse() {
   try {
-    const [symbols, status] = await Promise.all([
-      api("/v1/market/symbols?limit=50000"), api("/v1/market/status"),
-    ]);
+    const symbols = await api("/v1/market/symbols?limit=50000");
     state.universe = Object.fromEntries(symbols.symbols.map((s) => [s.ticker, s]));
-    const synced = status.lastIncrementalAt ? new Date(status.lastIncrementalAt).toLocaleTimeString() : "never";
-    $("#market-status").textContent = `${status.symbols} halal symbols · last sync ${synced} · ~${status.dataDelayMinutes} min delay`;
-  } catch (e) {
-    $("#market-status").textContent = `market API: ${e.message}`;
-  }
+  } catch {}
 }
 
 // ------------------------------------------------------------------ sidebar
@@ -352,7 +290,6 @@ function showRun(run) {
 
 // ------------------------------------------------------------------ results
 
-const fmt = (v, digits = 2) => (v === null || v === undefined ? "—" : Number(v).toFixed(digits));
 
 function renderResults() {
   const r = state.result;
@@ -424,10 +361,6 @@ async function showChart(ticker) {
 
 $("#new-filter").onclick = () => select("filter", null);
 $("#new-group").onclick = () => select("group", null);
-$("#change-key").onclick = async () => { await askKey(); await Promise.all([loadAll(), loadMarket()]); };
 $("#chart-timeframe").onchange = () => state.chartTicker && showChart(state.chartTicker);
 
-(async () => {
-  if (!apiKey()) await askKey();
-  await Promise.all([loadAll(), loadMarket()]);
-})();
+start("index.html", () => Promise.all([loadAll(), loadUniverse()]));

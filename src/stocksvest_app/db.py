@@ -24,9 +24,10 @@ def connect(path: Path) -> sqlite3.Connection:
 
 
 def init(conn: sqlite3.Connection) -> None:
+    from .automations import store as automations_store
     from .filters import store as filters_store
     from .runs import store as runs_store
 
-    for schema in (filters_store.SCHEMA, runs_store.SCHEMA):
+    for schema in (filters_store.SCHEMA, runs_store.SCHEMA, automations_store.SCHEMA):
         conn.executescript(schema)
     conn.commit()

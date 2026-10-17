@@ -17,6 +17,7 @@ API_FUNCTIONS = [n for n, f in inspect.getmembers(MarketAPI, inspect.isfunction)
 def settings(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("APP_API_KEYS", "app-key")
+    monkeypatch.setenv("APP_RUN_SCHEDULER", "false")
     monkeypatch.setenv("MARKET_URL", "http://market:8000")
     monkeypatch.setenv("MARKET_API_KEY", "market-key")
     return Settings()

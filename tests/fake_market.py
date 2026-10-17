@@ -1,6 +1,23 @@
 """In-memory MarketAPI for app tests: same functions as MarketClient, canned data."""
 
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
+
 from stocksvest_app.market.client import MarketError
+
+ET = ZoneInfo("America/New_York")
+HOLIDAYS = {date(2026, 11, 26)}  # Thanksgiving
+EARLY_CLOSES = {date(2026, 11, 27)}  # closes 13:00, after-hours until 17:00
+
+
+def trading_day(d: date, regular_close: str | None = None) -> dict:
+    at = lambda h, m=0: datetime.combine(d, time(h, m), ET).isoformat()  # noqa: E731
+    early = d in EARLY_CLOSES
+    close = at(13) if early else at(16)
+    if regular_close and regular_close.startswith(d.isoformat()):
+        close = regular_close
+    return {"date": d.isoformat(), "preMarketOpen": at(4), "regularOpen": at(9, 30), "regularClose": close,
+            "afterHoursClose": at(17) if early else at(20), "isEarlyClose": early}
 
 UNIVERSE = {
     "AAA": {"id": "id-AAA", "ticker": "AAA", "name": "Aaa Inc", "assetType": "COMMON_STOCK", "sector": "TECHNOLOGY"},
@@ -23,9 +40,10 @@ CHANGES = {"AAA": {"change": 2.0, "changePercent": 25.0}, "BBB": {"change": -5.0
 
 
 class FakeMarket:
-    def __init__(self, fail: bool = False, regular_close: str = "2026-10-16T16:00:00-04:00"):
+    def __init__(self, fail: bool = False, regular_close: str | None = None, last_sync: str | None = None):
         self.fail = fail
         self.regular_close = regular_close
+        self.last_sync = last_sync
         self.calls: list[tuple] = []
 
     def _check(self):
@@ -65,7 +83,13 @@ class FakeMarket:
 
     def calendar(self, start=None, end=None):
         self.calls.append(("calendar", start, end))
-        return {"days": [{"date": start, "regularClose": self.regular_close}]}
+        d, last = date.fromisoformat(start), date.fromisoformat(end or start)
+        days = []
+        while d <= last:
+            if d.weekday() < 5 and d not in HOLIDAYS:
+                days.append(trading_day(d, self.regular_close))
+            d += timedelta(days=1)
+        return {"days": days}
 
     def status(self):
-        return {"symbols": len(UNIVERSE), "lastIncrementalAt": None, "dataDelayMinutes": 16}
+        return {"symbols": len(UNIVERSE), "lastIncrementalAt": self.last_sync, "dataDelayMinutes": 16}

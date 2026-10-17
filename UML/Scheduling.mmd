@@ -55,11 +55,10 @@ classDiagram
     }
 
     class MarketSchedule {
-        - exchange: Exchange
-        - sessions: List~Session~
-        - anchor: MarketAnchor?
+        - anchor: MarketAnchor
         - offsetMinutes: int
-        - everyNMinutes: int?
+        - repeatEveryMinutes: int?
+        - repeatUntil: MarketAnchor?
         - dayRule: TradingDayRule?
         - holidayPolicy: HolidayPolicy
     }
@@ -148,11 +147,10 @@ classDiagram
     }
     class MarketAnchor {
         <<enumeration>>
-        SESSION_OPEN
-        SESSION_CLOSE
-        OPEN_AUCTION
-        CLOSE_AUCTION
-        MOC_CUTOFF
+        PRE_MARKET_OPEN
+        REGULAR_OPEN
+        REGULAR_CLOSE
+        AFTER_HOURS_CLOSE
     }
     class TradingDayType {
         <<enumeration>>
@@ -223,3 +221,4 @@ classDiagram
     note for EventSchedule "symbol is required for EX_DIVIDEND.\nNegative offsetTradingDays = before the event."
     note for EventCalendar "EX_DIVIDEND: Alpaca corporate actions API.\nFOMC, CPI, JOBS_REPORT: MANUAL table, filled yearly.\nOPEX, TRIPLE_WITCHING, INDEX_REBALANCE: CALCULATED."
     note for MissedPolicy "RUN_ALL is not allowed for automations that place orders."
+    note for Schedule "Implemented (phase 1): ONCE, INTERVAL, DAILY, WEEKLY, MARKET (anchor + offset + repeat).\nLater: MONTHLY, YEARLY, CRON, EVENT, MarketSchedule.dayRule / holidayPolicy.\nMarket schedules run on trading days only (holidays skipped, early closes respected)."

@@ -17,6 +17,7 @@ from .market.data import MarketData
 class AppContext:
     settings: Settings
     market_api: MarketAPI
+    scheduler: object | None = None  # the automation scheduler, when running
 
     def __post_init__(self):
         self.market = MarketData(self.market_api)

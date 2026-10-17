@@ -8,6 +8,7 @@ from .client import MarketAPI
 # Above this many symbols, ask for all symbols and filter locally (keeps URLs short).
 MAX_SYMBOLS_PER_CALL = 200
 UNIVERSE_TTL_SECONDS = 600
+CALENDAR_TTL_SECONDS = 3600
 
 
 class MarketData:
@@ -15,6 +16,7 @@ class MarketData:
         self.api = api
         self._universe: tuple[float, dict[str, dict]] | None = None
         self._lock = threading.Lock()
+        self._calendar: dict[tuple[str, str], tuple[float, list[dict]]] = {}
 
     def universe(self) -> dict[str, dict]:
         """All halal symbols by ticker, cached for a few minutes."""
@@ -40,6 +42,18 @@ class MarketData:
             return {}
         data = self.api.price_change(amount, unit, self._symbols_arg(tickers))["changes"]
         return {t: v for t, v in data.items() if t in tickers}
+
+    def calendar_days(self, start, end) -> list[dict]:
+        """Trading days between two dates (inclusive), cached for an hour."""
+        key = (str(start), str(end))
+        with self._lock:
+            hit = self._calendar.get(key)
+            if hit and time.monotonic() - hit[0] < CALENDAR_TTL_SECONDS:
+                return hit[1]
+        days = self.api.calendar(str(start), str(end))["days"]
+        with self._lock:
+            self._calendar[key] = (time.monotonic(), days)
+        return days
 
     def trading_day(self, day: str) -> dict | None:
         days = self.api.calendar(day, day)["days"]

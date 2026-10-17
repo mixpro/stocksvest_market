@@ -5,6 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from ..automations import store as automations_store
 from ..deps import AppContext
 from ..market.client import MarketError
 from ..runs import store as runs_store
@@ -121,7 +122,7 @@ def router(ctx: AppContext) -> APIRouter:
     @r.delete("/v1/filters/{filter_id}", tags=["filters"], status_code=204)
     def delete_filter(filter_id: str, conn: Conn):
         load_filter(conn, filter_id)
-        users = store.filter_users(conn, filter_id)
+        users = store.filter_users(conn, filter_id) + automations_store.automations_using(conn, "FILTER", filter_id)
         if users:
             raise HTTPException(409, f"filter is used by: {', '.join(users)}")
         store.delete_filter(conn, filter_id)
@@ -182,7 +183,7 @@ def router(ctx: AppContext) -> APIRouter:
     @r.delete("/v1/filter-groups/{group_id}", tags=["filter groups"], status_code=204)
     def delete_group(group_id: str, conn: Conn):
         load_group(conn, group_id)
-        users = store.group_users(conn, group_id)
+        users = store.group_users(conn, group_id) + automations_store.automations_using(conn, "FILTER_GROUP", group_id)
         if users:
             raise HTTPException(409, f"group is used by: {', '.join(users)}")
         store.delete_group(conn, group_id)

@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS runs (
     subject_id  TEXT,
     ran_at      TEXT NOT NULL,
     duration_ms INTEGER NOT NULL,
-    status      TEXT NOT NULL,             -- SUCCEEDED | FAILED
+    status      TEXT NOT NULL,             -- SUCCEEDED | PARTIAL | FAILED | SKIPPED
     definition  TEXT NOT NULL,
     result      TEXT,
     error       TEXT
@@ -44,14 +44,16 @@ def run_json(r: sqlite3.Row, include_result: bool = True) -> dict:
 
 
 def add_run(conn, kind: str, subject_id: str | None, definition: dict, duration_ms: int,
-            result: dict | None = None, error: str | None = None, retention_days: int = 183) -> dict:
-    """Store a run and drop runs older than the retention window."""
+            result: dict | None = None, error: str | None = None, retention_days: int = 183,
+            status: str | None = None) -> dict:
+    """Store a run and drop runs older than the retention window.
+    `status` defaults to FAILED when there is an error, else SUCCEEDED (automations also use PARTIAL and SKIPPED)."""
     run_id = new_id("run")
     with conn:
         conn.execute(
             "INSERT INTO runs(id, kind, subject_id, ran_at, duration_ms, status, definition, result, error) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (run_id, kind, subject_id, now_iso(), duration_ms, "FAILED" if error else "SUCCEEDED",
+            (run_id, kind, subject_id, now_iso(), duration_ms, status or ("FAILED" if error else "SUCCEEDED"),
              json.dumps(definition), json.dumps(result) if result is not None else None, error),
         )
         cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
