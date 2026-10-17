@@ -1,0 +1,51 @@
+classDiagram
+    %% Conventions (all files): fields camelCase, enum values UPPER_CASE,
+    %% money and quantities Decimal, optional fields end with "?".
+    %% Entities carry id, createdAt, updatedAt.
+
+    class InvestmentPortfolio {
+      - id: string
+      - name: string
+      - description: string
+      - createdAt: datetime
+      - updatedAt: datetime
+      - cash: Decimal
+      - currency: string
+      - positions: List~Position~
+      - orders: List~Order~
+      + availableCash() Decimal
+    }
+
+    class Position {
+      - id: string
+      - portfolioId: string
+      - symbolId: string
+      - quantity: Decimal
+      - averageCost: Decimal
+      - realizedPnL: Decimal
+      - openedAt: datetime
+      - updatedAt: datetime
+      + marketValue(lastPrice: Decimal) Decimal
+      + unrealizedPnL(lastPrice: Decimal) Decimal
+    }
+
+    class Order {
+      <<from Orders.mmd>>
+    }
+
+    class Fill {
+      <<from Orders.mmd>>
+    }
+
+    class Automation {
+      <<from Automations.mmd>>
+    }
+
+    InvestmentPortfolio "1" *-- "*" Position : holds
+    InvestmentPortfolio "1" *-- "*" Order : places
+    Order "1" *-- "*" Fill
+    Fill ..> Position : updates quantity, averageCost, realizedPnL
+    Automation "*" --> "0..1" InvestmentPortfolio : trades in
+
+    note for InvestmentPortfolio "availableCash() = cash minus cash reserved by open BUY orders"
+    note for Position "One position per (portfolioId, symbolId).\nMaintained from fills, not by replaying orders.\nquantity 0 = closed, kept for realizedPnL history.\nunrealizedPnL is calculated from the synced price, never stored."

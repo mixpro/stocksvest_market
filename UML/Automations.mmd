@@ -1,0 +1,181 @@
+classDiagram
+  class Automation {
+    - id: string
+    - name: string
+    - description: string
+    - createdAt: datetime
+    - updatedAt: datetime
+    - isActive: bool
+    - portfolioId: string?
+    - runTargets: List~FilterRunTarget~
+    - schedules: List~Schedule~
+    - actions: List~AutomationAction~
+    - orderGuards: OrderGuards?
+  }
+
+  class FilterRunTargetType {
+    <<enumeration>>
+    FILTER
+    FILTER_GROUP
+  }
+
+  class FilterRunTarget {
+    - id: string
+    - type: FilterRunTargetType
+  }
+
+  class AutomationAction {
+    <<abstract>>
+    + execute(matchedSymbols: List~string~, run: AutomationRun) void
+  }
+
+  class NotifyAction {
+    - title: string
+    - message: string
+    - includeMatchedSymbols: bool
+  }
+
+  class AddToWatchlistAction {
+    - watchlistId: string
+  }
+
+  class PlaceOrderAction {
+    - side: OrderSide
+    - type: OrderType
+    - timeInForce: TimeInForce
+    - limitOffsetPercent: Decimal?
+    - stopOffsetPercent: Decimal?
+    - trailPercent: Decimal?
+    - extendedHours: bool
+    - selection: SymbolSelection
+    - sizings: List~OrderSizing~
+  }
+
+  class SymbolSelection {
+    - mode: SelectionMode
+    - topN: int?
+    - rankBy: RankingKey?
+    - descending: bool
+  }
+
+  class SelectionMode {
+    <<enumeration>>
+    ALL_MATCHES
+    TOP_N
+  }
+
+  class RankingKey {
+    <<enumeration>>
+    LAST_PRICE
+    DAILY_CHANGE_PERCENT
+    DAILY_VOLUME
+    POSITION_VALUE
+    UNREALIZED_PNL_PERCENT
+  }
+
+  class OrderSizing {
+    - mode: OrderSizingMode
+    - value: Decimal
+  }
+
+  class OrderSizingMode {
+    <<enumeration>>
+    QUANTITY
+    CASH_AMOUNT
+    PERCENT_OF_CASH
+    PERCENT_OF_POSITION
+  }
+
+  class OrderGuards {
+    - maxOrdersPerRun: int?
+    - maxPositionValue: Decimal?
+    - maxPositionPercent: Decimal?
+    - regularHoursOnly: bool
+    - skipBuyIfHeld: bool
+  }
+
+  class AutomationRun {
+    - id: string
+    - automationId: string
+    - scheduledFor: datetime
+    - startedAt: datetime
+    - finishedAt: datetime?
+    - status: RunStatus
+    - matchedSymbols: List~string~
+    - orderIds: List~string~
+    - skipped: List~string~
+    - errors: List~string~
+  }
+
+  class RunStatus {
+    <<enumeration>>
+    RUNNING
+    SUCCEEDED
+    PARTIAL
+    FAILED
+  }
+
+  class InvestmentPortfolio {
+    <<from InvestmentPortfolio.mmd>>
+  }
+
+  class Schedule {
+    <<from Scheduling.mmd>>
+  }
+
+  class Filter {
+    <<from FiltersPage.mmd>>
+  }
+
+  class FilterGroup {
+    <<from FiltersPage.mmd>>
+  }
+
+  class Watchlist {
+    <<from WatchlistPage.mmd>>
+  }
+
+  class OrderSide {
+    <<from Orders.mmd>>
+  }
+
+  class OrderType {
+    <<from Orders.mmd>>
+  }
+
+  class TimeInForce {
+    <<from Orders.mmd>>
+  }
+
+  class Order {
+    <<from Orders.mmd>>
+  }
+
+  Automation "*" --> "0..1" InvestmentPortfolio : trades in
+  Automation "1" *-- "1..*" FilterRunTarget : runs
+  FilterRunTarget "1" --> "1" FilterRunTargetType
+  FilterRunTarget ..> Filter : when type is FILTER
+  FilterRunTarget ..> FilterGroup : when type is FILTER_GROUP
+  Automation "1" *-- "1..*" Schedule : at least one
+  Automation "1" *-- "*" AutomationAction : ordered
+  Automation "1" *-- "0..1" OrderGuards
+  Automation "1" *-- "*" AutomationRun : history
+  AutomationRun --> RunStatus
+  AutomationAction <|-- NotifyAction
+  AutomationAction <|-- AddToWatchlistAction
+  AutomationAction <|-- PlaceOrderAction
+  AddToWatchlistAction ..> Watchlist : adds matched symbols
+  PlaceOrderAction "1" *-- "1" SymbolSelection
+  PlaceOrderAction "1" *-- "1..*" OrderSizing
+  SymbolSelection --> SelectionMode
+  SymbolSelection --> RankingKey
+  OrderSizing --> OrderSizingMode
+  PlaceOrderAction --> OrderSide
+  PlaceOrderAction --> OrderType
+  PlaceOrderAction --> TimeInForce
+  PlaceOrderAction ..> Order : creates
+  AutomationRun ..> Order : orderIds
+
+  note for Automation "Matched symbols = UNION of all runTargets' results.\nportfolioId is required when any action is a PlaceOrderAction.\nMissedPolicy.RUN_ALL is not allowed when any action is a PlaceOrderAction."
+  note for PlaceOrderAction "ALL_MATCHES: sizings has 1 entry, applied to each match.\nTOP_N: sizings has N entries, sizings[i] applies to rank i+1.\nBUY sizing: QUANTITY, CASH_AMOUNT or PERCENT_OF_CASH.\nSELL sizing: QUANTITY or PERCENT_OF_POSITION; only held matches, capped at held quantity.\nSum of estimated BUY cost must be ≤ portfolio availableCash();\norders go in rank order and one that would exceed it is skipped and logged.\nLimit/stop prices = last price adjusted by the offset percents."
+  note for OrderGuards "maxOrdersPerRun: extra orders are skipped in rank order.\nmaxPositionValue / maxPositionPercent cap each BUY.\nregularHoursOnly: no orders outside the REGULAR session (TradingCalendar); forces extendedHours = false.\nskipBuyIfHeld: no BUY for symbols already in the portfolio."

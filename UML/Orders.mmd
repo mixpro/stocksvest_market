@@ -1,0 +1,82 @@
+classDiagram
+  class Order {
+    - id: string
+    - portfolioId: string
+    - symbolId: string
+    - automationId: string?
+    - automationRunId: string?
+    - clientOrderId: string
+    - brokerOrderId: string?
+    - side: OrderSide
+    - type: OrderType
+    - timeInForce: TimeInForce
+    - quantity: Decimal
+    - filledQuantity: Decimal
+    - limitPrice: Decimal?
+    - stopPrice: Decimal?
+    - trailPrice: Decimal?
+    - trailPercent: Decimal?
+    - extendedHours: bool
+    - status: OrderStatus
+    - rejectReason: string?
+    - averageFillPrice: Decimal?
+    - createdAt: datetime
+    - updatedAt: datetime
+    - submittedAt: datetime?
+    - filledAt: datetime?
+    - cancelledAt: datetime?
+    - fills: List~Fill~
+  }
+
+  class Fill {
+    - id: string
+    - orderId: string
+    - quantity: Decimal
+    - price: Decimal
+    - fee: Decimal
+    - executedAt: datetime
+  }
+
+  class OrderSide {
+    <<enumeration>>
+    BUY
+    SELL
+  }
+
+  class OrderType {
+    <<enumeration>>
+    MARKET
+    LIMIT
+    STOP
+    STOP_LIMIT
+    TRAILING_STOP
+  }
+
+  class TimeInForce {
+    <<enumeration>>
+    DAY
+    GTC
+    OPG
+    CLS
+    IOC
+    FOK
+  }
+
+  class OrderStatus {
+    <<enumeration>>
+    PENDING
+    SUBMITTED
+    PARTIALLY_FILLED
+    FILLED
+    CANCELLED
+    REJECTED
+    EXPIRED
+  }
+
+  Order "1" --> "1" OrderSide
+  Order "1" --> "1" OrderType
+  Order "1" --> "1" TimeInForce
+  Order "1" --> "1" OrderStatus
+  Order "1" *-- "*" Fill
+
+  note for Order "clientOrderId is unique: resubmitting the same id never creates a second order.\nlimitPrice: LIMIT, STOP_LIMIT. stopPrice: STOP, STOP_LIMIT.\nTRAILING_STOP: exactly one of trailPrice / trailPercent.\nextendedHours requires LIMIT + DAY (Alpaca rule).\naverageFillPrice is cached from fills.\nAlpaca statuses (accepted, pending_cancel, replaced...) map onto OrderStatus."

@@ -1,0 +1,225 @@
+classDiagram
+    class Schedule {
+        <<abstract>>
+        - startAt: datetime
+        - timezone: string
+        - end: EndCondition
+        - exceptions: List~Date~
+        - missedPolicy: MissedPolicy
+        - lastRunAt: datetime?
+        - nextRunAt: datetime?
+    }
+    class TimeOfDay {
+        - hour: int
+        - minute: int
+    }
+    class TimeWindow {
+        - from: TimeOfDay
+        - to: TimeOfDay
+    }
+    class OnceSchedule
+    class IntervalSchedule {
+        - every: int
+        - unit: Unit
+        - anchor: Anchor
+        - onDays: List~Weekday~
+        - window: TimeWindow?
+    }
+    class DailySchedule {
+        - atTimes: List~TimeOfDay~
+    }
+    class WeeklySchedule {
+        - everyNWeeks: int
+        - onDays: List~Weekday~
+        - atTimes: List~TimeOfDay~
+    }
+    class MonthlySchedule {
+        - everyNMonths: int
+        - dayOfMonth: int?
+        - nth: int?
+        - weekday: Weekday?
+        - atTimes: List~TimeOfDay~
+    }
+    class YearlySchedule {
+        - month: int
+        - day: int
+        - atTimes: List~TimeOfDay~
+    }
+    class CronSchedule {
+        - expression: string
+    }
+    class EndCondition {
+        - type: EndType
+        - until: datetime?
+        - count: int?
+    }
+
+    class MarketSchedule {
+        - exchange: Exchange
+        - sessions: List~Session~
+        - anchor: MarketAnchor?
+        - offsetMinutes: int
+        - everyNMinutes: int?
+        - dayRule: TradingDayRule?
+        - holidayPolicy: HolidayPolicy
+    }
+    class TradingDayRule {
+        - type: TradingDayType
+        - everyN: int?
+        - nth: int?
+        - period: Period?
+    }
+    class EventSchedule {
+        - event: MarketEventType
+        - symbol: string?
+        - offsetTradingDays: int
+        - offsetMinutes: int
+    }
+    class TradingCalendar {
+        - exchange: Exchange
+        - holidays: List~Date~
+        - earlyCloseDays: List~Date~
+        + isTradingDay(date: Date) bool
+        + sessionTimes(date: Date) SessionTimes
+    }
+    class SessionTimes {
+        - date: Date
+        - preMarketOpen: datetime
+        - regularOpen: datetime
+        - regularClose: datetime
+        - afterHoursClose: datetime
+        - isEarlyClose: bool
+    }
+    class EventCalendar {
+        - events: List~MarketEvent~
+        + eventsOn(date: Date, type: MarketEventType, symbol: string?) List~MarketEvent~
+    }
+    class MarketEvent {
+        - type: MarketEventType
+        - date: Date
+        - symbol: string?
+        - source: EventSource
+    }
+
+    class Weekday {
+        <<enumeration>>
+        SUN
+        MON
+        TUE
+        WED
+        THU
+        FRI
+        SAT
+    }
+    class Unit {
+        <<enumeration>>
+        MINUTE
+        HOUR
+        DAY
+        WEEK
+    }
+    class Anchor {
+        <<enumeration>>
+        FIXED
+        AFTER_COMPLETION
+    }
+    class EndType {
+        <<enumeration>>
+        NEVER
+        UNTIL
+        COUNT
+    }
+    class MissedPolicy {
+        <<enumeration>>
+        RUN_ONCE
+        RUN_ALL
+        SKIP
+    }
+    class Exchange {
+        <<enumeration>>
+        NYSE
+        NASDAQ
+    }
+    class Session {
+        <<enumeration>>
+        PRE_MARKET
+        REGULAR
+        AFTER_HOURS
+    }
+    class MarketAnchor {
+        <<enumeration>>
+        SESSION_OPEN
+        SESSION_CLOSE
+        OPEN_AUCTION
+        CLOSE_AUCTION
+        MOC_CUTOFF
+    }
+    class TradingDayType {
+        <<enumeration>>
+        EVERY_N
+        NTH_OF_PERIOD
+        LAST_OF_PERIOD
+    }
+    class Period {
+        <<enumeration>>
+        WEEK
+        MONTH
+        QUARTER
+        YEAR
+    }
+    class MarketEventType {
+        <<enumeration>>
+        EX_DIVIDEND
+        OPEX_MONTHLY
+        OPEX_WEEKLY
+        TRIPLE_WITCHING
+        FOMC
+        CPI
+        JOBS_REPORT
+        INDEX_REBALANCE
+    }
+    class EventSource {
+        <<enumeration>>
+        ALPACA_CORPORATE_ACTIONS
+        MANUAL
+        CALCULATED
+    }
+    class HolidayPolicy {
+        <<enumeration>>
+        SKIP
+        PREVIOUS_TRADING_DAY
+        NEXT_TRADING_DAY
+    }
+
+    Schedule <|-- OnceSchedule
+    Schedule <|-- IntervalSchedule
+    Schedule <|-- DailySchedule
+    Schedule <|-- WeeklySchedule
+    Schedule <|-- MonthlySchedule
+    Schedule <|-- YearlySchedule
+    Schedule <|-- CronSchedule
+    Schedule <|-- MarketSchedule
+    Schedule <|-- EventSchedule
+    Schedule "1" *-- "1" EndCondition
+    Schedule --> MissedPolicy
+    IntervalSchedule "1" *-- "0..1" TimeWindow
+    DailySchedule "1" *-- "1..*" TimeOfDay
+    WeeklySchedule "1" *-- "1..*" TimeOfDay
+    MonthlySchedule "1" *-- "1..*" TimeOfDay
+    YearlySchedule "1" *-- "1..*" TimeOfDay
+    TimeWindow "1" *-- "2" TimeOfDay
+    MarketSchedule "1" *-- "0..1" TradingDayRule
+    MarketSchedule ..> TradingCalendar : resolves via
+    EventSchedule ..> TradingCalendar : resolves via
+    EventSchedule ..> EventCalendar : event dates from
+    TradingCalendar ..> SessionTimes : returns
+    EventCalendar "1" *-- "*" MarketEvent
+    MarketEvent --> MarketEventType
+    MarketEvent --> EventSource
+
+    note for MonthlySchedule "Use dayOfMonth OR (nth + weekday), never both.\ndayOfMonth -1 = last day; days past month end run on the last day."
+    note for YearlySchedule "Feb 29 runs on Feb 28 in non-leap years."
+    note for MarketSchedule "Always evaluated in the exchange time zone (America/New_York); Schedule.timezone is ignored."
+    note for EventSchedule "symbol is required for EX_DIVIDEND.\nNegative offsetTradingDays = before the event."
+    note for EventCalendar "EX_DIVIDEND: Alpaca corporate actions API.\nFOMC, CPI, JOBS_REPORT: MANUAL table, filled yearly.\nOPEX, TRIPLE_WITCHING, INDEX_REBALANCE: CALCULATED."
+    note for MissedPolicy "RUN_ALL is not allowed for automations that place orders."

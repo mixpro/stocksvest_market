@@ -8,6 +8,21 @@ services:
       - ./data:/data
     restart: unless-stopped
 
+  app:
+    build: .
+    command: ["python", "-m", "stocksvest_app", "serve"]
+    env_file: .env
+    environment:
+      MARKET_URL: http://market:8000
+      DATA_DIR: /data
+    ports:
+      - "8100:8100"
+    volumes:
+      - ./data:/data
+    depends_on:
+      - market
+    restart: unless-stopped
+
   grafana:
     image: grafana/grafana:11.3.0
     # The service container writes ./data as root; SQLite readers in WAL mode need write access

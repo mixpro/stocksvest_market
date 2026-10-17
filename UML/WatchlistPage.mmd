@@ -1,0 +1,30 @@
+classDiagram
+  class WatchlistGroup {
+    - id: string
+    - name: string
+    - description: string
+    - createdAt: datetime
+    - updatedAt: datetime
+    - watchlists: List~Watchlist~
+  }
+
+  class Watchlist {
+    - id: string
+    - name: string
+    - description: string
+    - createdAt: datetime
+    - updatedAt: datetime
+    - entries: List~WatchlistEntry~
+  }
+
+  class WatchlistEntry {
+    - symbolId: string
+    - addedAt: datetime
+    - notes: string?
+    - sortOrder: int?
+  }
+
+  WatchlistGroup "1" o-- "*" Watchlist
+  Watchlist "1" *-- "*" WatchlistEntry
+
+  note for WatchlistEntry "A symbol appears at most once per watchlist."

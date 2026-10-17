@@ -54,6 +54,25 @@ PYTHONPATH=src .venv/bin/python -m stocksvest_market sync nightly
 
 Tests: `.venv/bin/python -m pytest`
 
+## App service (filters)
+
+`docker compose up -d` also starts the **app service** on port 8100. It stores filters, filter groups and a
+6-month run history in `data/app.db`, and reads market data from the market service.
+
+- Sample web app: `http://<server>:8100/ui/`. Enter one of the `APP_API_KEYS` values.
+- API tutorial: [docs/APP_API.md](docs/APP_API.md)
+- Settings in `.env`: `APP_API_KEYS`, `MARKET_API_KEY` (one of `API_KEYS`), and optionally `RUN_RETENTION_DAYS`
+
+Code layout (`src/stocksvest_app/`): one folder per feature, each with its own models, storage and routes.
+
+| Folder | Contents |
+|---|---|
+| `filters/` | Filter and group models, storage, evaluation engine, `/v1/filters*` routes |
+| `runs/` | Shared run history (`/v1/runs`), used by every feature that runs something |
+| `market/` | `client.py`: one function per market endpoint, all market URLs in `ENDPOINTS`. `data.py`: caching and batching helpers. `routes.py`: `/v1/market/*` |
+| `api.py`, `deps.py`, `db.py`, `config.py` | App assembly, shared dependencies, DB connection and schema setup, settings |
+| `static/` | Sample web app |
+
 ## Viewing the data in Grafana
 
 `docker compose up -d` also starts Grafana on port 3000 (user `admin`, password `GRAFANA_ADMIN_PASSWORD` from `.env`).
@@ -137,3 +156,4 @@ without a time zone they are read as New York time. A symbol can be given as its
 | `TradingCalendar` / `SessionTimes`, `OrderGuards.regularHoursOnly` | `/v1/calendar` |
 | Symbol charts | `/v1/bars` |
 | `SectorAction` | `sector` on `/v1/symbols`, keys from `/v1/sectors` (needs `SEC_USER_AGENT`) |
+| Filters, groups, runs | App service: [docs/APP_API.md](docs/APP_API.md) |

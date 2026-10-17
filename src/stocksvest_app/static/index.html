@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>StocksVest Filters</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+  <header>
+    <strong>StocksVest Filters</strong>
+    <span id="market-status" class="muted"></span>
+    <button id="change-key" class="link">API key</button>
+  </header>
+
+  <main>
+    <aside id="sidebar">
+      <section>
+        <div class="section-head"><h2>Filters</h2><button id="new-filter">+ New</button></div>
+        <ul id="filter-list" class="list"></ul>
+      </section>
+      <section>
+        <div class="section-head"><h2>Groups</h2><button id="new-group">+ New</button></div>
+        <ul id="group-list" class="list"></ul>
+      </section>
+    </aside>
+
+    <section id="editor">
+      <p class="muted empty">Select a filter or group, or create a new one.</p>
+    </section>
+
+    <section id="results">
+      <div id="result-head"></div>
+      <div id="table-wrap"></div>
+      <div id="chart-box" hidden>
+        <div class="section-head">
+          <h2 id="chart-title"></h2>
+          <select id="chart-timeframe">
+            <option value="1Min">1 min (7 days)</option>
+            <option value="1Hour">1 hour</option>
+            <option value="1Day" selected>1 day</option>
+            <option value="1Week">1 week</option>
+            <option value="1Month">1 month</option>
+          </select>
+        </div>
+        <div id="chart"></div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="key-dialog">
+    <form method="dialog">
+      <h2>App API key</h2>
+      <p class="muted">One of the <code>APP_API_KEYS</code> values from the server's <code>.env</code>. Stored in this browser only.</p>
+      <input id="key-input" type="password" autocomplete="off" required>
+      <menu><button value="ok">Save</button></menu>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
