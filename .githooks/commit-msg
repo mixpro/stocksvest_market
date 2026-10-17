@@ -1,0 +1,40 @@
+#!/bin/sh
+# Commit message rule: the first line must be
+#
+#   [<part>][<type>] - <description>
+#
+#   part: which part of the implementation, lowercase words joined by "-"
+#         e.g. market, app-filters, app-automations
+#   type: one of TYPES below
+#
+# Example: [app-filters][fix] - Reject BETWEEN without maxValue
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+
+TYPES="feature|fix|sub-task|refactor|docs|test|chore"
+
+# First line that is not a comment (git strips "#" lines from the message).
+subject=$(grep -v '^#' "$1" | sed -n '/[^[:space:]]/{p;q;}')
+
+# Messages git writes itself.
+case "$subject" in
+  "Merge "*|"Revert "*|"fixup! "*|"squash! "*|"amend! "*) exit 0 ;;
+esac
+
+if printf '%s\n' "$subject" | grep -Eq "^\[[a-z0-9]+(-[a-z0-9]+)*\]\[($TYPES)\] - [^[:space:]].*$"; then
+  exit 0
+fi
+
+cat >&2 <<MSG
+✗ Commit rejected: the first line must look like
+
+    [<part>][<type>] - <description>
+
+  part: lowercase words joined by "-"   e.g. market, app-filters, app-automations
+  type: ${TYPES}
+
+  example: [app-filters][fix] - Reject BETWEEN without maxValue
+
+  got:     ${subject}
+MSG
+exit 1

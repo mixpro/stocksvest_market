@@ -157,3 +157,25 @@ without a time zone they are read as New York time. A symbol can be given as its
 | Symbol charts | `/v1/bars` |
 | `SectorAction` | `sector` on `/v1/symbols`, keys from `/v1/sectors` (needs `SEC_USER_AGENT`) |
 | Filters, groups, runs | App service: [docs/APP_API.md](docs/APP_API.md) |
+
+## Commit rules
+
+The first line of every commit message must be:
+
+```
+[<part>][<type>] - <description>
+```
+
+| Field | Values |
+|---|---|
+| `part` | The part of the implementation, in lowercase words joined by `-`: `market`, `app-filters`, `app-automations`, … |
+| `type` | `feature`, `fix`, `sub-task`, `refactor`, `docs`, `test`, `chore` |
+
+Example: `[app-filters][fix] - Reject BETWEEN without maxValue`
+
+The `.githooks/commit-msg` hook rejects commits that don't match. Merge, revert and `fixup!`/`squash!` messages that
+git writes itself are allowed. Enable the hook once after cloning:
+
+```bash
+git config core.hooksPath .githooks
+```
