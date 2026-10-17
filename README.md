@@ -57,8 +57,9 @@ Tests: `.venv/bin/python -m pytest`
 ## App service (filters)
 
 `docker compose up -d` also starts the **app service** on port 8100. It stores filters, filter groups,
-automations (scheduled filter runs with notifications), an inbox and a 6-month run history in `data/app.db`, and
-reads market data from the market service.
+automations (scheduled filter runs that notify and place paper orders), budgets, portfolios, orders and fills, an
+inbox and a 6-month run history in `data/app.db`. It reads market data from the market service and trades through
+broker adapters (Alpaca paper today), syncing with the broker every minute.
 
 - Sample web app: `http://<server>:8100/ui/`. Enter one of the `APP_API_KEYS` values.
 - API tutorial: [docs/APP_API.md](docs/APP_API.md)
@@ -69,11 +70,14 @@ Code layout (`src/stocksvest_app/`): one folder per feature, each with its own m
 | Folder | Contents |
 |---|---|
 | `filters/` | Filter and group models, storage, evaluation engine, `/v1/filters*` routes |
-| `automations/` | Automation and schedule models, schedule timing, storage, runner, background scheduler, `/v1/automations*` and `/v1/notifications` routes |
+| `automations/` | Automation and schedule models, schedule timing, storage, runner, order planner, budget pools, background scheduler, `/v1/automations*` and `/v1/notifications` routes |
+| `brokers/` | Broker interface and normalized models, Alpaca adapter, broker accounts (`/v1/broker-accounts`) |
+| `portfolios/` | Portfolios, positions and lots per owner (`/v1/portfolios`) |
+| `orders/` | Orders and fills: placing, cancelling, broker sync (`/v1/orders`) |
 | `runs/` | Shared run history (`/v1/runs`), used by every feature that runs something |
 | `market/` | `client.py`: one function per market endpoint, all market URLs in `ENDPOINTS`. `data.py`: caching and batching helpers. `routes.py`: `/v1/market/*` |
 | `api.py`, `deps.py`, `db.py`, `config.py` | App assembly, shared dependencies, DB connection and schema setup, settings |
-| `static/` | Sample web app: Filters and Automations pages (`common.js` holds shared helpers) |
+| `static/` | Sample web app: Filters, Automations and Portfolio pages (`common.js` holds shared helpers) |
 
 ## Viewing the data in Grafana
 

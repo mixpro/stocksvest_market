@@ -1,4 +1,4 @@
-# StocksVest App API: filters and automations
+# StocksVest App API: filters, automations and paper trading
 
 Filters narrow the halal stock universe step by step, for example "price $10–100, up more than 3% in 5 days".
 The app service stores filters, filter groups and the history of every run. It reads market data from the
@@ -147,9 +147,9 @@ A group is a named set of filters. Running it runs every member, and its result 
 
 ## Automations
 
-An automation runs filters on a schedule and acts on the matched symbols. Phase 1 has one action:
-**Notify** (in-app inbox). Placing orders and adding to watchlists come in later phases; the API rejects
-them with `422 … not available yet`.
+An automation runs filters on a schedule and acts on the matched symbols. Actions: **Notify** (in-app inbox)
+and **Place order** (paper trading, see below). Adding to watchlists comes later; the API rejects it with
+`422 … not available yet`.
 
 ```bash
 curl -X POST -H "X-API-Key: $APP_KEY" -H "Content-Type: application/json" \
@@ -225,6 +225,85 @@ curl -X POST -H "X-API-Key: $APP_KEY" -H "Content-Type: application/json" \
 | `actions` | Each action's status; `notificationId` for notifications sent |
 | `metrics` | Duration and counts |
 
+### Place order action
+
+```json
+{
+  "type": "PLACE_ORDER", "side": "BUY", "orderType": "LIMIT", "limitOffsetPercent": -0.5, "timeInForce": "DAY",
+  "selection": {"mode": "TOP_N", "topN": 3, "rankBy": "DAILY_CHANGE_PERCENT", "descending": true},
+  "sizings": [{"mode": "CASH_AMOUNT", "value": 500}, {"mode": "CASH_AMOUNT", "value": 300}, {"mode": "CASH_AMOUNT", "value": 200}]
+}
+```
+
+| Field | Values |
+|---|---|
+| `side` | `BUY`, or `SELL` (only the automation's own shares; no short selling) |
+| `orderType` | `MARKET`, `LIMIT`, `STOP`, `STOP_LIMIT`, `TRAILING_STOP` |
+| `limitOffsetPercent` / `stopOffsetPercent` | Price = latest price × (1 + offset%), e.g. `-0.5` = 0.5% below |
+| `trailPercent` | For `TRAILING_STOP` |
+| `timeInForce` | `DAY`, `GTC`, `IOC`, `FOK`, `OPG`, `CLS` (whatever the broker supports) |
+| `extendedHours` | Only with `LIMIT` + `DAY` |
+| `selection` | `ALL_MATCHES`, or `TOP_N` with `topN` and `rankBy`: `DAILY_CHANGE_PERCENT`, `LAST_PRICE`, `DAILY_VOLUME`, `POSITION_VALUE`, `UNREALIZED_PNL_PERCENT` |
+| `sizings` | One sizing for every symbol, or (`TOP_N`) one per rank. Buy: `QUANTITY`, `CASH_AMOUNT`, `PERCENT_OF_BUDGET`. Sell: `QUANTITY`, `PERCENT_OF_POSITION` |
+
+**Rules:**
+- An automation that places orders needs a `portfolioId` and a **budget**.
+- `missedPolicy: RUN_ALL` isn't allowed for these automations.
+- Orders use whole shares.
+
+`orderGuards` on the automation (defaults shown):
+
+```json
+{"maxOrdersPerRun": 10, "maxPositionValue": null, "maxPositionPercent": null,
+ "regularHoursOnly": true, "skipBuyIfHeld": true, "maxDataAgeMinutes": 30}
+```
+
+**How a run plans orders:**
+1. **Sync:** current fills and balances are imported from the broker first.
+2. **Rank and size:** symbols are ranked and sized.
+3. **Guards:** applied in rank order. Each symbol becomes an intent: `PLACE`, or `SKIP` with a reason:
+
+   | `skipReason` | Meaning |
+   |---|---|
+   | `STALE_DATA` | Market data older than `maxDataAgeMinutes` |
+   | `OUTSIDE_REGULAR_HOURS` | `regularHoursOnly` is on and the market isn't in its regular session |
+   | `ALREADY_HELD` | `skipBuyIfHeld` is on and the automation holds it or has a buy open |
+   | `MAX_POSITION` | `maxPositionValue` or `maxPositionPercent` reached (a smaller order is placed when it fits) |
+   | `INSUFFICIENT_BUDGET` | Not enough budget left; the top ranks are served first |
+   | `MAX_ORDERS_REACHED` | `maxOrdersPerRun` reached |
+   | `NO_PRICE` | No price for the symbol |
+   | `ZERO_QUANTITY` | The sizing comes to less than one share |
+   | `NOT_SUPPORTED_BY_BROKER` | The broker doesn't support this order type, time in force or extended hours |
+
+4. **Submit:** `PLACE` intents go to the broker with the client order ID `<runId>-<actionIndex>-<ticker>`, so a retry never creates a second order.
+
+**What the run records:** `budgetBefore` / `budgetAfter`, every intent with its `orderId`, and the order totals in `metrics`.
+
+**Preview** shows the same plan without placing anything.
+
+### Budget
+
+| Call | Notes |
+|---|---|
+| `GET /v1/automations/{id}/budget` | `pool` and `entries` (the ledger, newest first) |
+| `POST /v1/automations/{id}/budget/allocate` | `{"amount": 1000, "note": "…"}`, taken from the portfolio's unallocated cash |
+| `POST /v1/automations/{id}/budget/withdraw` | Only the available part (not reserved, not invested) |
+
+**`pool` fields:**
+- **`cash`:** the automation's uninvested money, including the reserved part
+- **`reserved`:** set aside for open buy orders
+- **`available`:** `cash` − `reserved`; what new buys can use
+- **`invested`:** what its shares cost
+- **`realizedPnL`** and **`fees`**
+
+**Ledger entry types:**
+- `ALLOCATE`, `WITHDRAW`: you move money in or out
+- `RESERVE`: a buy order is placed
+- `RELEASE`: unused reservation returned when an order finishes or is cancelled
+- `BUY_FILL`, `SELL_FILL`, `FEE`: from broker fills
+
+Each entry has `cashAfter` and `reservedAfter`, and links to its order, fill and run. The ledger is kept permanently.
+
 ### Notifications
 
 | Call | Notes |
@@ -232,6 +311,49 @@ curl -X POST -H "X-API-Key: $APP_KEY" -H "Content-Type: application/json" \
 | `GET /v1/notifications?unreadOnly=true&limit=50` | `{"unread": 3, "notifications": [...]}`, newest first. Each has `runId` |
 | `POST /v1/notifications/{id}/read` | Mark one read |
 | `POST /v1/notifications/read-all` | Mark all read |
+
+---
+
+## Paper trading
+
+### Broker accounts
+
+| Call | Notes |
+|---|---|
+| `POST /v1/broker-accounts` | `{"name": "Alpaca paper", "provider": "ALPACA", "credentialsRef": "ALPACA"}`. Keys come from `.env` as `<credentialsRef>_KEY` / `_SECRET` and are never stored. Tests the connection |
+| `GET /v1/broker-accounts`, `GET /v1/broker-accounts/{id}` | `GET {id}` adds live balances and the broker's capabilities |
+| `DELETE /v1/broker-accounts/{id}` | `409` while a portfolio uses it |
+
+Only **PAPER** accounts are accepted. IBKR comes later.
+
+### Portfolios
+
+| Call | Notes |
+|---|---|
+| `POST /v1/portfolios` | `{"name": "Paper", "brokerAccountId": "bka_…"}`. One portfolio per broker account. Shares already in the account become manual (opening) positions |
+| `GET /v1/portfolios/{id}` | Cash (from the broker), unallocated cash, positions by owner with market value and unrealized P&L, budgets, realized P&L, last sync and any differences with the broker |
+| `POST /v1/portfolios/{id}/sync` | Sync now. This also runs every minute in the background |
+| `GET /v1/portfolios/{id}/orders?status=&automationId=&openOnly=true` | Orders, newest first |
+| `GET /v1/portfolios/{id}/fills`, `/lots` | Fills, and position lots (who owns which shares) |
+| `POST /v1/portfolios/{id}/orders` | Manual order (see below) |
+| `GET /v1/orders/{id}` | One order with its fills |
+| `POST /v1/orders/{id}/cancel` | Cancel an open order |
+
+**Manual orders:**
+
+```json
+{"symbol": "AAPL", "side": "BUY", "type": "LIMIT", "quantity": 5, "limitPrice": 180, "timeInForce": "DAY"}
+```
+
+- Only **halal symbols** are accepted.
+- Without `automationId`, a buy uses unallocated cash and a sell uses manual shares.
+- With `automationId`, the order uses that automation's budget or shares.
+
+**Order records:** each order keeps `estimatedPrice` and `averageFillPrice`, so `slippage` shows the difference.
+
+**Who owns which shares:** shares are tracked in lots per owner (an automation, or manual). Sells close the owner's oldest lots first, so profit and budgets are exact per automation.
+
+**Broker sync:** every minute, the app imports balances, fills (each one once) and order statuses from the broker. It then compares positions and cash, and records any differences in `lastSync.mismatches`. The broker is the source of truth.
 
 ---
 
@@ -285,9 +407,13 @@ page lets you:
 - **Run & store**, then open **History** to see past runs
 - click a symbol to see its candlestick chart (1 min to 1 month bars)
 
-The **Automations** page lets you build automations (filters, schedules, notify actions), preview them, see
+The **Automations** page lets you build automations (filters, schedules, notify and place-order actions, order
+guards, portfolio and budget), preview them (including the order plan), see
 upcoming run times, run now, pause or resume, see history and the change log, use the global switch, and read
 the inbox. The bell in the header shows unread notifications.
+
+The **Portfolio** page connects a broker account, creates the portfolio, and shows cash, positions by owner,
+automation budgets, orders with slippage, and fills. It can also place and cancel manual paper orders.
 
 ## Python example
 
