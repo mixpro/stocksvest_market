@@ -13,7 +13,10 @@ from ..filters import store as filters_store
 from ..market.client import MarketError
 from ..runs import store as runs_store
 from . import store
-from .models import AutomationIn, Schedule, SwitchIn
+from ..portfolios import store as portfolios_store
+from ..orders import service as orders_service
+from . import budget
+from .models import AutomationIn, BudgetChangeIn, Schedule, SwitchIn
 from .runner import run_automation
 from .timing import next_fires
 
@@ -36,6 +39,8 @@ def router(ctx: AppContext) -> APIRouter:
 
     def prepare(conn, body: AutomationIn) -> dict:
         """Check references and give every schedule a stable id."""
+        if body.portfolioId and not portfolios_store.get_portfolio(conn, body.portfolioId):
+            raise HTTPException(422, f"portfolio '{body.portfolioId}' does not exist")
         for t in body.runTargets:
             exists = filters_store.get_filter if t.type.value == "FILTER" else filters_store.get_group
             if not exists(conn, t.id):
@@ -188,6 +193,45 @@ def router(ctx: AppContext) -> APIRouter:
     def events(automation_id: str, conn: Conn, limit: Annotated[int, Query(ge=1, le=500)] = 100):
         """Change log: created, updated (with what changed), paused, resumed."""
         return {"events": store.list_events(conn, automation_id, limit)}
+
+    # ---------------------------------------------------------------- budget pool
+
+    def budget_view(conn, automation_id: str) -> dict:
+        return {"pool": budget.get_pool(conn, automation_id), "entries": budget.entries(conn, automation_id)}
+
+    @r.get("/v1/automations/{automation_id}/budget", tags=["automations"])
+    def get_budget(automation_id: str, conn: Conn):
+        """The automation's money (cash, reserved, available, invested, P&L) and its ledger, newest first."""
+        load(conn, automation_id)
+        return budget_view(conn, automation_id)
+
+    @r.post("/v1/automations/{automation_id}/budget/allocate", tags=["automations"])
+    def allocate(automation_id: str, body: BudgetChangeIn, conn: Conn):
+        """Move money from the portfolio's unallocated cash into this automation's budget."""
+        a = load(conn, automation_id)
+        if not a.get("portfolioId"):
+            raise HTTPException(422, "set the automation's portfolioId first")
+        portfolio = portfolios_store.get_portfolio(conn, a["portfolioId"])
+        try:
+            budget.allocate(conn, automation_id, portfolio, body.amount, body.note,
+                            orders_service.open_manual_buys(conn, portfolio["id"]))
+        except budget.BudgetError as e:
+            raise HTTPException(422, str(e))
+        with conn:
+            store.add_event(conn, automation_id, "BUDGET_ALLOCATED", a["configVersion"], {"amount": str(body.amount)})
+        return budget_view(conn, automation_id)
+
+    @r.post("/v1/automations/{automation_id}/budget/withdraw", tags=["automations"])
+    def withdraw(automation_id: str, body: BudgetChangeIn, conn: Conn):
+        """Give available (not reserved, not invested) budget back to the portfolio."""
+        a = load(conn, automation_id)
+        try:
+            budget.withdraw(conn, automation_id, body.amount, body.note)
+        except budget.BudgetError as e:
+            raise HTTPException(422, str(e))
+        with conn:
+            store.add_event(conn, automation_id, "BUDGET_WITHDRAWN", a["configVersion"], {"amount": str(body.amount)})
+        return budget_view(conn, automation_id)
 
     # ---------------------------------------------------------------- notifications
 

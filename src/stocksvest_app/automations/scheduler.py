@@ -91,6 +91,27 @@ def _tick_schedule(ctx, conn, automation, s, created, calendar, now) -> list[dic
     return runs
 
 
+BROKER_SYNC_EVERY = timedelta(seconds=60)
+
+
+def sync_brokers(ctx: AppContext, conn) -> None:
+    """Import balances, fills and order updates for every portfolio."""
+    from ..brokers import store as brokers_store
+    from ..brokers.base import BrokerError
+    from ..orders import service, store as orders_store
+    from ..portfolios import store as portfolios_store
+
+    for p in portfolios_store.list_portfolios(conn):
+        account = brokers_store.get_account(conn, p["brokerAccountId"])
+        try:
+            service.sync_portfolio(conn, ctx.broker_factory(account), p)
+            brokers_store.set_status(conn, account["id"], "CONNECTED", synced=True)
+        except BrokerError as e:
+            log.warning("broker sync for portfolio %s failed: %s", p["id"], e)
+            brokers_store.set_status(conn, account["id"], "ERROR", str(e))
+            orders_store.add_sync(conn, account["id"], p["id"], 0, 0, [], str(e))
+
+
 class AutomationScheduler:
     def __init__(self, ctx: AppContext):
         self.ctx = ctx
@@ -98,6 +119,7 @@ class AutomationScheduler:
         self._thread = threading.Thread(target=self._loop, name="automation-scheduler", daemon=True)
         self.last_tick_at: datetime | None = None
         self.last_error: str | None = None
+        self._last_broker_sync: datetime | None = None
 
     def start(self) -> None:
         self._thread.start()
@@ -109,6 +131,10 @@ class AutomationScheduler:
         while not self._stop.is_set():
             conn = db.connect(self.ctx.settings.db_path)
             try:
+                now = datetime.now(timezone.utc)
+                if not self._last_broker_sync or now - self._last_broker_sync >= BROKER_SYNC_EVERY:
+                    sync_brokers(self.ctx, conn)  # before runs, so budgets and positions are current
+                    self._last_broker_sync = now
                 tick(self.ctx, conn)
                 self.last_error = None
             except Exception as e:

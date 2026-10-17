@@ -75,6 +75,8 @@ def automation_json(r: sqlite3.Row) -> dict:
         "description": r["description"],
         "status": r["status"],
         "configVersion": r["config_version"],
+        "portfolioId": None,
+        "orderGuards": None,
         **json.loads(r["definition"]),
         "createdAt": r["created_at"],
         "updatedAt": r["updated_at"],
@@ -95,7 +97,7 @@ def list_automations(conn, status: str | None = None) -> list[dict]:
 
 
 def _definition(data: dict) -> str:
-    return json.dumps({k: data[k] for k in ("runTargets", "schedules", "actions")})
+    return json.dumps({k: data.get(k) for k in ("portfolioId", "orderGuards", "runTargets", "schedules", "actions")})
 
 
 def create_automation(conn, data: dict) -> dict:

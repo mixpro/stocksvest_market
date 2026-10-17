@@ -1,6 +1,7 @@
 """Request bodies for automations, matching UML/Automations.mmd and UML/Scheduling.mmd (phase 1 subset)."""
 
 from datetime import date, datetime, time
+from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Literal, Union
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -191,9 +192,15 @@ Action = Annotated[Union[NotifyAction, LaterAction], Field(discriminator="type")
 class AutomationIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = ""
+    portfolioId: str | None = None  # required for automations that place orders
     runTargets: list[RunTarget] = Field(min_length=1)
     schedules: list[Schedule] = Field(min_length=1)
     actions: list[Action] = Field(min_length=1)
+
+
+class BudgetChangeIn(BaseModel):
+    amount: Decimal = Field(gt=0, decimal_places=2)
+    note: str | None = None
 
 
 class SwitchIn(BaseModel):

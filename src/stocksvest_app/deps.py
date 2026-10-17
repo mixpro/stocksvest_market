@@ -2,13 +2,16 @@
 
 import sqlite3
 from collections.abc import Iterator
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Annotated
 
 from fastapi import Header, HTTPException
 
 from . import db
 from .config import Settings
+from .brokers.base import Broker
+from .brokers.registry import make_broker
 from .market.client import MarketAPI
 from .market.data import MarketData
 
@@ -18,6 +21,7 @@ class AppContext:
     settings: Settings
     market_api: MarketAPI
     scheduler: object | None = None  # the automation scheduler, when running
+    broker_factory: Callable[[dict], Broker] = field(default=make_broker)  # broker account -> adapter
 
     def __post_init__(self):
         self.market = MarketData(self.market_api)
