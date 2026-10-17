@@ -1,6 +1,6 @@
 # 001 · Set SEC contact so sectors get synced
 
-**Status:** open
+**Status:** done (2026-10-17)
 **Created:** 2026-10-16
 **Area:** market service, sectors
 
@@ -33,3 +33,9 @@ Until this is set:
 - The SIC → sector mapping (`src/stocksvest_market/sectors.py`) approximates GICS sectors. Review the
   `OTHER` bucket after the first sync and adjust ranges if needed.
 - Symbols without a SEC filing (some foreign ADRs) get `OTHER`.
+
+## Resolution
+
+`SEC_USER_AGENT` set in `.env` on 2026-10-17. The first sync assigned sectors to all 881 symbols:
+Technology 302, Industrials 177, Healthcare 176, Consumer Discretionary 67, Basic Materials 54,
+Consumer Staples 29, Financials 24, Energy 23, Real Estate 11, Utilities 9, Communication Services 7, Other 2.
