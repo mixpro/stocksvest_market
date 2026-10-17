@@ -1,0 +1,13 @@
+apiVersion: 1
+datasources:
+  - name: StocksVest Market
+    uid: stocksvest-market
+    type: frser-sqlite-datasource
+    access: proxy
+    isDefault: true
+    editable: false
+    jsonData:
+      # The service's SQLite DB, mounted from ./data. Opened read-only.
+      path: /var/lib/stocksvest/market.db
+      pathPrefix: "file:"
+      pathOptions: "?mode=ro"

@@ -1,0 +1,9 @@
+.env
+.venv
+.git
+data
+tests
+UML
+__pycache__
+*.pyc
+grafana

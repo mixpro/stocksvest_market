@@ -1,0 +1,568 @@
+{
+  "uid": "stocksvest-market",
+  "title": "StocksVest Market",
+  "tags": [
+    "stocksvest"
+  ],
+  "timezone": "America/New_York",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "symbol",
+        "label": "Symbol",
+        "type": "query",
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "stocksvest-market"
+        },
+        "query": {
+          "rawQueryText": "SELECT ticker FROM symbols ORDER BY ticker",
+          "queryText": "SELECT ticker FROM symbols ORDER BY ticker",
+          "queryType": "table",
+          "timeColumns": []
+        },
+        "definition": "SELECT ticker FROM symbols ORDER BY ticker",
+        "refresh": 1,
+        "sort": 1,
+        "includeAll": false,
+        "multi": false,
+        "current": {
+          "selected": true,
+          "text": "AAPL",
+          "value": "AAPL"
+        }
+      },
+      {
+        "name": "table",
+        "label": "Timeframe",
+        "type": "custom",
+        "query": "Minute : bars_1min,Hour : bars_1hour,Day : bars_1day",
+        "current": {
+          "selected": true,
+          "text": "Hour",
+          "value": "bars_1hour"
+        },
+        "options": [
+          {
+            "selected": false,
+            "text": "Minute",
+            "value": "bars_1min"
+          },
+          {
+            "selected": true,
+            "text": "Hour",
+            "value": "bars_1hour"
+          },
+          {
+            "selected": false,
+            "text": "Day",
+            "value": "bars_1day"
+          }
+        ],
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Halal symbols",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-market"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-market"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT COUNT(*) AS value FROM symbols",
+          "queryText": "SELECT COUNT(*) AS value FROM symbols",
+          "timeColumns": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Daily bars",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-market"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-market"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT COUNT(*) AS value FROM bars_1day",
+          "queryText": "SELECT COUNT(*) AS value FROM bars_1day",
+          "timeColumns": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Hourly bars",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-market"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-market"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT COUNT(*) AS value FROM bars_1hour",
+          "queryText": "SELECT COUNT(*) AS value FROM bars_1hour",
+          "timeColumns": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Minute bars",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-market"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-market"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT COUNT(*) AS value FROM bars_1min",
+          "queryText": "SELECT COUNT(*) AS value FROM bars_1min",
+          "timeColumns": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Last incremental sync (UTC)",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-market"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-market"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT COALESCE((SELECT value FROM sync_state WHERE key = 'last_incremental_at'), 'never') AS value",
+          "queryText": "SELECT COALESCE((SELECT value FROM sync_state WHERE key = 'last_incremental_at'), 'never') AS value",
+          "timeColumns": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Last nightly sync (UTC)",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-market"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-market"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT COALESCE((SELECT value FROM sync_state WHERE key = 'last_nightly_at'), 'never') AS value",
+          "queryText": "SELECT COALESCE((SELECT value FROM sync_state WHERE key = 'last_nightly_at'), 'never') AS value",
+          "timeColumns": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 7,
+      "type": "candlestick",
+      "title": "${symbol} \u00b7 ${table:text}",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-market"
+      },
+      "gridPos": {
+        "h": 14,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-market"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT strftime('%Y-%m-%dT%H:%M:%SZ', b.ts, 'unixepoch') AS time,\n       b.o AS open, b.h AS high, b.l AS low, b.c AS close, b.v AS volume\nFROM ${table} b JOIN symbols s ON s.id = b.symbol_id\nWHERE s.ticker = '${symbol}'\n  AND b.ts >= ${__from:date:seconds} AND b.ts <= ${__to:date:seconds}\nORDER BY b.ts",
+          "queryText": "SELECT strftime('%Y-%m-%dT%H:%M:%SZ', b.ts, 'unixepoch') AS time,\n       b.o AS open, b.h AS high, b.l AS low, b.c AS close, b.v AS volume\nFROM ${table} b JOIN symbols s ON s.id = b.symbol_id\nWHERE s.ticker = '${symbol}'\n  AND b.ts >= ${__from:date:seconds} AND b.ts <= ${__to:date:seconds}\nORDER BY b.ts",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "mode": "candles+volume",
+        "candleStyle": "candles",
+        "colorStrategy": "open-close",
+        "colors": {
+          "up": "green",
+          "down": "red"
+        },
+        "includeAllFields": false,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "custom": {
+            "axisPlacement": "left",
+            "axisLabel": "Price",
+            "drawStyle": "line"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "volume"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "Volume"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Latest daily change (all halal symbols)",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-market"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 14,
+        "x": 0,
+        "y": 18
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-market"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "WITH d AS (\n  SELECT symbol_id, ts, c, v, ROW_NUMBER() OVER (PARTITION BY symbol_id ORDER BY ts DESC) AS rn\n  FROM bars_1day\n)\nSELECT s.ticker AS Ticker, s.name AS Name, s.exchange AS Exchange,\n       date(cur.ts, 'unixepoch') AS Date, cur.c AS Close, prev.c AS \"Previous close\",\n       ROUND((cur.c - prev.c) / prev.c * 100, 2) AS \"Change %\", cur.v AS Volume\nFROM symbols s\nJOIN d cur  ON cur.symbol_id = s.id AND cur.rn = 1\nJOIN d prev ON prev.symbol_id = s.id AND prev.rn = 2\nORDER BY \"Change %\" DESC",
+          "queryText": "WITH d AS (\n  SELECT symbol_id, ts, c, v, ROW_NUMBER() OVER (PARTITION BY symbol_id ORDER BY ts DESC) AS rn\n  FROM bars_1day\n)\nSELECT s.ticker AS Ticker, s.name AS Name, s.exchange AS Exchange,\n       date(cur.ts, 'unixepoch') AS Date, cur.c AS Close, prev.c AS \"Previous close\",\n       ROUND((cur.c - prev.c) / prev.c * 100, 2) AS \"Change %\", cur.v AS Volume\nFROM symbols s\nJOIN d cur  ON cur.symbol_id = s.id AND cur.rn = 1\nJOIN d prev ON prev.symbol_id = s.id AND prev.rn = 2\nORDER BY \"Change %\" DESC",
+          "timeColumns": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Change %"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Change %",
+            "desc": true
+          }
+        ]
+      }
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "Data coverage per symbol (fewest minute bars first)",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-market"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 10,
+        "x": 14,
+        "y": 18
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-market"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT s.ticker AS Ticker,\n  (SELECT COUNT(*) FROM bars_1day  WHERE symbol_id = s.id) AS \"Daily bars\",\n  (SELECT COUNT(*) FROM bars_1hour WHERE symbol_id = s.id) AS \"Hourly bars\",\n  (SELECT COUNT(*) FROM bars_1min  WHERE symbol_id = s.id) AS \"Minute bars\",\n  (SELECT strftime('%Y-%m-%dT%H:%M:%SZ', MAX(ts), 'unixepoch') FROM bars_1min WHERE symbol_id = s.id) AS \"Latest minute bar\"\nFROM symbols s ORDER BY \"Minute bars\" ASC",
+          "queryText": "SELECT s.ticker AS Ticker,\n  (SELECT COUNT(*) FROM bars_1day  WHERE symbol_id = s.id) AS \"Daily bars\",\n  (SELECT COUNT(*) FROM bars_1hour WHERE symbol_id = s.id) AS \"Hourly bars\",\n  (SELECT COUNT(*) FROM bars_1min  WHERE symbol_id = s.id) AS \"Minute bars\",\n  (SELECT strftime('%Y-%m-%dT%H:%M:%SZ', MAX(ts), 'unixepoch') FROM bars_1min WHERE symbol_id = s.id) AS \"Latest minute bar\"\nFROM symbols s ORDER BY \"Minute bars\" ASC",
+          "timeColumns": []
+        }
+      ],
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "Halal DB imports",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-market"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-market"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT imported_at AS \"Imported at (UTC)\", compliant_count AS \"Compliant in file\", added AS Added, removed AS Removed FROM halal_imports ORDER BY id DESC",
+          "queryText": "SELECT imported_at AS \"Imported at (UTC)\", compliant_count AS \"Compliant in file\", added AS Added, removed AS Removed FROM halal_imports ORDER BY id DESC",
+          "timeColumns": []
+        }
+      ],
+      "options": {
+        "showHeader": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+services:
+  market:
+    build: .
+    env_file: .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    # The service container writes ./data as root; SQLite readers in WAL mode need write access
+    # to the DB's -shm file, so Grafana runs as root too.
+    user: "0"
+    environment:
+      GF_INSTALL_PLUGINS: frser-sqlite-datasource
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/market.json
+    ports:
+      - "3000:3000"
+    volumes:
+      # Same data folder the service writes to. Mounted read-write because SQLite's WAL mode
+      # needs its shared-memory file even for readers; the datasource itself opens the DB read-only.
+      - ./data:/var/lib/stocksvest
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - market
+    restart: unless-stopped
+
+volumes:
+  grafana-data:
