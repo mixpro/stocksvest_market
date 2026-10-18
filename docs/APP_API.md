@@ -321,17 +321,36 @@ Each entry has `cashAfter` and `reservedAfter`, and links to its order, fill and
 | Call | Notes |
 |---|---|
 | `POST /v1/broker-accounts` | `{"name": "Alpaca paper", "provider": "ALPACA", "credentialsRef": "ALPACA"}`. Keys come from `.env` as `<credentialsRef>_KEY` / `_SECRET` and are never stored. Tests the connection |
-| `GET /v1/broker-accounts`, `GET /v1/broker-accounts/{id}` | `GET {id}` adds live balances and the broker's capabilities |
+| `GET /v1/broker-accounts`, `GET /v1/broker-accounts/{id}` | `GET {id}` adds live balances, the broker's capabilities, its portfolios, and its **unassigned** cash and shares (not in any portfolio) |
+| `GET /v1/broker-accounts/{id}/equity-history?period=1M&timeframe=1D` | The whole account's equity as reported by the broker, including history from before the app recorded anything. `period`: `1W`, `1M`, `3M`, `1A`, … `timeframe`: `1Min`, `5Min`, `15Min`, `1H`, `1D` |
 | `DELETE /v1/broker-accounts/{id}` | `409` while a portfolio uses it |
 
 Only **PAPER** accounts are accepted. IBKR comes later.
 
 ### Portfolios
 
+A broker account can hold **several portfolios**, each with its own capital:
+
+```
+Alpaca paper account  $100,000
+├─ Portfolio "Growth"      $40,000   ← capital
+│   ├─ Automation A budget   $10,000
+│   └─ Automation B budget    $5,000
+├─ Portfolio "Dividends"   $30,000
+└─ unassigned              $30,000
+```
+
+- Each portfolio tracks its **own** cash, from its ledger: capital in or out, buy and sell fills, fees.
+- Orders belong to one portfolio, so their fills land there.
+- Trades made outside the app, in the broker's own UI, belong to no portfolio. They show up as the account's **unassigned** cash and shares.
+
 | Call | Notes |
 |---|---|
-| `POST /v1/portfolios` | `{"name": "Paper", "brokerAccountId": "bka_…"}`. One portfolio per broker account. Shares already in the account become manual (opening) positions |
-| `GET /v1/portfolios/{id}` | Cash (from the broker), unallocated cash, positions by owner with market value and unrealized P&L, budgets, realized P&L, last sync and any differences with the broker |
+| `POST /v1/portfolios` | `{"name": "Growth", "brokerAccountId": "bka_…", "capital": 40000}`. `capital` comes from the account's unassigned cash |
+| `GET /v1/portfolios/{id}` | Capital (`allocated`), `cash`, `unallocatedCash` (not in automation budgets), `positionsValue`, `equity`, unrealized and realized P&L, positions by owner, budgets, the account's unassigned cash, last sync |
+| `POST /v1/portfolios/{id}/capital/allocate` / `withdraw` | `{"amount": 5000}`: move money between the account's unassigned cash and the portfolio. A withdrawal can only take unallocated cash |
+| `GET /v1/portfolios/{id}/ledger` | Every change of the portfolio's cash, newest first |
+| `DELETE /v1/portfolios/{id}` | Only when empty: no shares, no open orders, no automations. Its cash goes back to the account |
 | `POST /v1/portfolios/{id}/sync` | Sync now. This also runs every minute in the background |
 | `GET /v1/portfolios/{id}/orders?status=&automationId=&openOnly=true` | Orders, newest first |
 | `GET /v1/portfolios/{id}/fills`, `/lots` | Fills, and position lots (who owns which shares) |
@@ -353,7 +372,25 @@ Only **PAPER** accounts are accepted. IBKR comes later.
 
 **Who owns which shares:** shares are tracked in lots per owner (an automation, or manual). Sells close the owner's oldest lots first, so profit and budgets are exact per automation.
 
-**Broker sync:** every minute, the app imports balances, fills (each one once) and order statuses from the broker. It then compares positions and cash, and records any differences in `lastSync.mismatches`. The broker is the source of truth.
+**Broker sync** (every minute, per broker account):
+- The app imports balances, fills (each one once) and order statuses from the broker.
+- Fills of orders placed outside the app are recorded as external, and their shares and cash count as unassigned.
+- Differences with the broker are recorded in `lastSync.mismatches`, only where the portfolios hold more shares or cash than the broker.
+
+### History
+
+| Call | Notes |
+|---|---|
+| `GET /v1/portfolios/{id}/history?start=&end=&kind=` | Snapshots, oldest first, plus `current` (the same values right now). Each has `allocated`, `cash`, `unallocated`, `invested`, `positionsValue`, `equity`, `realizedPnL`, `unrealizedPnL` |
+| `POST /v1/portfolios/{id}/snapshot` | Record one now (`MANUAL`) |
+| `GET /v1/automations/{id}/performance?start=&end=` | One point per trading day plus `current`. Each has the budget, `positionsValue`, `equity`, P&L, `fees`, `returnPercent` = (equity − budget) / budget, `openPositions`, and that day's `ordersPlaced` and `fills` |
+
+**When portfolio snapshots are taken (`kind`):**
+- `INTERVAL`: every 15 minutes during the regular session
+- `CLOSE`: once, about 20 minutes after each close
+- `MANUAL`: on request
+
+Automation snapshots are taken after each close. Snapshots are kept permanently.
 
 ---
 
@@ -412,8 +449,12 @@ guards, portfolio and budget), preview them (including the order plan), see
 upcoming run times, run now, pause or resume, see history and the change log, use the global switch, and read
 the inbox. The bell in the header shows unread notifications.
 
-The **Portfolio** page connects a broker account, creates the portfolio, and shows cash, positions by owner,
-automation budgets, orders with slippage, and fills. It can also place and cancel manual paper orders.
+The **Portfolio** page connects broker accounts, creates portfolios with their capital, and shows each
+portfolio's capital, cash, equity and a history chart. The chart has 1W to All ranges, with an optional "whole
+account" line from the broker. The page also shows positions by owner, automation budgets, the cash ledger,
+orders with slippage, and fills, and can place and cancel manual paper orders. Click a broker account to see its
+portfolios, unassigned cash and shares, and its equity history. The Automations page has a **Performance** button
+with an equity and return chart.
 
 ## Python example
 

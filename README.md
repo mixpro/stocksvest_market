@@ -72,7 +72,8 @@ Code layout (`src/stocksvest_app/`): one folder per feature, each with its own m
 | `filters/` | Filter and group models, storage, evaluation engine, `/v1/filters*` routes |
 | `automations/` | Automation and schedule models, schedule timing, storage, runner, order planner, budget pools, background scheduler, `/v1/automations*` and `/v1/notifications` routes |
 | `brokers/` | Broker interface and normalized models, Alpaca adapter, broker accounts (`/v1/broker-accounts`) |
-| `portfolios/` | Portfolios, positions and lots per owner (`/v1/portfolios`) |
+| `portfolios/` | Portfolios with their own capital and cash ledger (several per broker account), positions and lots per owner (`/v1/portfolios`) |
+| `performance/` | Portfolio snapshots (every 15 min in the session and at the close), daily automation snapshots, broker equity history |
 | `orders/` | Orders and fills: placing, cancelling, broker sync (`/v1/orders`) |
 | `runs/` | Shared run history (`/v1/runs`), used by every feature that runs something |
 | `market/` | `client.py`: one function per market endpoint, all market URLs in `ENDPOINTS`. `data.py`: caching and batching helpers. `routes.py`: `/v1/market/*` |
@@ -102,7 +103,14 @@ WHERE s.ticker = 'AAPL' ORDER BY b.ts
 
 (For time series, return the time as an ISO string in a column listed under the query's *Time formatted columns*.)
 
-Grafana opens the DB read-only, so it cannot change your data.
+A second dashboard, **StocksVest Portfolios**, reads the app's database (`app.db`):
+- portfolio capital, cash, equity and P&L over time
+- each automation's equity and budget
+- the latest daily result per automation
+- recent orders and automation runs
+- the cash ledger
+
+Grafana opens the DBs read-only, so it cannot change your data.
 
 > **Docker Desktop (macOS/Windows):** don't open `data/market.db` from the host, e.g. with the
 > `sqlite3` CLI or a DB browser, while the containers are running. SQLite's WAL mode shares memory
