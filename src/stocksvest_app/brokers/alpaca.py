@@ -175,7 +175,7 @@ class AlpacaBroker:
         h = self._call("GET", "/v2/account/portfolio/history", params={"period": period, "timeframe": timeframe}) or {}
         out = []
         for ts, equity, pnl in zip(h.get("timestamp") or [], h.get("equity") or [], h.get("profit_loss") or []):
-            if equity is not None:
+            if equity is not None and (out or equity != 0):  # skip zeros from before the account existed
                 out.append({"at": datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                             "equity": float(equity), "profitLoss": float(pnl) if pnl is not None else None})
         return out

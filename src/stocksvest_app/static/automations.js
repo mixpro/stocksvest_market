@@ -292,6 +292,7 @@ function renderEditor() {
       el("button", { onclick: history, disabled: !saved }, "History"),
       el("button", { onclick: changes, disabled: !saved }, "Changes"),
       el("button", { onclick: budgetView, disabled: !saved || !d.portfolioId }, "Budget"),
+      el("button", { onclick: performance, disabled: !saved || !d.portfolioId }, "Performance"),
       el("button", { class: "danger", onclick: remove, disabled: !saved }, "Delete")),
   );
 }
@@ -387,6 +388,30 @@ const budgetView = () => guard(async () => {
         el("td", {}, when(e.createdAt)), el("td", {}, e.type.toLowerCase().replace("_", " ")),
         el("td", { class: `num ${tone(e.amount)}` }, signed(e.amount)), el("td", { class: "num" }, money(e.cashAfter)),
         el("td", { class: "num" }, money(e.reservedAfter)), el("td", {}, e.note || ""))))) : el("p", { class: "muted" }, "No entries yet."));
+});
+
+const performance = () => guard(async () => {
+  const { points, current } = await api(`/v1/automations/${st.selectedId}/performance`);
+  if (!current) {
+    showResults(el("h2", {}, "Performance"), el("p", { class: "muted" }, "No budget yet: allocate money to start tracking."));
+    return;
+  }
+  const all = [...points, current];
+  showResults(
+    el("h2", {}, "Performance"),
+    el("dl", { class: "kv" },
+      el("dt", {}, "Equity"), el("dd", {}, `${money(current.equity)} (cash ${money(current.cash)} + shares ${money(current.positionsValue)})`),
+      el("dt", {}, "Return"), el("dd", { class: tone(current.returnPercent) }, current.returnPercent === null ? "—" : `${signed(current.returnPercent)}% on ${money(current.allocated)}`),
+      el("dt", {}, "P&L"), el("dd", {}, "realized ", el("span", { class: tone(current.realizedPnL) }, signed(current.realizedPnL)),
+        " · unrealized ", el("span", { class: tone(current.unrealizedPnL) }, signed(current.unrealizedPnL))),
+      el("dt", {}, "Fees"), el("dd", {}, money(current.fees)),
+      el("dt", {}, "Open positions"), el("dd", {}, current.openPositions)),
+    el("div", { id: "perf-chart", class: "chart-box" }),
+    points.length ? null : el("p", { class: "muted" }, "Daily points are recorded after each market close."));
+  lineChart($("#perf-chart"), [
+    { name: "Equity", data: all.map((p) => ({ at: p.at, value: p.equity })) },
+    { name: "Return %", data: all.map((p) => ({ at: p.at, value: p.returnPercent })), scale: "left" },
+  ]);
 });
 
 const changes = () => guard(async () => {

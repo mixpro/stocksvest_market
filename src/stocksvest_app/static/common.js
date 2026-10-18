@@ -112,3 +112,46 @@ async function start(page, main) {
   if (!apiKey()) await askKey();
   await Promise.all([main(), loadMarketStatus()]);
 }
+
+// ------------------------------------------------------------------ charts
+
+const SERIES_COLORS = ["#2563eb", "#16a34a", "#f59e0b", "#9333ea", "#dc2626"];
+
+// Line chart with one or more series: [{name, data: [{at, value}], scale?: "left"|"right"}]. Needs lightweight-charts.
+function lineChart(container, series, { height = 260 } = {}) {
+  container.replaceChildren();
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const box = el("div", { style: `height:${height}px` });
+  const legend = el("div", { class: "legend" });
+  container.append(legend, box);
+  const chart = LightweightCharts.createChart(box, {
+    autoSize: true,
+    layout: { background: { color: "transparent" }, textColor: dark ? "#e6e8eb" : "#1d2330" },
+    grid: { vertLines: { visible: false }, horzLines: { color: dark ? "#2b313a" : "#eef0f3" } },
+    timeScale: { timeVisible: true },
+    leftPriceScale: { visible: series.some((s) => s.scale === "left") },
+    rightPriceScale: { visible: true },
+  });
+  series.forEach((s, i) => {
+    const color = SERIES_COLORS[i % SERIES_COLORS.length];
+    const line = chart.addLineSeries({ color, lineWidth: 2, priceScaleId: s.scale === "left" ? "left" : "right",
+      lastValueVisible: true, priceLineVisible: false });
+    // One value per second at most, oldest first (the chart library requires it).
+    const seen = new Map();
+    for (const p of s.data) if (p.value !== null && p.value !== undefined) seen.set(Math.floor(new Date(p.at).getTime() / 1000), p.value);
+    line.setData([...seen.entries()].sort((a, b) => a[0] - b[0]).map(([time, value]) => ({ time, value })));
+    legend.append(el("span", { style: `color:${color}` }, `● ${s.name}`));
+  });
+  chart.timeScale().fitContent();
+  return chart;
+}
+
+// Timeframe buttons: [["1W", 7], ["1M", 30], ...] (days, null = all). Calls onPick(days, label).
+function rangeButtons(options, current, onPick) {
+  return el("span", { class: "chips" }, ...options.map(([label, days]) =>
+    el("button", { class: label === current ? "primary" : "", onclick: () => onPick(days, label) }, label)));
+}
+
+function sinceDays(days) {
+  return days ? new Date(Date.now() - days * 86400e3).toISOString().slice(0, 19) + "Z" : null;
+}

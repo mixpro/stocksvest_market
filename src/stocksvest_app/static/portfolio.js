@@ -1,6 +1,9 @@
-// Portfolio page: broker accounts, portfolios, positions by owner, budgets, manual orders, orders and fills.
+// Portfolio page: broker accounts, portfolios with their capital, history chart, positions by owner, budgets,
+// manual orders, orders and fills.
 
-const pf = { accounts: [], portfolios: [], automations: {}, selectedId: null, data: null };
+const pf = { accounts: [], portfolios: [], automations: {}, selectedId: null, data: null, range: "1M" };
+const RANGES = [["1W", 7], ["1M", 30], ["3M", 90], ["1Y", 365], ["All", null]];
+const ALPACA_PERIOD = { "1W": "1W", "1M": "1M", "3M": "3M", "1Y": "1A", All: "1A" };
 
 function setError(message) {
   $("#editor .error")?.remove();
@@ -25,7 +28,7 @@ async function loadAll() {
     el("li", { class: x.id === pf.selectedId ? "active" : "", onclick: () => openPortfolio(x.id) },
       el("span", {}, x.name), el("span", { class: "tag" }, money(x.cash)))));
   setChildren($("#account-list"), ...pf.accounts.map((x) =>
-    el("li", { class: "stacked", title: x.lastError || "" },
+    el("li", { class: "stacked", title: x.lastError || "", onclick: () => guard(() => openAccount(x.id)) },
       el("div", { class: "line" }, el("span", {}, x.name), el("span", { class: `badge ${x.status === "CONNECTED" ? "ACTIVE" : "FAILED"}` }, x.status.toLowerCase())),
       el("div", { class: "sub" }, `${x.provider} · ${x.environment} · keys ${x.credentialsRef}_KEY`))));
   if (!pf.selectedId && pf.portfolios.length) await openPortfolio(pf.portfolios[0].id);
@@ -48,23 +51,30 @@ $("#new-account").onclick = () => {
     }) }, "Add and test connection")));
 };
 
-$("#new-portfolio").onclick = () => {
-  const free = pf.accounts.filter((a) => !pf.portfolios.some((p) => p.brokerAccountId === a.id));
-  const form = { name: "Paper portfolio", description: "", brokerAccountId: free[0]?.id };
-  setChildren($("#editor"), 
+$("#new-portfolio").onclick = () => guard(async () => {
+  if (!pf.accounts.length) throw new Error("Add a broker account first.");
+  const form = { name: "New portfolio", description: "", brokerAccountId: pf.accounts[0].id, capital: 0 };
+  const free = el("span", { class: "muted" });
+  const showFree = async () => {
+    const a = await api(`/v1/broker-accounts/${form.brokerAccountId}`);
+    free.textContent = `unassigned in this account: ${money(a.unassignedCash)}`;
+  };
+  setChildren($("#editor"),
     el("h2", {}, "New portfolio"),
-    free.length ? null : el("p", { class: "error" }, "Every broker account already has a portfolio. Add a broker account first."),
-    el("p", { class: "muted" }, "Shares already in the account become manual (opening) positions."),
+    el("p", { class: "muted" }, "A portfolio gets part of a broker account's cash. Shares already in the account stay unassigned."),
     el("label", { class: "field" }, el("span", {}, "Name"), el("input", { type: "text", value: form.name, oninput: (e) => (form.name = e.target.value) })),
-    el("label", { class: "field" }, el("span", {}, "Broker account"), el("select", { onchange: (e) => (form.brokerAccountId = e.target.value) },
-      ...free.map((a) => el("option", { value: a.id }, a.name)))),
-    el("div", { class: "toolbar" }, el("button", { class: "primary", disabled: !free.length, onclick: () => guard(async () => {
+    el("label", { class: "field" }, el("span", {}, "Broker account"), el("select", { onchange: (e) => { form.brokerAccountId = e.target.value; showFree(); } },
+      ...pf.accounts.map((a) => el("option", { value: a.id }, a.name)))),
+    el("label", { class: "field" }, el("span", {}, "Starting capital"),
+      el("input", { type: "number", min: 0, step: "0.01", value: 0, oninput: (e) => (form.capital = Number(e.target.value)) }), " ", free),
+    el("div", { class: "toolbar" }, el("button", { class: "primary", onclick: () => guard(async () => {
       const p = await api("/v1/portfolios", { method: "POST", body: form });
       pf.selectedId = p.id;
       await loadAll();
       await openPortfolio(p.id);
     }) }, "Create")));
-};
+  await showFree();
+});
 
 // ------------------------------------------------------------------ portfolio view
 
@@ -72,7 +82,82 @@ async function openPortfolio(id) {
   pf.selectedId = id;
   pf.data = await api(`/v1/portfolios/${id}`);
   render();
-  await showOrders();
+  await Promise.all([showOrders(), drawHistory()]);
+}
+
+async function drawHistory() {
+  const box = $("#history");
+  if (!box) return;
+  const days = Object.fromEntries(RANGES)[pf.range];
+  const start = sinceDays(days);
+  const { points, current } = await api(`/v1/portfolios/${pf.selectedId}/history${start ? `?start=${start}` : ""}`);
+  const all = [...points, current];
+  const series = [
+    { name: "Equity", data: all.map((p) => ({ at: p.at, value: p.equity })) },
+    { name: "Cash", data: all.map((p) => ({ at: p.at, value: p.cash })) },
+  ];
+  if ($("#with-account")?.checked) {
+    const acct = await api(`/v1/broker-accounts/${pf.data.brokerAccountId}/equity-history?period=${ALPACA_PERIOD[pf.range]}`);
+    series.push({ name: "Whole account equity (broker)", data: acct.points.map((p) => ({ at: p.at, value: p.equity })), scale: "left" });
+  }
+  lineChart(box, series);
+  if (points.length < 2) box.append(el("p", { class: "muted" }, "History builds up from now: a point every 15 minutes in the regular session and one after each close."));
+}
+
+async function openAccount(id) {
+  const a = await api(`/v1/broker-accounts/${id}`);
+  const shares = Object.entries(a.unassignedShares || {});
+  setChildren($("#editor"),
+    el("div", { class: "section-head" }, el("h2", {}, a.name), el("span", { class: `badge ${a.status === "CONNECTED" ? "ACTIVE" : "FAILED"}` }, a.status.toLowerCase())),
+    el("dl", { class: "kv" },
+      el("dt", {}, "Broker"), el("dd", {}, `${a.provider} · ${a.environment}`),
+      el("dt", {}, "Cash"), el("dd", {}, money(a.cash)),
+      el("dt", {}, "Equity"), el("dd", {}, money(a.equity)),
+      el("dt", {}, "In portfolios"), el("dd", {}, money(a.assignedCash)),
+      el("dt", {}, "Unassigned cash"), el("dd", {}, money(a.unassignedCash)),
+      el("dt", {}, "Unassigned shares"), el("dd", {}, shares.length ? shares.map(([s, q]) => `${q} ${s}`).join(", ") : "none"),
+      el("dt", {}, "Last sync"), el("dd", {}, when(a.lastSync?.ranAt))),
+    el("h3", {}, "Portfolios"),
+    a.portfolios.length ? el("ul", {}, ...a.portfolios.map((p) => el("li", {}, `${p.name}: ${money(p.cash)}`))) : el("p", { class: "muted" }, "None yet."),
+    el("h3", {}, "Account equity (from the broker)"),
+    el("div", { id: "account-chart", class: "chart-box" }));
+  const hist = await api(`/v1/broker-accounts/${id}/equity-history?period=1A`);
+  lineChart($("#account-chart"), [{ name: "Equity", data: hist.points.map((p) => ({ at: p.at, value: p.equity })) }]);
+}
+
+function capitalControls(p) {
+  const form = { amount: 1000 };
+  const move = (verb) => guard(async () => {
+    pf.data = await api(`/v1/portfolios/${p.id}/capital/${verb}`, { method: "POST", body: { amount: form.amount } });
+    await loadAll();
+    render();
+    drawHistory();
+  });
+  return el("div", { class: "row" }, "capital",
+    el("input", { type: "number", min: 0, step: "0.01", value: form.amount, style: "width:100px", oninput: (e) => (form.amount = Number(e.target.value)) }),
+    el("button", { onclick: () => move("allocate") }, "Add from account"),
+    el("button", { onclick: () => move("withdraw") }, "Return to account"),
+    el("span", { class: "muted" }, `unassigned in account: ${money(p.account.unassignedCash)}`),
+    el("span", { class: "grow" }),
+    el("button", { class: "link", onclick: () => guard(showLedger) }, "Ledger"),
+    el("button", { class: "link danger", onclick: () => guard(async () => {
+      if (!confirm(`Delete "${p.name}"? Only an empty portfolio can be deleted; its cash returns to the account.`)) return;
+      await api(`/v1/portfolios/${p.id}`, { method: "DELETE" });
+      pf.selectedId = null;
+      await loadAll();
+    }) }, "Delete"));
+}
+
+async function showLedger() {
+  const { entries } = await api(`/v1/portfolios/${pf.selectedId}/ledger`);
+  setChildren($("#results"), el("h2", {}, `Cash ledger · ${pf.data.name}`),
+    el("table", {},
+      el("thead", {}, el("tr", {}, ...["Time", "Type", "Amount", "Cash after", "Owner", "Note"].map((h) => el("th", {}, h)))),
+      el("tbody", {}, ...entries.map((e) => el("tr", { title: e.orderId || "" },
+        el("td", {}, when(e.createdAt)), el("td", {}, e.type.toLowerCase().replace("_", " ")),
+        el("td", { class: `num ${tone(e.amount)}` }, signed(e.amount)), el("td", { class: "num" }, money(e.cashAfter)),
+        el("td", {}, e.automationId ? ownerName(e.automationId) : ""), el("td", {}, e.note || ""))))),
+    el("button", { class: "link", onclick: () => guard(showOrders) }, "Back to orders"));
 }
 
 function render() {
@@ -81,14 +166,21 @@ function render() {
   const totals = p.positions.reduce((t, x) => ({ value: t.value + (x.marketValue || 0), pnl: t.pnl + (x.unrealizedPnL || 0) }), { value: 0, pnl: 0 });
   setChildren($("#editor"), 
     el("div", { class: "section-head" }, el("h2", {}, p.name),
-      el("button", { onclick: () => guard(async () => { const r = await api(`/v1/portfolios/${p.id}/sync`, { method: "POST" }); pf.data = r.portfolio; render(); showOrders(); }) }, "Sync now")),
+      el("button", { onclick: () => guard(async () => { const r = await api(`/v1/portfolios/${p.id}/sync`, { method: "POST" }); pf.data = r.portfolio; render(); showOrders(); drawHistory(); }) }, "Sync now")),
     el("dl", { class: "kv" },
-      el("dt", {}, "Cash"), el("dd", {}, `${money(p.cash)} ${p.currency}`),
-      el("dt", {}, "Unallocated"), el("dd", {}, money(p.unallocatedCash)),
-      el("dt", {}, "Equity"), el("dd", {}, money(p.equity)),
+      el("dt", {}, "Capital"), el("dd", {}, `${money(p.allocated)} ${p.currency} · from ${p.account.name}`),
+      el("dt", {}, "Cash"), el("dd", {}, money(p.cash)),
+      el("dt", {}, "Unallocated"), el("dd", {}, `${money(p.unallocatedCash)} (not in automation budgets)`),
+      el("dt", {}, "Equity"), el("dd", {}, money(p.equity), " · ",
+        el("span", { class: tone(p.equity - p.allocated) }, `${signed(p.equity - p.allocated)} vs capital`)),
       el("dt", {}, "Positions"), el("dd", {}, `${money(totals.value)} · unrealized `, el("span", { class: tone(totals.pnl) }, signed(totals.pnl))),
       el("dt", {}, "Realized P&L"), el("dd", { class: tone(p.realizedPnL) }, signed(p.realizedPnL)),
       el("dt", {}, "Last sync"), el("dd", {}, sync ? `${when(sync.ranAt)}${sync.error ? ` · ${sync.error}` : ""}` : "—")),
+    capitalControls(p),
+    el("div", { class: "section-head" }, el("h3", {}, "History"),
+      el("span", {}, rangeButtons(RANGES, pf.range, (d, label) => { pf.range = label; render(); drawHistory(); }), " ",
+        el("label", { class: "muted" }, el("input", { type: "checkbox", id: "with-account", onchange: () => guard(drawHistory) }), " whole account"))),
+    el("div", { id: "history", class: "chart-box" }),
     sync?.mismatches?.length ? el("div", { class: "error" }, "Differences with the broker:\n" +
       sync.mismatches.map((m) => `${m.kind} ${m.symbol || ""} app ${m.appValue ?? ""} broker ${m.brokerValue ?? ""} ${m.detail || ""}`).join("\n")) : null,
     el("h3", {}, "Positions"),

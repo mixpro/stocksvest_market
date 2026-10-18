@@ -122,8 +122,8 @@ def test_alpaca_equity_history_mapping():
     from test_app_trading import Recorder
     from stocksvest_app.brokers.alpaca import AlpacaBroker
     day = int(datetime(2026, 10, 15, tzinfo=timezone.utc).timestamp())
-    rec = Recorder([(200, {"timestamp": [day, day + 86400], "equity": [100000.0, None],
-                           "profit_loss": [0.0, None], "timeframe": "1D"})])
+    rec = Recorder([(200, {"timestamp": [day - 86400, day, day + 86400], "equity": [0, 100000.0, None],
+                           "profit_loss": [0, 0.0, None], "timeframe": "1D"})])  # 0 = before the account existed
     points = AlpacaBroker("k", "s", session=rec).equity_history("1M", "1D")
     assert points == [{"at": "2026-10-15T00:00:00Z", "equity": 100000.0, "profitLoss": 0.0}]
     assert rec.calls[0][1].endswith("/v2/account/portfolio/history") and rec.calls[0][2] == {"period": "1M", "timeframe": "1D"}

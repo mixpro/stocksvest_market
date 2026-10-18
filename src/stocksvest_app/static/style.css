@@ -82,6 +82,9 @@ tbody tr:hover, tbody tr.active { background: var(--bg); }
 .kv dd { margin: 0; }
 .note { border-left: 3px solid var(--accent); padding: 4px 8px; margin: 6px 0; background: var(--bg); border-radius: 4px; }
 .note.unread { font-weight: 600; }
+.legend { display: flex; gap: 12px; font-size: 12px; margin: 6px 0; }
+.chart-box { margin: 12px 0; }
+.chips button { font-size: 12px; padding: 1px 8px; }
 dialog { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); }
 dialog input { width: 320px; }
 dialog menu { padding: 0; display: flex; justify-content: flex-end; }
