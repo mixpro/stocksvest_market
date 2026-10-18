@@ -145,8 +145,18 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.put("/v1/automations/{automation_id}", tags=["automations"])
     def update_automation(automation_id: str, body: AutomationIn, conn: Conn):
-        """Replace the definition. configVersion goes up and schedules restart from now."""
-        load(conn, automation_id)
+        """Replace the definition. configVersion goes up and schedules restart from now. Moving it to another
+        portfolio is refused while its budget, shares or open orders are in the current one."""
+        current = load(conn, automation_id)
+        pool = budget.get_pool(conn, automation_id)
+        if pool and body.portfolioId != pool["portfolioId"]:
+            reasons = budget.holdings_blocking_removal(conn, automation_id)
+            if pool["cash"]:
+                reasons.append(f"its budget holds {pool['cash']:.2f}: withdraw it first")
+            if reasons:
+                raise HTTPException(409, "can't move this automation to another portfolio: " + "; ".join(reasons))
+            with conn:  # an empty budget simply moves along
+                budget.close_pool(conn, automation_id, f"moved from portfolio {current.get('portfolioId')}")
         return store.update_automation(conn, automation_id, prepare(conn, body))
 
     @r.delete("/v1/automations/{automation_id}", tags=["automations"], status_code=204)

@@ -382,3 +382,18 @@ def test_orphan_budgets_are_returned_on_startup(settings, broker, client, portfo
     assert budget.repair_orphan_pools(conn) == []
     pf = client.get(f"/v1/portfolios/{portfolio['id']}", headers=KEY).json()
     assert pf["unallocatedCash"] == 10000 and pf["budgets"] == []
+
+
+def test_moving_an_automation_to_another_portfolio_is_guarded(client, portfolio, automation):
+    aid = automation["id"]
+    acct = portfolio["brokerAccountId"]
+    client.post(f"/v1/portfolios/{portfolio['id']}/capital/withdraw", headers=KEY, json={"amount": 2000})
+    other = client.post("/v1/portfolios", headers=KEY, json={"name": "Other", "brokerAccountId": acct, "capital": 2000}).json()
+    client.post(f"/v1/automations/{aid}/budget/allocate", headers=KEY, json={"amount": 500})
+    body = {**{k: automation[k] for k in ("name", "runTargets", "schedules", "actions")}, "portfolioId": other["id"]}
+    r = client.put(f"/v1/automations/{aid}", headers=KEY, json=body)
+    assert r.status_code == 409 and "withdraw it first" in r.text
+    client.post(f"/v1/automations/{aid}/budget/withdraw", headers=KEY, json={"amount": 500})
+    assert client.put(f"/v1/automations/{aid}", headers=KEY, json=body).json()["portfolioId"] == other["id"]
+    client.post(f"/v1/automations/{aid}/budget/allocate", headers=KEY, json={"amount": 300})
+    assert client.get(f"/v1/automations/{aid}/budget", headers=KEY).json()["pool"]["portfolioId"] == other["id"]
