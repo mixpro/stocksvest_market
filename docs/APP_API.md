@@ -394,6 +394,54 @@ Automation snapshots are taken after each close. Snapshots are kept permanently.
 
 ---
 
+## Activity log
+
+Everything that happens is recorded for the lifetime of the app, so problems can be traced.
+
+**API changes:** every request that changes something (POST, PUT, PATCH, DELETE) is recorded, **including
+failures**:
+- the action, e.g. `FILTER_CREATE`, `AUTOMATION_PAUSE`, `PORTFOLIO_CAPITAL_ALLOCATE`, `ORDER_PLACE_MANUAL`
+- the entity and related IDs
+- the request body
+- the status and error
+- the duration
+- the caller as `key:<fingerprint>` (never the key itself; `anonymous` without one)
+
+**What the app does by itself:**
+
+| Source | Actions |
+|---|---|
+| `SCHEDULER` | `AUTOMATION_RUN`, `AUTOMATION_RUNS_MISSED`, `SCHEDULE_ERROR`, `SCHEDULER_ERROR` |
+| `SYNC` | `ORDER_SUBMITTED` / `ORDER_FILLED` / `ORDER_CANCELLED` / `ORDER_EXPIRED` / `ORDER_REJECTED` (status changes), `FILL_IMPORTED`, `EXTERNAL_FILL`, `BROKER_MISMATCH`, `BROKER_MISMATCH_RESOLVED`, `BROKER_SYNC_FAILED` |
+| `API` / `SCHEDULER` | `ORDER_PLACED`, `ORDER_REJECTED`, `ORDER_SUBMIT_UNCERTAIN` (the order an API call or automation run placed) |
+| `SYSTEM` | `APP_STARTED`, `DB_UPGRADE`, `BUDGET_ORPHAN_RETURNED` |
+
+**Linked entries:** entries caused by the same API request or scheduled run share a `correlationId`. Every
+response includes it in the `X-Correlation-Id` header.
+
+| Call | Notes |
+|---|---|
+| `GET /v1/activity?entityType=&entityId=&relatedId=&action=&source=&outcome=&correlationId=&since=&until=&limit=` | Newest first. `entityId` matches entries about that item **or** mentioning it. Page back with `beforeId=<nextBeforeId>` |
+| `GET /v1/activity/actions` | Every action recorded so far, with counts |
+| `GET /v1/activity/{id}` | One entry |
+
+The **Activity** page in the sample app shows all of this, with filters, and lists everything from the same
+request or run.
+
+## Error answers
+
+Every endpoint answers with JSON `{"detail": …}` and these codes:
+
+| Code | Meaning |
+|---|---|
+| `401` | Missing or wrong key (every `/v1` endpoint) |
+| `404` | Unknown ID. Run history and change logs still answer for **deleted** items, because their history is kept |
+| `409` | In use, or would break consistency (e.g. delete an automation that holds shares) |
+| `422` | Invalid input (`detail` is a message, or a list of `{loc, msg}` per field) |
+| `502` | The market API or the broker is down, or answered something unexpected |
+
+Money changes are serialized: concurrent requests queue up rather than both passing a balance check.
+
 ## Run history (for analysis)
 
 Every stored run, of filters and automations now and of other actions later, is kept for **6 months**

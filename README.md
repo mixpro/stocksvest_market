@@ -54,6 +54,19 @@ PYTHONPATH=src .venv/bin/python -m stocksvest_market sync nightly
 
 Tests: `.venv/bin/python -m pytest`
 
+The app tests include:
+- **A contract sweep over every endpoint** (`tests/test_app_contract.py`), built from the app's own OpenAPI:
+  no key → 401, unknown IDs → 404, garbage bodies, broken JSON and bad query values never cause a 500.
+- **End-to-end scenarios through the API** (`tests/test_app_scenarios.py`):
+  - full setups and teardown in dependency order
+  - deep cycle checks
+  - state surviving restarts, and a scheduled time never running twice across them
+  - randomized capital and budget operations with bookkeeping invariants (ledgers replay to balances)
+  - concurrent requests that must not overspend
+  - market and broker outages
+  - odd input
+  - every change appearing in the activity log
+
 ## App service (filters)
 
 `docker compose up -d` also starts the **app service** on port 8100. It stores filters, filter groups,
@@ -74,6 +87,7 @@ Code layout (`src/stocksvest_app/`): one folder per feature, each with its own m
 | `brokers/` | Broker interface and normalized models, Alpaca adapter, broker accounts (`/v1/broker-accounts`) |
 | `portfolios/` | Portfolios with their own capital and cash ledger (several per broker account), positions and lots per owner (`/v1/portfolios`) |
 | `performance/` | Portfolio snapshots (every 15 min in the session and at the close), daily automation snapshots, broker equity history |
+| `audit/` | Activity log: middleware recording every changing API request, plus entries for what the app does by itself (`/v1/activity`) |
 | `orders/` | Orders and fills: placing, cancelling, broker sync (`/v1/orders`) |
 | `runs/` | Shared run history (`/v1/runs`), used by every feature that runs something |
 | `market/` | `client.py`: one function per market endpoint, all market URLs in `ENDPOINTS`. `data.py`: caching and batching helpers. `routes.py`: `/v1/market/*` |
