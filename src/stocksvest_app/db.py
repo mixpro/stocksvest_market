@@ -30,6 +30,7 @@ def connect(path: Path) -> sqlite3.Connection:
 
 
 def init(conn: sqlite3.Connection) -> None:
+    from .audit import store as audit_store
     from .automations import budget
     from .automations import store as automations_store
     from .brokers import store as brokers_store
@@ -40,7 +41,8 @@ def init(conn: sqlite3.Connection) -> None:
     from .runs import store as runs_store
 
     for schema in (filters_store.SCHEMA, runs_store.SCHEMA, automations_store.SCHEMA, brokers_store.SCHEMA,
-                   portfolios_store.SCHEMA, orders_store.SCHEMA, budget.SCHEMA, performance_store.SCHEMA):
+                   portfolios_store.SCHEMA, orders_store.SCHEMA, budget.SCHEMA, performance_store.SCHEMA,
+                   audit_store.SCHEMA):
         conn.executescript(schema)
     existing = {r[1] for r in conn.execute("PRAGMA table_info(broker_accounts)")}
     for name, kind in brokers_store.ADDED_COLUMNS.items():
@@ -84,8 +86,11 @@ def migrate(conn: sqlite3.Connection) -> None:
     from .orders.store import SCHEMA as orders_schema
     from .portfolios.store import SCHEMA as portfolios_schema
 
+    from .audit.store import record
+
     # v2: several portfolios per broker account, each with its own capital and a ledger.
     if "buying_power" in _columns(conn, "portfolios"):
+        record(conn, "DB_UPGRADE", details={"step": "portfolios get their own capital"}, source="SYSTEM")
         old = conn.execute("SELECT id, cash FROM portfolios").fetchall()
 
         def opening_capital():  # each old portfolio owned its whole account: keep that as allocated capital

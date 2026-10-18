@@ -87,7 +87,7 @@ function initHeader(page) {
   const link = (href, label) => el("a", { href, class: page === href ? "active" : "" }, label);
   $("header").replaceChildren(
     el("strong", {}, "StocksVest"),
-    el("nav", {}, link("index.html", "Filters"), link("automations.html", "Automations"), link("portfolio.html", "Portfolio")),
+    el("nav", {}, link("index.html", "Filters"), link("automations.html", "Automations"), link("portfolio.html", "Portfolio"), link("activity.html", "Activity")),
     el("span", { id: "market-status", class: "muted" }),
     el("span", { class: "spacer" }),
     el("a", { id: "bell", href: "automations.html#inbox", title: "Notifications" }, "🔔"),

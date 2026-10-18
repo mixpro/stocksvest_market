@@ -37,8 +37,11 @@ def tick(ctx: AppContext, conn, now: datetime | None = None) -> list[dict]:
             s = _schedule.validate_python(raw)
             try:
                 runs += _tick_schedule(ctx, conn, automation, s, created, calendar, now)
-            except Exception:  # a broken schedule must not stop the others
+            except Exception as e:  # a broken schedule must not stop the others
                 log.exception("schedule %s of automation %s failed", s.id, automation["id"])
+                from ..audit import store as audit
+                audit.record(conn, "SCHEDULE_ERROR", "AUTOMATION", automation["id"], source="SCHEDULER",
+                             related={"scheduleId": s.id}, outcome="FAILED", error=str(e))
     return runs
 
 
@@ -68,8 +71,14 @@ def _tick_schedule(ctx, conn, automation, s, created, calendar, now) -> list[dic
     if remaining is not None:
         to_run = to_run[:remaining]
 
+    from ..audit import store as audit
+
     runs = []
     missed = [t for t in due if t not in to_run]
+    if missed:
+        audit.record(conn, "AUTOMATION_RUNS_MISSED", "AUTOMATION", automation["id"], source="SCHEDULER",
+                     related={"scheduleId": s.id}, details={"count": len(missed), "policy": s.missedPolicy.value,
+                                                            "times": [_iso(t) for t in missed[-20:]]})
     if missed and s.missedPolicy == MissedPolicy.SKIP:
         # Leave a trace in the history: these times were due while the app was down or busy.
         runs.append(runs_store.add_run(
@@ -80,9 +89,22 @@ def _tick_schedule(ctx, conn, automation, s, created, calendar, now) -> list[dic
             retention_days=ctx.settings.run_retention_days))
     for t in to_run:
         fire_id = store.claim_fire(conn, automation["id"], s.id, _iso(t))
-        if fire_id:  # None = this time already fired (e.g. a second scheduler process)
-            runs.append(run_automation(ctx, conn, automation, "SCHEDULE", scheduled_for=t, schedule_id=s.id,
-                                       fire_id=fire_id))
+        if not fire_id:  # this time already fired (e.g. a second scheduler process)
+            continue
+        tokens = (audit.correlation_id.set(fire_id), audit.current_source.set("SCHEDULER"),
+                  audit.current_actor.set("scheduler"))
+        try:
+            run = run_automation(ctx, conn, automation, "SCHEDULE", scheduled_for=t, schedule_id=s.id, fire_id=fire_id)
+            audit.record(conn, "AUTOMATION_RUN", "AUTOMATION", automation["id"],
+                         related={"runId": run["id"], "scheduleId": s.id, "portfolioId": automation.get("portfolioId")},
+                         details={"scheduledFor": _iso(t), "status": run["status"],
+                                  "skipReason": (run.get("result") or {}).get("skipReason"),
+                                  "metrics": (run.get("result") or {}).get("metrics")},
+                         outcome="FAILED" if run["status"] == "FAILED" else "OK", error=run.get("error"))
+            runs.append(run)
+        finally:
+            for var, token in zip((audit.correlation_id, audit.current_source, audit.current_actor), tokens):
+                var.reset(token)
 
     last = due[-1] if due else datetime.fromisoformat(state["next_fire_at"])
     nxt = next_fires(s, max(last, now), created, calendar,
@@ -139,6 +161,9 @@ class AutomationScheduler:
             except Exception as e:
                 log.exception("scheduler tick failed")
                 self.last_error = str(e)
+                from ..audit import store as audit
+                audit.record(conn, "SCHEDULER_ERROR", source="SCHEDULER", actor="scheduler", outcome="FAILED",
+                             error=str(e))
             finally:
                 conn.close()
                 self.last_tick_at = datetime.now(timezone.utc)

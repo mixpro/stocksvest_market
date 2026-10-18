@@ -5,6 +5,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+from ..audit import store as audit
 from ..automations import budget
 from ..brokers.base import (
     FINAL_STATUSES,
@@ -126,6 +127,10 @@ def place_order(conn: sqlite3.Connection, broker: Broker, portfolio: dict, *, sy
                                  stop_price=D(stop_price) if stop_price is not None else None,
                                  trail_percent=D(trail_percent) if trail_percent is not None else None,
                                  extended_hours=extended_hours)
+    related = {"portfolioId": portfolio["id"], "automationId": automation_id, "runId": run_id}
+    details = {"symbol": symbol, "side": side, "type": type, "quantity": str(quantity), "timeInForce": time_in_force,
+               "limitPrice": limit_price, "stopPrice": stop_price, "estimatedPrice": estimated_price,
+               "reserved": str(reserve_amount), "clientOrderId": client_order_id}
     try:
         bo = broker.submit_order(request)
     except BrokerError as e:
@@ -133,17 +138,31 @@ def place_order(conn: sqlite3.Connection, broker: Broker, portfolio: dict, *, sy
             with conn:
                 store.update_order(conn, order_id, status=REJECTED, reject_reason=str(e))
                 finalize(conn, store.get_order_row(conn, id=order_id))
+        audit.record(conn, "ORDER_REJECTED" if not e.retryable else "ORDER_SUBMIT_UNCERTAIN", "ORDER", order_id,
+                     related=related, details=details, outcome="FAILED", error=str(e))
         # retryable: stays PENDING; the next broker sync finds it by client order id or rejects it after a timeout
         return store.get_order(conn, order_id)
     with conn:
-        apply_order_update(conn, store.get_order_row(conn, id=order_id), bo)
-    return store.get_order(conn, order_id)
+        apply_order_update(conn, store.get_order_row(conn, id=order_id), bo, log=False)
+    order = store.get_order(conn, order_id)
+    audit.record(conn, "ORDER_PLACED" if order["status"] != REJECTED else "ORDER_REJECTED", "ORDER", order_id,
+                 related=related, details={**details, "status": order["status"], "brokerOrderId": bo.broker_order_id},
+                 outcome="OK" if order["status"] != REJECTED else "FAILED", error=order["rejectReason"])
+    return order
 
 
-def apply_order_update(conn, row: sqlite3.Row, bo: BrokerOrder) -> bool:
+def apply_order_update(conn, row: sqlite3.Row, bo: BrokerOrder, log: bool = True) -> bool:
     """Copy the broker's view of an order. Returns True if anything changed."""
     changed = (bo.status != row["status"] or str(bo.filled_quantity) != row["filled_quantity"]
                or bo.broker_order_id != row["broker_order_id"])
+    if log and bo.status != row["status"]:
+        audit.record(conn, f"ORDER_{bo.status}", "ORDER", row["id"], source="SYNC",
+                     related={"portfolioId": row["portfolio_id"], "automationId": row["automation_id"],
+                              "runId": row["automation_run_id"]},
+                     details={"from": row["status"], "to": bo.status, "rawStatus": bo.raw_status,
+                              "filledQuantity": str(bo.filled_quantity), "averageFillPrice": bo.average_fill_price,
+                              "symbol": row["symbol"], "side": row["side"]},
+                     outcome="FAILED" if bo.status == REJECTED else "OK", error=bo.reject_reason)
     fields = dict(broker_order_id=bo.broker_order_id, status=bo.status, raw_status=bo.raw_status,
                   filled_quantity=bo.filled_quantity, reject_reason=bo.reject_reason,
                   average_fill_price=bo.average_fill_price)
@@ -173,6 +192,10 @@ def apply_fill(conn, row: sqlite3.Row, fill: BrokerFill) -> list[dict]:
     Returns mismatches, if any."""
     portfolio_id, owner, order_id = row["portfolio_id"], row["automation_id"], row["id"]
     fill_id = store.insert_fill(conn, order_id, portfolio_id, fill)
+    audit.record(conn, "FILL_IMPORTED", "ORDER", order_id, source="SYNC",
+                 related={"portfolioId": portfolio_id, "automationId": owner, "fillId": fill_id},
+                 details={"symbol": fill.symbol, "side": fill.side, "quantity": str(fill.quantity),
+                          "price": str(fill.price), "fee": str(fill.fee), "brokerFillId": fill.broker_fill_id})
     cost = fill.quantity * fill.price
     mismatches = []
     if fill.side == "BUY":
@@ -226,6 +249,7 @@ def sync_account(conn, broker: Broker, account: dict) -> dict:
     snap = broker.account_snapshot()
     brokers_store.set_balances(conn, account["id"], snap.cash, snap.buying_power, snap.equity)
     portfolios = pf.list_portfolios(conn, account["id"])
+    previous = store.last_sync(conn, account["id"])
 
     # Fills first, so final orders release only what their fills did not use.
     since_str = store.last_fill_time(conn, account["id"]) or account["createdAt"]
@@ -239,6 +263,9 @@ def sync_account(conn, broker: Broker, account: dict) -> dict:
             row = store.get_order_row(conn, broker_order_id=f.broker_order_id)
             if row is None:
                 store.insert_external_fill(conn, account["id"], f)
+                audit.record(conn, "EXTERNAL_FILL", "BROKER_ACCOUNT", account["id"], source="SYNC",
+                             details={"symbol": f.symbol, "side": f.side, "quantity": str(f.quantity),
+                                      "price": str(f.price), "brokerFillId": f.broker_fill_id})
                 external += 1
                 continue
             mismatches += apply_fill(conn, row, f)
@@ -279,6 +306,11 @@ def sync_account(conn, broker: Broker, account: dict) -> dict:
         mismatches.append({"kind": "CASH", "appValue": float(assigned), "brokerValue": float(snap.cash),
                            "detail": "portfolios hold more cash than the broker account"})
     unassigned = {"cash": float(max(snap.cash - assigned, D0)), "shares": unassigned_shares}
+    if mismatches and mismatches != (previous or {}).get("mismatches"):  # log when they appear or change
+        audit.record(conn, "BROKER_MISMATCH", "BROKER_ACCOUNT", account["id"], source="SYNC",
+                     details={"mismatches": mismatches}, outcome="FAILED", error=f"{len(mismatches)} difference(s)")
+    if previous and previous.get("mismatches") and not mismatches:
+        audit.record(conn, "BROKER_MISMATCH_RESOLVED", "BROKER_ACCOUNT", account["id"], source="SYNC")
     return store.add_sync(conn, account["id"], orders_updated, fills_imported, mismatches, None,
                           external_fills=external, unassigned=unassigned)
 
@@ -292,6 +324,8 @@ def run_account_sync(conn, broker_factory, account: dict) -> dict:
     except BrokerError as e:
         brokers_store.set_status(conn, account["id"], "ERROR", str(e))
         store.add_sync(conn, account["id"], 0, 0, [], str(e))
+        audit.record(conn, "BROKER_SYNC_FAILED", "BROKER_ACCOUNT", account["id"], source="SYNC", outcome="FAILED",
+                     error=str(e))
         raise
     brokers_store.set_status(conn, account["id"], "CONNECTED", synced=True)
     return result
