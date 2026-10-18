@@ -150,9 +150,21 @@ def router(ctx: AppContext) -> APIRouter:
         return store.update_automation(conn, automation_id, prepare(conn, body))
 
     @r.delete("/v1/automations/{automation_id}", tags=["automations"], status_code=204)
-    def delete_automation(automation_id: str, conn: Conn):
-        """Deletes the automation. Its run history stays until it ages out."""
+    def delete_automation(automation_id: str, conn: Conn,
+                          return_budget: Annotated[bool, Query(alias="returnBudget")] = False):
+        """Deletes the automation; its run history and budget ledger stay. Refused while it holds shares or has
+        open orders. Budget cash must go back to the portfolio first: withdraw it, or pass returnBudget=true."""
         load(conn, automation_id)
+        reasons = budget.holdings_blocking_removal(conn, automation_id)
+        if reasons:
+            raise HTTPException(409, "can't delete this automation: " + "; ".join(reasons))
+        pool = budget.get_pool(conn, automation_id)
+        if pool and pool["cash"] and not return_budget:
+            raise HTTPException(409, f"can't delete this automation: its budget still holds {pool['cash']:.2f}; "
+                                     "withdraw it first or delete with returnBudget=true")
+        with conn:
+            if pool:
+                budget.close_pool(conn, automation_id, "returned to the portfolio: the automation was deleted")
         store.delete_automation(conn, automation_id)
 
     @r.post("/v1/automations/{automation_id}/pause", tags=["automations"])

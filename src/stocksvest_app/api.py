@@ -1,5 +1,6 @@
 """Builds the app: shared context, each feature's routes, and the sample UI."""
 
+import logging
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -11,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from . import db
 from .config import Settings
 from .deps import AppContext
+from .automations import budget
 from .automations import routes as automations_routes
 from .automations.scheduler import AutomationScheduler
 from .brokers import routes as brokers_routes
@@ -25,6 +27,7 @@ from .portfolios import routes as portfolios_routes
 from .runs import routes as runs_routes
 
 STATIC_DIR = Path(__file__).parent / "static"
+log = logging.getLogger(__name__)
 
 
 def create_app(settings: Settings | None = None, market_factory: Callable[[Settings], MarketAPI] = MarketClient,
@@ -36,6 +39,8 @@ def create_app(settings: Settings | None = None, market_factory: Callable[[Setti
     async def lifespan(app: FastAPI):
         conn = db.connect(settings.db_path)
         db.init(conn)
+        for repaired in budget.repair_orphan_pools(conn):
+            log.warning("budget of deleted automation %s: %s", repaired["automationId"], repaired)
         conn.close()
         if settings.run_scheduler:
             ctx.scheduler = AutomationScheduler(ctx)

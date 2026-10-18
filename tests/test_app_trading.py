@@ -336,3 +336,49 @@ def test_alpaca_fills_pagination_and_live_refused(monkeypatch):
     monkeypatch.delenv("NOPE_KEY", raising=False)
     with pytest.raises(BrokerError, match="NOPE_KEY"):
         make_broker({"environment": "PAPER", "provider": "ALPACA", "credentialsRef": "NOPE"})
+
+
+# ------------------------------------------------------------------ deleting automations that trade
+
+
+def test_deleting_an_automation_with_a_budget_is_guarded(settings, client, portfolio, automation, broker):
+    aid = automation["id"]
+    client.post(f"/v1/automations/{aid}/budget/allocate", headers=KEY, json={"amount": 1000})
+
+    r = client.delete(f"/v1/automations/{aid}", headers=KEY)
+    assert r.status_code == 409 and "budget still holds 1000.00" in r.text
+
+    order = buy(client, portfolio, quantity=5, automationId=aid).json()  # open order
+    r = client.delete(f"/v1/automations/{aid}?returnBudget=true", headers=KEY)
+    assert r.status_code == 409 and "open order" in r.text
+    broker.fill(order["brokerOrderId"], 5, 10)
+    sync(client, portfolio)
+    r = client.delete(f"/v1/automations/{aid}?returnBudget=true", headers=KEY)
+    assert r.status_code == 409 and "holds shares (5 AAA)" in r.text
+
+    sell = client.post(f"/v1/portfolios/{portfolio['id']}/orders", headers=KEY, json={
+        "symbol": "AAA", "side": "SELL", "quantity": 5, "automationId": aid}).json()
+    broker.fill(sell["brokerOrderId"], 5, 11)
+    sync(client, portfolio)
+    assert client.delete(f"/v1/automations/{aid}?returnBudget=true", headers=KEY).status_code == 204
+
+    pf = client.get(f"/v1/portfolios/{portfolio['id']}", headers=KEY).json()
+    assert pf["budgets"] == [] and pf["unallocatedCash"] == pytest.approx(10005)  # 10000 + 5 profit
+    from stocksvest_app import db
+    from stocksvest_app.automations import budget
+    last = budget.entries(db.connect(settings.db_path), aid)[0]  # the ledger outlives the automation
+    assert last["type"] == "WITHDRAW" and last["amount"] == pytest.approx(-1005) and "deleted" in last["note"]
+
+
+def test_orphan_budgets_are_returned_on_startup(settings, broker, client, portfolio, automation):
+    from stocksvest_app import db
+    from stocksvest_app.automations import budget
+    aid = automation["id"]
+    client.post(f"/v1/automations/{aid}/budget/allocate", headers=KEY, json={"amount": 1000})
+    conn = db.connect(settings.db_path)
+    with conn:  # what the unguarded delete used to do
+        conn.execute("DELETE FROM automations WHERE id = ?", (aid,))
+    assert budget.repair_orphan_pools(conn) == [{"automationId": aid, "repaired": True, "returned": 1000.0}]
+    assert budget.repair_orphan_pools(conn) == []
+    pf = client.get(f"/v1/portfolios/{portfolio['id']}", headers=KEY).json()
+    assert pf["unallocatedCash"] == 10000 and pf["budgets"] == []

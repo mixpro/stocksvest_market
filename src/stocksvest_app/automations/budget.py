@@ -161,6 +161,53 @@ def fee(conn, automation_id: str, amount: Decimal, order_id: str | None, fill_id
         _apply(conn, automation_id, "FEE", -amount, cash=-amount, fees=amount, order_id=order_id, fill_id=fill_id)
 
 
+def holdings_blocking_removal(conn, automation_id: str) -> list[str]:
+    """What still ties an automation to its portfolio besides spare budget cash: shares and open orders."""
+    reasons = []
+    shares = conn.execute("SELECT symbol, remaining_quantity FROM position_lots WHERE automation_id = ? "
+                          "AND closed_at IS NULL", (automation_id,)).fetchall()
+    if shares:
+        reasons.append("it holds shares (" + ", ".join(f"{D(r['remaining_quantity'])} {r['symbol']}" for r in shares)
+                       + "): sell them first")
+    open_orders = conn.execute("SELECT COUNT(*) FROM orders WHERE automation_id = ? AND status IN "
+                               "('PENDING', 'SUBMITTED', 'PARTIALLY_FILLED')", (automation_id,)).fetchone()[0]
+    if open_orders:
+        reasons.append(f"it has {open_orders} open order(s): cancel them first")
+    return reasons
+
+
+def close_pool(conn, automation_id: str, note: str) -> Decimal:
+    """Return the pool's remaining cash to its portfolio and remove the pool (the ledger is kept).
+    Only for a pool with nothing reserved or invested. Returns the amount returned."""
+    r = _row(conn, automation_id)
+    if r is None:
+        return D0
+    if D(r["reserved"]) or D(r["invested"]):
+        raise BudgetError("the budget still has reserved or invested money")
+    cash = D(r["cash"])
+    if cash:
+        _apply(conn, automation_id, "WITHDRAW", -cash, cash=-cash, allocated=-cash, note=note)
+    conn.execute("DELETE FROM budget_pools WHERE automation_id = ?", (automation_id,))
+    return cash
+
+
+def repair_orphan_pools(conn) -> list[dict]:
+    """Budgets left behind by automations deleted before deletion was guarded: give their cash back to the
+    portfolio. Pools that still hold shares or reservations are left alone (and reported)."""
+    out = []
+    rows = conn.execute("SELECT * FROM budget_pools p WHERE NOT EXISTS "
+                        "(SELECT 1 FROM automations a WHERE a.id = p.automation_id)").fetchall()
+    for r in rows:
+        aid = r["automation_id"]
+        if D(r["reserved"]) or D(r["invested"]) or holdings_blocking_removal(conn, aid):
+            out.append({"automationId": aid, "repaired": False})
+            continue
+        with conn:
+            amount = close_pool(conn, aid, "returned to the portfolio: the automation was deleted")
+        out.append({"automationId": aid, "repaired": True, "returned": float(amount)})
+    return out
+
+
 def entries(conn, automation_id: str, limit: int = 200) -> list[dict]:
     rows = conn.execute("SELECT * FROM budget_entries WHERE automation_id = ? ORDER BY created_at DESC, rowid DESC "
                         "LIMIT ?", (automation_id, limit))

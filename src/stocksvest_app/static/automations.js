@@ -335,8 +335,10 @@ const togglePause = () => guard(async () => {
 });
 
 const remove = () => guard(async () => {
-  if (!confirm(`Delete "${st.draft.name}"? Its run history is kept.`)) return;
-  await api(`/v1/automations/${st.selectedId}`, { method: "DELETE" });
+  const pool = st.draft.portfolioId ? (await api(`/v1/automations/${st.selectedId}/budget`)).pool : null;
+  const extra = pool?.cash ? ` Its remaining budget (${money(pool.cash)}) goes back to the portfolio.` : "";
+  if (!confirm(`Delete "${st.draft.name}"? Its run history and budget ledger are kept.${extra}`)) return;
+  await api(`/v1/automations/${st.selectedId}?returnBudget=true`, { method: "DELETE" });
   st.selectedId = null; st.draft = null;
   setChildren($("#editor"), el("p", { class: "muted empty" }, "Deleted."));
   await loadAll();
