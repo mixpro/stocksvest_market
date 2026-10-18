@@ -56,17 +56,32 @@ CREATE TABLE IF NOT EXISTS fills (
 );
 CREATE INDEX IF NOT EXISTS fills_by_portfolio ON fills(portfolio_id, executed_at);
 
+-- One row per sync of a broker account (all its portfolios at once).
 CREATE TABLE IF NOT EXISTS broker_syncs (
     id                TEXT PRIMARY KEY,
     broker_account_id TEXT NOT NULL,
-    portfolio_id      TEXT NOT NULL,
     ran_at            TEXT NOT NULL,
     orders_updated    INTEGER NOT NULL,
     fills_imported    INTEGER NOT NULL,
-    mismatches        TEXT NOT NULL,             -- JSON list
+    external_fills    INTEGER NOT NULL DEFAULT 0,
+    mismatches        TEXT NOT NULL,             -- JSON list: app and broker disagree
+    unassigned        TEXT NOT NULL DEFAULT '{}', -- JSON: account cash and shares not in any portfolio
     error             TEXT
 );
-CREATE INDEX IF NOT EXISTS broker_syncs_by_portfolio ON broker_syncs(portfolio_id, ran_at);
+CREATE INDEX IF NOT EXISTS broker_syncs_by_account ON broker_syncs(broker_account_id, ran_at);
+
+-- Fills of orders placed outside the app (e.g. in the broker's own UI). They belong to no portfolio:
+-- their shares and cash show up as "unassigned" on the broker account.
+CREATE TABLE IF NOT EXISTS external_fills (
+    broker_fill_id    TEXT PRIMARY KEY,
+    broker_account_id TEXT NOT NULL,
+    symbol            TEXT NOT NULL,
+    side              TEXT NOT NULL,
+    quantity          TEXT NOT NULL,
+    price             TEXT NOT NULL,
+    executed_at       TEXT NOT NULL,
+    created_at        TEXT NOT NULL
+);
 """
 
 
@@ -143,7 +158,17 @@ def update_order(conn, order_id: str, **fields) -> None:
 
 
 def fill_exists(conn, broker_fill_id: str) -> bool:
-    return conn.execute("SELECT 1 FROM fills WHERE broker_fill_id = ?", (broker_fill_id,)).fetchone() is not None
+    return (conn.execute("SELECT 1 FROM fills WHERE broker_fill_id = ?", (broker_fill_id,)).fetchone() is not None
+            or conn.execute("SELECT 1 FROM external_fills WHERE broker_fill_id = ?", (broker_fill_id,)).fetchone()
+            is not None)
+
+
+def insert_external_fill(conn, account_id: str, f) -> None:
+    conn.execute(
+        "INSERT INTO external_fills(broker_fill_id, broker_account_id, symbol, side, quantity, price, executed_at, "
+        "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (f.broker_fill_id, account_id, f.symbol, f.side, str(f.quantity), str(f.price), iso(f.executed_at), now_iso()),
+    )
 
 
 def insert_fill(conn, order_id: str | None, portfolio_id: str, f) -> str:
@@ -157,8 +182,11 @@ def insert_fill(conn, order_id: str | None, portfolio_id: str, f) -> str:
     return fid
 
 
-def last_fill_time(conn, portfolio_id: str) -> str | None:
-    r = conn.execute("SELECT MAX(executed_at) AS t FROM fills WHERE portfolio_id = ?", (portfolio_id,)).fetchone()
+def last_fill_time(conn, account_id: str) -> str | None:
+    r = conn.execute(
+        "SELECT MAX(t) AS t FROM (SELECT MAX(f.executed_at) AS t FROM fills f JOIN portfolios p ON p.id = f.portfolio_id "
+        "WHERE p.broker_account_id = ? UNION ALL SELECT MAX(executed_at) FROM external_fills WHERE broker_account_id = ?)",
+        (account_id, account_id)).fetchone()
     return r["t"]
 
 
@@ -173,22 +201,23 @@ def list_fills(conn, portfolio_id: str, order_id: str | None = None, limit: int 
              "executedAt": r["executed_at"]} for r in rows]
 
 
-def add_sync(conn, account_id: str, portfolio_id: str, orders_updated: int, fills_imported: int,
-             mismatches: list[dict], error: str | None) -> dict:
-    sid = new_id("sync")
+def add_sync(conn, account_id: str, orders_updated: int, fills_imported: int, mismatches: list[dict],
+             error: str | None, external_fills: int = 0, unassigned: dict | None = None) -> dict:
     with conn:
         conn.execute(
-            "INSERT INTO broker_syncs(id, broker_account_id, portfolio_id, ran_at, orders_updated, fills_imported, "
-            "mismatches, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (sid, account_id, portfolio_id, now_iso(), orders_updated, fills_imported, json.dumps(mismatches), error),
+            "INSERT INTO broker_syncs(id, broker_account_id, ran_at, orders_updated, fills_imported, external_fills, "
+            "mismatches, unassigned, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (new_id("sync"), account_id, now_iso(), orders_updated, fills_imported, external_fills,
+             json.dumps(mismatches), json.dumps(unassigned or {}), error),
         )
-    return last_sync(conn, portfolio_id)
+    return last_sync(conn, account_id)
 
 
-def last_sync(conn, portfolio_id: str) -> dict | None:
-    r = conn.execute("SELECT * FROM broker_syncs WHERE portfolio_id = ? ORDER BY ran_at DESC, rowid DESC LIMIT 1",
-                     (portfolio_id,)).fetchone()
+def last_sync(conn, account_id: str) -> dict | None:
+    r = conn.execute("SELECT * FROM broker_syncs WHERE broker_account_id = ? ORDER BY ran_at DESC, rowid DESC LIMIT 1",
+                     (account_id,)).fetchone()
     if not r:
         return None
     return {"id": r["id"], "ranAt": r["ran_at"], "ordersUpdated": r["orders_updated"],
-            "fillsImported": r["fills_imported"], "mismatches": json.loads(r["mismatches"]), "error": r["error"]}
+            "fillsImported": r["fills_imported"], "externalFills": r["external_fills"],
+            "mismatches": json.loads(r["mismatches"]), "unassigned": json.loads(r["unassigned"]), "error": r["error"]}

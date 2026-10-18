@@ -95,21 +95,18 @@ BROKER_SYNC_EVERY = timedelta(seconds=60)
 
 
 def sync_brokers(ctx: AppContext, conn) -> None:
-    """Import balances, fills and order updates for every portfolio."""
+    """Import balances, fills and order updates for every broker account that has a portfolio."""
     from ..brokers import store as brokers_store
     from ..brokers.base import BrokerError
-    from ..orders import service, store as orders_store
-    from ..portfolios import store as portfolios_store
+    from ..orders import service
 
-    for p in portfolios_store.list_portfolios(conn):
-        account = brokers_store.get_account(conn, p["brokerAccountId"])
+    for account in brokers_store.list_accounts(conn):
+        if not conn.execute("SELECT 1 FROM portfolios WHERE broker_account_id = ?", (account["id"],)).fetchone():
+            continue
         try:
-            service.sync_portfolio(conn, ctx.broker_factory(account), p)
-            brokers_store.set_status(conn, account["id"], "CONNECTED", synced=True)
+            service.run_account_sync(conn, ctx.broker_factory, account)
         except BrokerError as e:
-            log.warning("broker sync for portfolio %s failed: %s", p["id"], e)
-            brokers_store.set_status(conn, account["id"], "ERROR", str(e))
-            orders_store.add_sync(conn, account["id"], p["id"], 0, 0, [], str(e))
+            log.warning("broker sync for account %s failed: %s", account["id"], e)
 
 
 class AutomationScheduler:

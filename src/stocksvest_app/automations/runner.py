@@ -48,7 +48,7 @@ class Trading:
         self.account = brokers_store.get_account(conn, self.portfolio["brokerAccountId"])
         self.broker = ctx.broker_factory(self.account)
         if not preview:  # current fills and balances before deciding anything
-            orders_service.sync_portfolio(conn, self.broker, self.portfolio)
+            orders_service.sync_account(conn, self.broker, self.account)
             self.portfolio = portfolios_store.get_portfolio(conn, self.portfolio["id"])
         self.guards = OrderGuards.model_validate(automation.get("orderGuards") or {})
         self.plan_ctx: planner.PlanContext | None = None

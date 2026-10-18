@@ -48,16 +48,32 @@ def router(ctx: AppContext) -> APIRouter:
             raise HTTPException(404, f"broker account '{account_id}' not found")
         return a
 
+    def overview(conn, account: dict) -> dict:
+        """Portfolios on the account and what is not in any of them (cash and shares)."""
+        from ..orders import store as orders_store
+        from ..portfolios import store as portfolios_store
+
+        portfolios = portfolios_store.list_portfolios(conn, account["id"])
+        assigned = sum(p["cash"] for p in portfolios)
+        last = orders_store.last_sync(conn, account["id"])
+        return {"portfolios": [{"id": p["id"], "name": p["name"], "cash": p["cash"]} for p in portfolios],
+                "assignedCash": assigned,
+                "unassignedCash": (account["cash"] - assigned) if account["cash"] is not None else None,
+                "unassignedShares": (last or {}).get("unassigned", {}).get("shares", {}), "lastSync": last}
+
     def check(conn, account: dict) -> dict:
-        """Connect, record the status, and return the account with its capabilities and balances."""
+        """Connect, record the status and balances, and return the account with its capabilities."""
         try:
             broker = ctx.broker_factory(account)
             snap = broker.account_snapshot()
         except BrokerError as e:
             store.set_status(conn, account["id"], "ERROR", str(e))
-            return {**store.get_account(conn, account["id"]), "capabilities": None, "snapshot": None}
+            a = store.get_account(conn, account["id"])
+            return {**a, **overview(conn, a), "capabilities": None, "snapshot": None}
         store.set_status(conn, account["id"], "CONNECTED")
-        return {**store.get_account(conn, account["id"]), "capabilities": broker.capabilities().to_json(),
+        store.set_balances(conn, account["id"], snap.cash, snap.buying_power, snap.equity)
+        a = store.get_account(conn, account["id"])
+        return {**a, **overview(conn, a), "capabilities": broker.capabilities().to_json(),
                 "snapshot": snapshot_json(snap)}
 
     @r.get("")
@@ -72,7 +88,7 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.get("/{account_id}")
     def get_account(account_id: str, conn: Conn):
-        """The account with live balances from the broker and what it supports."""
+        """The account with live balances, what it supports, its portfolios and its unassigned cash and shares."""
         return check(conn, load(conn, account_id))
 
     @r.delete("/{account_id}", status_code=204)

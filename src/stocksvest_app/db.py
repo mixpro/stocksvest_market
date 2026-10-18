@@ -41,4 +41,74 @@ def init(conn: sqlite3.Connection) -> None:
     for schema in (filters_store.SCHEMA, runs_store.SCHEMA, automations_store.SCHEMA, brokers_store.SCHEMA,
                    portfolios_store.SCHEMA, orders_store.SCHEMA, budget.SCHEMA):
         conn.executescript(schema)
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(broker_accounts)")}
+    for name, kind in brokers_store.ADDED_COLUMNS.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE broker_accounts ADD COLUMN {name} {kind}")
     conn.commit()
+    migrate(conn)
+
+
+def _columns(conn, table: str) -> set[str]:
+    return {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _create_statement(schema: str, table: str, new_name: str) -> str:
+    start = schema.index(f"CREATE TABLE IF NOT EXISTS {table} (")
+    end = schema.index(";", start)
+    return schema[start:end].replace(f"CREATE TABLE IF NOT EXISTS {table} (", f"CREATE TABLE {new_name} (", 1)
+
+
+def _rebuild(conn, table: str, schema: str, copy_sql: str, after=None) -> None:
+    """SQLite's safe table rebuild: create new, copy, drop old, rename new (references from other tables
+    keep pointing at the table name, so they follow the new table)."""
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys=OFF")
+    try:
+        with conn:
+            conn.execute(_create_statement(schema, table, f"{table}_new"))
+            conn.execute(copy_sql.format(new=f"{table}_new"))
+            if after:
+                after()
+            conn.execute(f"DROP TABLE {table}")
+            conn.execute(f"ALTER TABLE {table}_new RENAME TO {table}")
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
+
+
+def migrate(conn: sqlite3.Connection) -> None:
+    """Upgrade databases created by earlier versions. Each step checks the old layout, so it runs once."""
+    from decimal import Decimal
+
+    from .orders.store import SCHEMA as orders_schema
+    from .portfolios.store import SCHEMA as portfolios_schema
+
+    # v2: several portfolios per broker account, each with its own capital and a ledger.
+    if "buying_power" in _columns(conn, "portfolios"):
+        old = conn.execute("SELECT id, cash FROM portfolios").fetchall()
+
+        def opening_capital():  # each old portfolio owned its whole account: keep that as allocated capital
+            for r in old:
+                amount = Decimal(r["cash"] or "0")
+                if amount > 0:
+                    conn.execute("UPDATE portfolios_new SET allocated = ?, cash = ? WHERE id = ?",
+                                 (str(amount), str(amount), r["id"]))
+                    conn.execute(
+                        "INSERT INTO portfolio_entries(id, portfolio_id, type, amount, cash_after, note, created_at) "
+                        "VALUES (?, ?, 'ALLOCATE', ?, ?, ?, ?)",
+                        (new_id("pfe"), r["id"], str(amount), str(amount),
+                         "upgrade: the portfolio held the whole account", now_iso()))
+
+        _rebuild(conn, "portfolios", portfolios_schema,
+                 "INSERT INTO {new}(id, name, description, broker_account_id, currency, created_at, updated_at) "
+                 "SELECT id, name, description, broker_account_id, currency, created_at, updated_at FROM portfolios",
+                 opening_capital)
+
+    # v2: sync records per broker account instead of per portfolio.
+    if "portfolio_id" in _columns(conn, "broker_syncs"):
+        _rebuild(conn, "broker_syncs", orders_schema,
+                 "INSERT INTO {new}(id, broker_account_id, ran_at, orders_updated, fills_imported, mismatches, error) "
+                 "SELECT id, broker_account_id, ran_at, orders_updated, fills_imported, mismatches, error "
+                 "FROM broker_syncs")
+        with conn:
+            conn.execute("CREATE INDEX IF NOT EXISTS broker_syncs_by_account ON broker_syncs(broker_account_id, ran_at)")

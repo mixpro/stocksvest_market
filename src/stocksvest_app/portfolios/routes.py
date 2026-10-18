@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from ..automations import budget
+from ..automations import store as automations_store
 from ..brokers import store as brokers_store
 from ..brokers.base import BrokerError
 from ..deps import AppContext
@@ -21,6 +22,12 @@ class PortfolioIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = ""
     brokerAccountId: str
+    capital: Decimal = Field(default=Decimal(0), ge=0, decimal_places=2)  # taken from the account's unassigned cash
+
+
+class CapitalChangeIn(BaseModel):
+    amount: Decimal = Field(gt=0, decimal_places=2)
+    note: str | None = None
 
 
 class PortfolioUpdate(BaseModel):
@@ -51,34 +58,39 @@ def router(ctx: AppContext) -> APIRouter:
             raise HTTPException(404, f"portfolio '{portfolio_id}' not found")
         return p
 
+    def account_of(conn, portfolio: dict) -> dict:
+        return brokers_store.get_account(conn, portfolio["brokerAccountId"])
+
     def broker_for(conn, portfolio: dict):
-        account = brokers_store.get_account(conn, portfolio["brokerAccountId"])
         try:
-            return ctx.broker_factory(account)
+            return ctx.broker_factory(account_of(conn, portfolio))
         except BrokerError as e:
             raise HTTPException(502, str(e))
 
-    def run_sync(conn, portfolio: dict) -> dict:
+    def run_sync(conn, account: dict) -> dict:
         try:
-            result = service.sync_portfolio(conn, broker_for(conn, portfolio), portfolio)
-            brokers_store.set_status(conn, portfolio["brokerAccountId"], "CONNECTED", synced=True)
-            return result
+            return service.run_account_sync(conn, ctx.broker_factory, account)
         except BrokerError as e:
-            brokers_store.set_status(conn, portfolio["brokerAccountId"], "ERROR", str(e))
-            orders_store.add_sync(conn, portfolio["brokerAccountId"], portfolio["id"], 0, 0, [], str(e))
             raise HTTPException(502, f"broker sync failed: {e}")
 
+    def unassigned_cash(conn, account: dict) -> Decimal:
+        """Account cash not given to any portfolio (balances from the last sync)."""
+        return Decimal(str(account["cash"] or 0)) - store.assigned_cash(conn, account["id"])
+
     def summary(conn, p: dict) -> dict:
-        """Portfolio with positions valued at the latest prices, budgets and the last sync."""
+        """Portfolio with positions valued at the latest prices, budgets, totals and the account's last sync."""
         rows = store.positions(conn, p["id"], by_owner=True)
         try:
             snaps = ctx.market.snapshots({x["symbol"] for x in rows})
         except MarketError:
             snaps = {}
-        positions = []
+        positions, value_total, unrealized = [], D0, D0
         for x in rows:
             price = snaps.get(x["symbol"], {}).get("latestPrice")
             value = x["quantity"] * Decimal(str(price)) if price is not None else None
+            if value is not None:
+                value_total += value
+                unrealized += value - x["costBasis"]
             positions.append({"symbol": x["symbol"], "automationId": x["automationId"], "quantity": num(x["quantity"]),
                               "averageCost": num(x["averageCost"]), "costBasis": num(x["costBasis"]),
                               "price": price, "marketValue": num(value),
@@ -86,9 +98,14 @@ def router(ctx: AppContext) -> APIRouter:
         pools = [budget.pool_json(row) for row in
                  conn.execute("SELECT * FROM budget_pools WHERE portfolio_id = ?", (p["id"],))]
         manual = service.open_manual_buys(conn, p["id"])
+        account = account_of(conn, p)
         return {**p, "unallocatedCash": num(budget.unallocated_cash(conn, p, manual)), "openManualBuys": num(manual),
-                "budgets": pools, "positions": positions, "realizedPnL": num(store.realized_pnl(conn, p["id"])),
-                "lastSync": orders_store.last_sync(conn, p["id"])}
+                "positionsValue": num(value_total), "unrealizedPnL": num(unrealized),
+                "equity": num(Decimal(str(p["cash"])) + value_total),
+                "realizedPnL": num(store.realized_pnl(conn, p["id"])), "budgets": pools, "positions": positions,
+                "account": {"id": account["id"], "name": account["name"], "cash": account["cash"],
+                            "unassignedCash": num(unassigned_cash(conn, account))},
+                "lastSync": orders_store.last_sync(conn, account["id"])}
 
     @r.get("")
     def list_portfolios(conn: Conn):
@@ -96,25 +113,18 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.post("", status_code=201)
     def create_portfolio(body: PortfolioIn, conn: Conn):
-        """One portfolio per broker account. Positions already in the account are adopted as manual
-        (opening) shares; only fills after this moment are imported."""
+        """A broker account can hold several portfolios. `capital` comes from the account's unassigned cash.
+        Shares already in the account stay unassigned; only this portfolio's own orders fill it."""
         account = brokers_store.get_account(conn, body.brokerAccountId)
         if not account:
             raise HTTPException(422, f"broker account '{body.brokerAccountId}' does not exist")
-        if conn.execute("SELECT 1 FROM portfolios WHERE broker_account_id = ?", (account["id"],)).fetchone():
-            raise HTTPException(409, "this broker account already has a portfolio")
-        try:
-            broker = ctx.broker_factory(account)
-            opening = broker.positions()
-        except BrokerError as e:
-            raise HTTPException(502, f"cannot reach the broker: {e}")
-        p = store.create_portfolio(conn, body.name, body.description, account)
-        with conn:
-            for pos in opening:
-                if pos.quantity > 0:
-                    store.open_lot(conn, p["id"], pos.symbol, None, pos.quantity, pos.average_cost, source="OPENING")
-        run_sync(conn, p)
-        return summary(conn, store.get_portfolio(conn, p["id"]))
+        run_sync(conn, account)  # fresh balances
+        account = brokers_store.get_account(conn, account["id"])
+        free = unassigned_cash(conn, account)
+        if body.capital > free:
+            raise HTTPException(422, f"only {free:.2f} {account['baseCurrency']} of the account is unassigned")
+        p = store.create_portfolio(conn, body.name, body.description, account, body.capital)
+        return summary(conn, p)
 
     @r.get("/{portfolio_id}")
     def get_portfolio(portfolio_id: str, conn: Conn):
@@ -125,11 +135,54 @@ def router(ctx: AppContext) -> APIRouter:
         load(conn, portfolio_id)
         return store.update_portfolio(conn, portfolio_id, body.name, body.description)
 
+    @r.delete("/{portfolio_id}", status_code=204)
+    def delete_portfolio(portfolio_id: str, conn: Conn):
+        """Only an empty portfolio: no shares, no open orders, no automations. Its cash goes back to unassigned."""
+        p = load(conn, portfolio_id)
+        if store.positions(conn, portfolio_id):
+            raise HTTPException(409, "the portfolio still holds shares")
+        if orders_store.list_orders(conn, portfolio_id, open_only=True, limit=1):
+            raise HTTPException(409, "the portfolio has open orders")
+        users = [a["name"] for a in automations_store.list_automations(conn) if a.get("portfolioId") == portfolio_id]
+        if users:
+            raise HTTPException(409, f"used by automation: {', '.join(users)}")
+        store.delete_portfolio(conn, p["id"])
+
+    @r.post("/{portfolio_id}/capital/allocate")
+    def allocate(portfolio_id: str, body: CapitalChangeIn, conn: Conn):
+        """Move money from the broker account's unassigned cash into the portfolio."""
+        p = load(conn, portfolio_id)
+        account = account_of(conn, p)
+        free = unassigned_cash(conn, account)
+        if body.amount > free:
+            raise HTTPException(422, f"only {free:.2f} of the account is unassigned")
+        with conn:
+            store.change_cash(conn, portfolio_id, "ALLOCATE", body.amount, allocated=body.amount, note=body.note)
+        return summary(conn, store.get_portfolio(conn, portfolio_id))
+
+    @r.post("/{portfolio_id}/capital/withdraw")
+    def withdraw(portfolio_id: str, body: CapitalChangeIn, conn: Conn):
+        """Give unallocated portfolio cash (not in automation budgets, not held by open buys) back to the account."""
+        p = load(conn, portfolio_id)
+        free = budget.unallocated_cash(conn, p, service.open_manual_buys(conn, portfolio_id))
+        if body.amount > free:
+            raise HTTPException(422, f"only {free:.2f} is unallocated in this portfolio")
+        with conn:
+            store.change_cash(conn, portfolio_id, "WITHDRAW", -body.amount, allocated=-body.amount, note=body.note)
+        return summary(conn, store.get_portfolio(conn, portfolio_id))
+
+    @r.get("/{portfolio_id}/ledger")
+    def ledger(portfolio_id: str, conn: Conn, limit: Annotated[int, Query(ge=1, le=1000)] = 200):
+        """Every change of the portfolio's cash, newest first."""
+        load(conn, portfolio_id)
+        return {"entries": store.entries(conn, portfolio_id, limit)}
+
     @r.post("/{portfolio_id}/sync")
     def sync_now(portfolio_id: str, conn: Conn):
-        """Import balances, fills and order updates from the broker now (normally every minute)."""
+        """Sync the portfolio's broker account now (normally every minute)."""
         p = load(conn, portfolio_id)
-        return {"sync": run_sync(conn, p), "portfolio": summary(conn, store.get_portfolio(conn, portfolio_id))}
+        result = run_sync(conn, account_of(conn, p))
+        return {"sync": result, "portfolio": summary(conn, store.get_portfolio(conn, portfolio_id))}
 
     @r.get("/{portfolio_id}/orders")
     def orders(portfolio_id: str, conn: Conn, status: str | None = None,

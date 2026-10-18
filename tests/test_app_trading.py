@@ -38,7 +38,8 @@ def client(settings, broker):
 @pytest.fixture
 def portfolio(client):
     acct = client.post("/v1/broker-accounts", headers=KEY, json={"name": "Alpaca paper", "provider": "ALPACA"}).json()
-    return client.post("/v1/portfolios", headers=KEY, json={"name": "Paper", "brokerAccountId": acct["id"]}).json()
+    return client.post("/v1/portfolios", headers=KEY,
+                       json={"name": "Paper", "brokerAccountId": acct["id"], "capital": 10000}).json()
 
 
 @pytest.fixture
@@ -93,12 +94,50 @@ def test_broker_error_marks_account(settings):
 # ------------------------------------------------------------------ portfolios and manual orders
 
 
-def test_portfolio_adopts_opening_positions(client, portfolio):
-    assert portfolio["cash"] == 10000 and portfolio["unallocatedCash"] == 10000
-    assert [(p["symbol"], p["quantity"], p["automationId"]) for p in portfolio["positions"]] == [("BBB", 5, None)]
-    assert portfolio["lastSync"]["mismatches"] == []
-    again = client.post("/v1/portfolios", headers=KEY, json={"name": "x", "brokerAccountId": portfolio["brokerAccountId"]})
-    assert again.status_code == 409
+def test_shares_already_in_the_account_stay_unassigned(client, portfolio):
+    assert portfolio["cash"] == 10000 and portfolio["unallocatedCash"] == 10000 and portfolio["allocated"] == 10000
+    assert portfolio["positions"] == [] and portfolio["lastSync"]["mismatches"] == []
+    acct = client.get(f"/v1/broker-accounts/{portfolio['brokerAccountId']}", headers=KEY).json()
+    assert acct["unassignedShares"] == {"BBB": 5.0} and acct["unassignedCash"] == 0
+
+
+def test_several_portfolios_share_one_account(client):
+    acct = client.post("/v1/broker-accounts", headers=KEY, json={"name": "Paper", "provider": "ALPACA"}).json()
+    new = lambda name, capital: client.post("/v1/portfolios", headers=KEY, json={  # noqa: E731
+        "name": name, "brokerAccountId": acct["id"], "capital": capital})
+    growth = new("Growth", 4000).json()
+    income = new("Income", 3000).json()
+    assert growth["account"]["unassignedCash"] == 6000 and income["account"]["unassignedCash"] == 3000
+    too_much = new("Big", 3500)
+    assert too_much.status_code == 422 and "3000.00" in too_much.text
+
+    url = f"/v1/portfolios/{growth['id']}/capital"
+    assert client.post(f"{url}/allocate", headers=KEY, json={"amount": 3001}).status_code == 422
+    assert client.post(f"{url}/allocate", headers=KEY, json={"amount": 1000, "note": "more"}).json()["cash"] == 5000
+    assert client.post(f"{url}/withdraw", headers=KEY, json={"amount": 5001}).status_code == 422
+    assert client.post(f"{url}/withdraw", headers=KEY, json={"amount": 500}).json()["allocated"] == 4500
+    ledger = client.get(f"/v1/portfolios/{growth['id']}/ledger", headers=KEY).json()["entries"]
+    assert [(e["type"], e["amount"], e["cashAfter"]) for e in reversed(ledger)] == [
+        ("ALLOCATE", 4000, 4000), ("ALLOCATE", 1000, 5000), ("WITHDRAW", -500, 4500)]
+    overview = client.get(f"/v1/broker-accounts/{acct['id']}", headers=KEY).json()
+    assert overview["assignedCash"] == 7500 and overview["unassignedCash"] == 2500
+    assert client.delete(f"/v1/portfolios/{income['id']}", headers=KEY).status_code == 204
+    assert client.get(f"/v1/broker-accounts/{acct['id']}", headers=KEY).json()["unassignedCash"] == 5500
+
+
+def test_fills_land_in_the_right_portfolio(client, broker):
+    acct = client.post("/v1/broker-accounts", headers=KEY, json={"name": "Paper", "provider": "ALPACA"}).json()
+    a = client.post("/v1/portfolios", headers=KEY, json={"name": "A", "brokerAccountId": acct["id"], "capital": 2000}).json()
+    b = client.post("/v1/portfolios", headers=KEY, json={"name": "B", "brokerAccountId": acct["id"], "capital": 2000}).json()
+    order = buy(client, a, quantity=10).json()
+    broker.fill(order["brokerOrderId"], 10, 10)
+    out = sync(client, b)  # syncing either portfolio syncs the whole account
+    assert out["sync"]["fillsImported"] == 1
+    got_a = client.get(f"/v1/portfolios/{a['id']}", headers=KEY).json()
+    assert got_a["cash"] == 1900 and got_a["positions"][0]["symbol"] == "AAA" and got_a["equity"] == 2000
+    assert out["portfolio"]["cash"] == 2000 and out["portfolio"]["positions"] == []
+    ledger = client.get(f"/v1/portfolios/{a['id']}/ledger", headers=KEY).json()["entries"]
+    assert ledger[0]["type"] == "BUY_FILL" and ledger[0]["amount"] == -100 and ledger[0]["orderId"] == order["id"]
 
 
 def test_manual_buy_fill_and_sync(client, portfolio, broker):
@@ -117,7 +156,7 @@ def test_manual_buy_fill_and_sync(client, portfolio, broker):
     assert got["status"] == "FILLED" and got["averageFillPrice"] == 10.05
     assert got["slippage"] == pytest.approx(0.05) and got["fills"][0]["quantity"] == 10
     pf = out["portfolio"]
-    assert pf["cash"] == pytest.approx(10000 - 100.5)
+    assert pf["cash"] == pytest.approx(10000 - 100.5)  # the portfolio's own cash, from its ledger
     aaa = next(p for p in pf["positions"] if p["symbol"] == "AAA")
     assert aaa["quantity"] == 10 and aaa["averageCost"] == 10.05 and aaa["marketValue"] == 100.0
     assert sync(client, portfolio)["sync"]["fillsImported"] == 0  # imported once
@@ -153,10 +192,28 @@ def test_unreachable_broker_leaves_order_pending_then_sync_finds_it(client, port
     assert client.get(f"/v1/orders/{order['id']}", headers=KEY).json()["status"] == "SUBMITTED"
 
 
-def test_position_mismatch_is_reported(client, portfolio, broker):
-    broker.held["CCC"] = (Decimal(3), Decimal(5))  # bought outside the app, no fill visible
+def test_outside_trades_are_unassigned_and_real_gaps_are_mismatches(client, portfolio, broker):
+    broker.held["CCC"] = (Decimal(3), Decimal(5))  # bought outside the app
+    out = sync(client, portfolio)["sync"]
+    assert out["mismatches"] == [] and out["unassigned"]["shares"] == {"BBB": 5.0, "CCC": 3.0}
+
+    order = buy(client, portfolio, quantity=10).json()
+    broker.fill(order["brokerOrderId"], 10, 10)
+    sync(client, portfolio)
+    broker.held["AAA"] = (Decimal(4), Decimal(10))  # the broker now holds fewer than the portfolio thinks
     mismatches = sync(client, portfolio)["sync"]["mismatches"]
-    assert mismatches == [{"kind": "POSITION_QUANTITY", "symbol": "CCC", "appValue": 0.0, "brokerValue": 3.0}]
+    assert [(m["kind"], m["symbol"], m["appValue"], m["brokerValue"]) for m in mismatches] == [
+        ("POSITION_QUANTITY", "AAA", 10.0, 4.0)]
+
+
+def test_external_fills_are_recorded_once(client, portfolio, broker):
+    from datetime import datetime, timezone
+    from stocksvest_app.brokers.base import BrokerFill
+    broker.fills.append(BrokerFill("ext1", "not-an-app-order", "AAA", "BUY", Decimal(2), Decimal(10), Decimal(0),
+                                   datetime.now(timezone.utc)))
+    assert sync(client, portfolio)["sync"]["externalFills"] == 1
+    assert sync(client, portfolio)["sync"]["externalFills"] == 0
+    assert client.get(f"/v1/portfolios/{portfolio['id']}", headers=KEY).json()["cash"] == 10000
 
 
 # ------------------------------------------------------------------ budgets
@@ -168,7 +225,7 @@ def test_budget_allocate_and_withdraw(client, portfolio, automation):
     pool = client.post(f"{url}/allocate", headers=KEY, json={"amount": 3000, "note": "start"}).json()["pool"]
     assert pool["cash"] == 3000 and pool["available"] == 3000 and pool["allocated"] == 3000
     pf = client.get(f"/v1/portfolios/{portfolio['id']}", headers=KEY).json()
-    assert pf["unallocatedCash"] == 7000
+    assert pf["unallocatedCash"] == 7000 and pf["cash"] == 10000  # budgets are part of the portfolio's cash
     assert "INSUFFICIENT_BUDGET" in buy(client, portfolio, quantity=750).text  # 7500 > 7000 unallocated
     pool = client.post(f"{url}/withdraw", headers=KEY, json={"amount": 1000}).json()["pool"]
     assert pool["cash"] == 2000 and pool["allocated"] == 2000
@@ -196,7 +253,7 @@ def test_automation_buy_and_sell_flow_through_the_ledger(client, portfolio, auto
     assert ledger(client, {"id": aid}) == [("ALLOCATE", 1000), ("RESERVE", 505), ("BUY_FILL", -300),
                                            ("BUY_FILL", -202), ("RELEASE", -3)]
 
-    # Manual shares (BBB opening) are not the automation's to sell.
+    # Shares outside the automation (BBB is unassigned on the account) are not its to sell.
     assert "NOT_HELD" in client.post(f"/v1/portfolios/{portfolio['id']}/orders", headers=KEY, json={
         "symbol": "BBB", "side": "SELL", "quantity": 1, "automationId": aid}).text
     sell = client.post(f"/v1/portfolios/{portfolio['id']}/orders", headers=KEY, json={
@@ -210,7 +267,9 @@ def test_automation_buy_and_sell_flow_through_the_ledger(client, portfolio, auto
     assert pool["realizedPnL"] == pytest.approx(39) and pool["fees"] == 1
     assert pool["invested"] == pytest.approx(101) and pool["cash"] == pytest.approx(498 + 440 - 1)
     lots = client.get(f"/v1/portfolios/{portfolio['id']}/lots", headers=KEY).json()["lots"]
-    assert [(l["symbol"], l["remainingQuantity"], l["automationId"]) for l in lots] == [("BBB", 5, None), ("AAA", 10, aid)]
+    assert [(l["symbol"], l["remainingQuantity"], l["automationId"]) for l in lots] == [("AAA", 10, aid)]
+    pf = client.get(f"/v1/portfolios/{portfolio['id']}", headers=KEY).json()
+    assert pf["cash"] == pytest.approx(10000 - 502 + 440 - 1)  # portfolio cash follows every fill and fee
 
 
 # ------------------------------------------------------------------ Alpaca adapter

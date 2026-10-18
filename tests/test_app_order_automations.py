@@ -37,7 +37,8 @@ def client(tmp_path, monkeypatch, broker):
 @pytest.fixture
 def setup(client):
     acct = client.post("/v1/broker-accounts", headers=KEY, json={"name": "Paper", "provider": "ALPACA"}).json()
-    pf = client.post("/v1/portfolios", headers=KEY, json={"name": "Paper", "brokerAccountId": acct["id"]}).json()
+    pf = client.post("/v1/portfolios", headers=KEY,
+                     json={"name": "Paper", "brokerAccountId": acct["id"], "capital": 10000}).json()
     everything = client.post("/v1/filters", headers=KEY, json={"name": "All", "inputs": [{"type": "UNIVERSE"}]}).json()
     return {"portfolio": pf, "filter": everything}
 

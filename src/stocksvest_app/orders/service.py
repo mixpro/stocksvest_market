@@ -168,13 +168,19 @@ def finalize(conn, row: sqlite3.Row) -> None:
         store.update_order(conn, row["id"], reserved=D0)
 
 
-def apply_fill(conn, portfolio_id: str, fill: BrokerFill) -> list[dict]:
-    """Record a fill and update lots and the owning automation's budget. Returns mismatches, if any."""
-    row = store.get_order_row(conn, broker_order_id=fill.broker_order_id)
-    owner = row["automation_id"] if row else None
-    fill_id = store.insert_fill(conn, row["id"] if row else None, portfolio_id, fill)
+def apply_fill(conn, row: sqlite3.Row, fill: BrokerFill) -> list[dict]:
+    """Record a fill of an app order and update lots, the portfolio's cash and the owning automation's budget.
+    Returns mismatches, if any."""
+    portfolio_id, owner, order_id = row["portfolio_id"], row["automation_id"], row["id"]
+    fill_id = store.insert_fill(conn, order_id, portfolio_id, fill)
     cost = fill.quantity * fill.price
     mismatches = []
+    if fill.side == "BUY":
+        pf.change_cash(conn, portfolio_id, "BUY_FILL", -cost, automation_id=owner, order_id=order_id, fill_id=fill_id)
+    else:
+        pf.change_cash(conn, portfolio_id, "SELL_FILL", cost, automation_id=owner, order_id=order_id, fill_id=fill_id)
+    if fill.fee:
+        pf.change_cash(conn, portfolio_id, "FEE", -fill.fee, automation_id=owner, order_id=order_id, fill_id=fill_id)
     if fill.side == "BUY":
         pf.open_lot(conn, portfolio_id, fill.symbol, owner, fill.quantity, fill.price, buy_fill_id=fill_id,
                     opened_at=iso(fill.executed_at))
@@ -187,8 +193,10 @@ def apply_fill(conn, portfolio_id: str, fill: BrokerFill) -> list[dict]:
         if owner:
             budget.sell_fill(conn, owner, taken * fill.price, basis, pnl, row["id"], fill_id)
         if taken < fill.quantity:
-            # Sold more than the owner held (e.g. sold outside the app): take it from manual shares.
-            extra, _, _ = pf.close_lots_fifo(conn, portfolio_id, fill.symbol, None, fill.quantity - taken, fill.price)
+            # Sold more than the owner held: take it from the portfolio's manual shares.
+            extra = D0
+            if owner:
+                extra, _, _ = pf.close_lots_fifo(conn, portfolio_id, fill.symbol, None, fill.quantity - taken, fill.price)
             if taken + extra < fill.quantity:
                 mismatches.append({"kind": "POSITION_QUANTITY", "symbol": fill.symbol,
                                    "detail": f"sell fill of {fill.quantity} but only {taken + extra} shares were held"})
@@ -209,50 +217,81 @@ def cancel_order(conn, broker: Broker, order_id: str) -> dict:
     return store.get_order(conn, order_id)
 
 
-def sync_portfolio(conn, broker: Broker, portfolio: dict) -> dict:
-    """Import balances, fills and order updates from the broker, then compare positions."""
+def sync_account(conn, broker: Broker, account: dict) -> dict:
+    """Sync one broker account and all its portfolios: balances, fills (assigned to portfolios through their
+    orders; fills of orders placed outside the app are recorded as external), order updates, then compare
+    the app's positions and cash with the broker. Shares and cash not in any portfolio are "unassigned"."""
+    from ..brokers import store as brokers_store
+
     snap = broker.account_snapshot()
-    pf.set_balances(conn, portfolio["id"], snap.cash, snap.buying_power, snap.equity)
+    brokers_store.set_balances(conn, account["id"], snap.cash, snap.buying_power, snap.equity)
+    portfolios = pf.list_portfolios(conn, account["id"])
 
     # Fills first, so final orders release only what their fills did not use.
-    since_str = store.last_fill_time(conn, portfolio["id"]) or portfolio["createdAt"]
+    since_str = store.last_fill_time(conn, account["id"]) or account["createdAt"]
     since = datetime.fromisoformat(since_str) - timedelta(days=1)
-    fills_imported, mismatches = 0, []
+    fills_imported = external = 0
+    mismatches = []
     for f in broker.list_fills(since):
         if store.fill_exists(conn, f.broker_fill_id):
             continue
-        if f.executed_at < datetime.fromisoformat(portfolio["createdAt"]):
-            continue  # before the portfolio existed: covered by the opening positions
         with conn:
-            mismatches += apply_fill(conn, portfolio["id"], f)
+            row = store.get_order_row(conn, broker_order_id=f.broker_order_id)
+            if row is None:
+                store.insert_external_fill(conn, account["id"], f)
+                external += 1
+                continue
+            mismatches += apply_fill(conn, row, f)
         fills_imported += 1
 
     orders_updated = 0
     now = datetime.now(timezone.utc)
-    for o in store.list_orders(conn, portfolio_id=portfolio["id"], open_only=True, limit=1000):
-        row = store.get_order_row(conn, id=o["id"])
-        bo = (broker.get_order(row["broker_order_id"]) if row["broker_order_id"]
-              else broker.get_order_by_client_id(row["client_order_id"]))
-        with conn:
-            if bo is None:
-                if now - datetime.fromisoformat(row["created_at"]) > PENDING_TIMEOUT:
-                    store.update_order(conn, row["id"], status=REJECTED, reject_reason="never reached the broker")
-                    finalize(conn, store.get_order_row(conn, id=row["id"]))
-                    orders_updated += 1
-                continue
-            orders_updated += apply_order_update(conn, row, bo)
+    for p in portfolios:
+        for o in store.list_orders(conn, portfolio_id=p["id"], open_only=True, limit=1000):
+            row = store.get_order_row(conn, id=o["id"])
+            bo = (broker.get_order(row["broker_order_id"]) if row["broker_order_id"]
+                  else broker.get_order_by_client_id(row["client_order_id"]))
+            with conn:
+                if bo is None:
+                    if now - datetime.fromisoformat(row["created_at"]) > PENDING_TIMEOUT:
+                        store.update_order(conn, row["id"], status=REJECTED, reject_reason="never reached the broker")
+                        finalize(conn, store.get_order_row(conn, id=row["id"]))
+                        orders_updated += 1
+                    continue
+                orders_updated += apply_order_update(conn, row, bo)
 
-    app_positions = {p["symbol"]: p["quantity"] for p in pf.positions(conn, portfolio["id"])}
-    broker_positions = {p.symbol: p.quantity for p in broker.positions()}
+    # Compare: the broker holds the app's shares plus unassigned ones; it can never hold fewer.
+    app_positions: dict[str, Decimal] = {}
+    for p in portfolios:
+        for x in pf.positions(conn, p["id"]):
+            app_positions[x["symbol"]] = app_positions.get(x["symbol"], D0) + x["quantity"]
+    broker_positions = {x.symbol: x.quantity for x in broker.positions()}
+    unassigned_shares = {}
     for symbol in sorted(set(app_positions) | set(broker_positions)):
         a, b = app_positions.get(symbol, D0), broker_positions.get(symbol, D0)
-        if a != b:
+        if b > a:
+            unassigned_shares[symbol] = float(b - a)
+        elif a > b:
             mismatches.append({"kind": "POSITION_QUANTITY", "symbol": symbol, "appValue": float(a),
-                               "brokerValue": float(b)})
-    pools = sum((D(r["cash"]) for r in conn.execute("SELECT cash FROM budget_pools WHERE portfolio_id = ?",
-                                                    (portfolio["id"],))), D0)
-    if pools > snap.cash:
-        mismatches.append({"kind": "CASH", "appValue": float(pools), "brokerValue": float(snap.cash),
-                           "detail": "automation budgets hold more than the account's cash"})
-    return store.add_sync(conn, portfolio["brokerAccountId"], portfolio["id"], orders_updated, fills_imported,
-                          mismatches, None)
+                               "brokerValue": float(b), "detail": "portfolios hold more shares than the broker"})
+    assigned = pf.assigned_cash(conn, account["id"])
+    if assigned > snap.cash:
+        mismatches.append({"kind": "CASH", "appValue": float(assigned), "brokerValue": float(snap.cash),
+                           "detail": "portfolios hold more cash than the broker account"})
+    unassigned = {"cash": float(max(snap.cash - assigned, D0)), "shares": unassigned_shares}
+    return store.add_sync(conn, account["id"], orders_updated, fills_imported, mismatches, None,
+                          external_fills=external, unassigned=unassigned)
+
+
+def run_account_sync(conn, broker_factory, account: dict) -> dict:
+    """sync_account with the account's status kept up to date. Raises BrokerError when the broker fails."""
+    from ..brokers import store as brokers_store
+
+    try:
+        result = sync_account(conn, broker_factory(account), account)
+    except BrokerError as e:
+        brokers_store.set_status(conn, account["id"], "ERROR", str(e))
+        store.add_sync(conn, account["id"], 0, 0, [], str(e))
+        raise
+    brokers_store.set_status(conn, account["id"], "CONNECTED", synced=True)
+    return result
