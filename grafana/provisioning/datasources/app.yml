@@ -1,0 +1,12 @@
+apiVersion: 1
+datasources:
+  - name: StocksVest App
+    uid: stocksvest-app
+    type: frser-sqlite-datasource
+    access: proxy
+    editable: false
+    jsonData:
+      # The app service's SQLite DB (filters, automations, portfolios, history), mounted from ./data. Read-only.
+      path: /var/lib/stocksvest/app.db
+      pathPrefix: "file:"
+      pathOptions: "?mode=ro"

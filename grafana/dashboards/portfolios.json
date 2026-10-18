@@ -1,0 +1,623 @@
+{
+  "uid": "stocksvest-portfolios",
+  "title": "StocksVest Portfolios",
+  "tags": [
+    "stocksvest"
+  ],
+  "timezone": "America/New_York",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "portfolio",
+        "label": "Portfolio",
+        "type": "query",
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "stocksvest-app"
+        },
+        "query": {
+          "rawQueryText": "SELECT name AS __text, id AS __value FROM portfolios ORDER BY name",
+          "queryText": "SELECT name AS __text, id AS __value FROM portfolios ORDER BY name",
+          "queryType": "table",
+          "timeColumns": []
+        },
+        "definition": "SELECT name AS __text, id AS __value FROM portfolios ORDER BY name",
+        "refresh": 1,
+        "sort": 1,
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "name": "automation",
+        "label": "Automation",
+        "type": "query",
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "stocksvest-app"
+        },
+        "query": {
+          "rawQueryText": "SELECT a.name AS __text, a.id AS __value FROM automations a JOIN budget_pools b ON b.automation_id = a.id WHERE b.portfolio_id = '${portfolio}' ORDER BY a.name",
+          "queryText": "SELECT a.name AS __text, a.id AS __value FROM automations a JOIN budget_pools b ON b.automation_id = a.id WHERE b.portfolio_id = '${portfolio}' ORDER BY a.name",
+          "queryType": "table",
+          "timeColumns": []
+        },
+        "definition": "SELECT a.name AS __text, a.id AS __value FROM automations a JOIN budget_pools b ON b.automation_id = a.id WHERE b.portfolio_id = '${portfolio}' ORDER BY a.name",
+        "refresh": 1,
+        "sort": 1,
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Capital",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-app"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-app"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT CAST(allocated AS REAL) AS value FROM portfolios WHERE id = '${portfolio}'",
+          "queryText": "SELECT CAST(allocated AS REAL) AS value FROM portfolios WHERE id = '${portfolio}'",
+          "timeColumns": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Cash",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-app"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-app"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT CAST(cash AS REAL) AS value FROM portfolios WHERE id = '${portfolio}'",
+          "queryText": "SELECT CAST(cash AS REAL) AS value FROM portfolios WHERE id = '${portfolio}'",
+          "timeColumns": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Equity (last snapshot)",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-app"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-app"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT CAST(equity AS REAL) AS value FROM (SELECT * FROM portfolio_snapshots WHERE portfolio_id = '${portfolio}' ORDER BY at DESC LIMIT 1)",
+          "queryText": "SELECT CAST(equity AS REAL) AS value FROM (SELECT * FROM portfolio_snapshots WHERE portfolio_id = '${portfolio}' ORDER BY at DESC LIMIT 1)",
+          "timeColumns": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Unrealized P&L (last snapshot)",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-app"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-app"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT CAST(unrealized_pnl AS REAL) AS value FROM (SELECT * FROM portfolio_snapshots WHERE portfolio_id = '${portfolio}' ORDER BY at DESC LIMIT 1)",
+          "queryText": "SELECT CAST(unrealized_pnl AS REAL) AS value FROM (SELECT * FROM portfolio_snapshots WHERE portfolio_id = '${portfolio}' ORDER BY at DESC LIMIT 1)",
+          "timeColumns": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Realized P&L (last snapshot)",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-app"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-app"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT CAST(realized_pnl AS REAL) AS value FROM (SELECT * FROM portfolio_snapshots WHERE portfolio_id = '${portfolio}' ORDER BY at DESC LIMIT 1)",
+          "queryText": "SELECT CAST(realized_pnl AS REAL) AS value FROM (SELECT * FROM portfolio_snapshots WHERE portfolio_id = '${portfolio}' ORDER BY at DESC LIMIT 1)",
+          "timeColumns": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Snapshots in range",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-app"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-app"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT COUNT(*) AS value FROM portfolio_snapshots WHERE portfolio_id = '${portfolio}' AND at >= strftime('%Y-%m-%dT%H:%M:%SZ', ${__from:date:seconds}, 'unixepoch') AND at <= strftime('%Y-%m-%dT%H:%M:%SZ', ${__to:date:seconds}, 'unixepoch')",
+          "queryText": "SELECT COUNT(*) AS value FROM portfolio_snapshots WHERE portfolio_id = '${portfolio}' AND at >= strftime('%Y-%m-%dT%H:%M:%SZ', ${__from:date:seconds}, 'unixepoch') AND at <= strftime('%Y-%m-%dT%H:%M:%SZ', ${__to:date:seconds}, 'unixepoch')",
+          "timeColumns": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Portfolio equity, cash and capital",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-app"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-app"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT at AS time, CAST(equity AS REAL) AS Equity, CAST(cash AS REAL) AS Cash, CAST(allocated AS REAL) AS Capital, CAST(positions_value AS REAL) AS \"Positions value\" FROM portfolio_snapshots WHERE portfolio_id = '${portfolio}' AND at >= strftime('%Y-%m-%dT%H:%M:%SZ', ${__from:date:seconds}, 'unixepoch') AND at <= strftime('%Y-%m-%dT%H:%M:%SZ', ${__to:date:seconds}, 'unixepoch') ORDER BY at",
+          "queryText": "SELECT at AS time, CAST(equity AS REAL) AS Equity, CAST(cash AS REAL) AS Cash, CAST(allocated AS REAL) AS Capital, CAST(positions_value AS REAL) AS \"Positions value\" FROM portfolio_snapshots WHERE portfolio_id = '${portfolio}' AND at >= strftime('%Y-%m-%dT%H:%M:%SZ', ${__from:date:seconds}, 'unixepoch') AND at <= strftime('%Y-%m-%dT%H:%M:%SZ', ${__to:date:seconds}, 'unixepoch') ORDER BY at",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "custom": {
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Portfolio P&L",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-app"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-app"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT at AS time, CAST(realized_pnl AS REAL) AS Realized, CAST(unrealized_pnl AS REAL) AS Unrealized FROM portfolio_snapshots WHERE portfolio_id = '${portfolio}' AND at >= strftime('%Y-%m-%dT%H:%M:%SZ', ${__from:date:seconds}, 'unixepoch') AND at <= strftime('%Y-%m-%dT%H:%M:%SZ', ${__to:date:seconds}, 'unixepoch') ORDER BY at",
+          "queryText": "SELECT at AS time, CAST(realized_pnl AS REAL) AS Realized, CAST(unrealized_pnl AS REAL) AS Unrealized FROM portfolio_snapshots WHERE portfolio_id = '${portfolio}' AND at >= strftime('%Y-%m-%dT%H:%M:%SZ', ${__from:date:seconds}, 'unixepoch') AND at <= strftime('%Y-%m-%dT%H:%M:%SZ', ${__to:date:seconds}, 'unixepoch') ORDER BY at",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "custom": {
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Automation equity (${automation})",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-app"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-app"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT at AS time, CAST(equity AS REAL) AS Equity, CAST(cash AS REAL) AS Cash, CAST(allocated AS REAL) AS Budget FROM automation_snapshots WHERE automation_id = '${automation}' AND at >= strftime('%Y-%m-%dT%H:%M:%SZ', ${__from:date:seconds}, 'unixepoch') AND at <= strftime('%Y-%m-%dT%H:%M:%SZ', ${__to:date:seconds}, 'unixepoch') ORDER BY at",
+          "queryText": "SELECT at AS time, CAST(equity AS REAL) AS Equity, CAST(cash AS REAL) AS Cash, CAST(allocated AS REAL) AS Budget FROM automation_snapshots WHERE automation_id = '${automation}' AND at >= strftime('%Y-%m-%dT%H:%M:%SZ', ${__from:date:seconds}, 'unixepoch') AND at <= strftime('%Y-%m-%dT%H:%M:%SZ', ${__to:date:seconds}, 'unixepoch') ORDER BY at",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "custom": {
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "Automations: latest daily snapshot",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-app"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-app"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT a.name AS Automation, s.date AS Date, CAST(s.allocated AS REAL) AS Budget, CAST(s.equity AS REAL) AS Equity, ROUND(CAST(s.return_percent AS REAL), 2) AS \"Return %\", CAST(s.realized_pnl AS REAL) AS Realized, CAST(s.unrealized_pnl AS REAL) AS Unrealized, s.open_positions AS Positions, s.orders_placed AS \"Orders (day)\", s.fills AS \"Fills (day)\" FROM automation_snapshots s JOIN automations a ON a.id = s.automation_id WHERE s.date = (SELECT MAX(date) FROM automation_snapshots x WHERE x.automation_id = s.automation_id) AND s.portfolio_id = '${portfolio}' ORDER BY \"Return %\" DESC",
+          "queryText": "SELECT a.name AS Automation, s.date AS Date, CAST(s.allocated AS REAL) AS Budget, CAST(s.equity AS REAL) AS Equity, ROUND(CAST(s.return_percent AS REAL), 2) AS \"Return %\", CAST(s.realized_pnl AS REAL) AS Realized, CAST(s.unrealized_pnl AS REAL) AS Unrealized, s.open_positions AS Positions, s.orders_placed AS \"Orders (day)\", s.fills AS \"Fills (day)\" FROM automation_snapshots s JOIN automations a ON a.id = s.automation_id WHERE s.date = (SELECT MAX(date) FROM automation_snapshots x WHERE x.automation_id = s.automation_id) AND s.portfolio_id = '${portfolio}' ORDER BY \"Return %\" DESC",
+          "timeColumns": []
+        }
+      ],
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 11,
+      "type": "table",
+      "title": "Recent orders",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-app"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 30
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-app"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT o.created_at AS Created, o.side AS Side, CAST(o.quantity AS REAL) AS Qty, o.symbol AS Symbol, o.type AS Type, o.status AS Status, CAST(o.average_fill_price AS REAL) AS \"Avg fill\", CAST(o.estimated_price AS REAL) AS Estimated, COALESCE(a.name, 'manual') AS Owner FROM orders o LEFT JOIN automations a ON a.id = o.automation_id WHERE o.portfolio_id = '${portfolio}' ORDER BY o.created_at DESC LIMIT 100",
+          "queryText": "SELECT o.created_at AS Created, o.side AS Side, CAST(o.quantity AS REAL) AS Qty, o.symbol AS Symbol, o.type AS Type, o.status AS Status, CAST(o.average_fill_price AS REAL) AS \"Avg fill\", CAST(o.estimated_price AS REAL) AS Estimated, COALESCE(a.name, 'manual') AS Owner FROM orders o LEFT JOIN automations a ON a.id = o.automation_id WHERE o.portfolio_id = '${portfolio}' ORDER BY o.created_at DESC LIMIT 100",
+          "timeColumns": []
+        }
+      ],
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 12,
+      "type": "table",
+      "title": "Recent automation runs",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-app"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 30
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-app"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ran_at AS \"Ran at\", a.name AS Automation, r.status AS Status, json_extract(r.result, '$.metrics.matchedCount') AS Matched, json_extract(r.result, '$.metrics.placedCount') AS Placed, json_extract(r.result, '$.metrics.skippedCount') AS Skipped, r.error AS Error FROM runs r JOIN automations a ON a.id = r.subject_id WHERE r.kind = 'AUTOMATION' ORDER BY r.ran_at DESC LIMIT 100",
+          "queryText": "SELECT r.ran_at AS \"Ran at\", a.name AS Automation, r.status AS Status, json_extract(r.result, '$.metrics.matchedCount') AS Matched, json_extract(r.result, '$.metrics.placedCount') AS Placed, json_extract(r.result, '$.metrics.skippedCount') AS Skipped, r.error AS Error FROM runs r JOIN automations a ON a.id = r.subject_id WHERE r.kind = 'AUTOMATION' ORDER BY r.ran_at DESC LIMIT 100",
+          "timeColumns": []
+        }
+      ],
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 13,
+      "type": "table",
+      "title": "Cash ledger",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "stocksvest-app"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 39
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "stocksvest-app"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT created_at AS Time, type AS Type, CAST(amount AS REAL) AS Amount, CAST(cash_after AS REAL) AS \"Cash after\", note AS Note FROM portfolio_entries WHERE portfolio_id = '${portfolio}' ORDER BY created_at DESC LIMIT 200",
+          "queryText": "SELECT created_at AS Time, type AS Type, CAST(amount AS REAL) AS Amount, CAST(cash_after AS REAL) AS \"Cash after\", note AS Note FROM portfolio_entries WHERE portfolio_id = '${portfolio}' ORDER BY created_at DESC LIMIT 200",
+          "timeColumns": []
+        }
+      ],
+      "options": {
+        "showHeader": true
+      }
+    }
+  ]
+}
