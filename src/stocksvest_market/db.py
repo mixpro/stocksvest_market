@@ -3,7 +3,8 @@
 import sqlite3
 from pathlib import Path
 
-# Stored bar timeframes. Week/month/year are aggregated from 1Day on read.
+# Stored bar timeframes -> their table. Week/month/year are aggregated from 1Day on read.
+# Used by: sync (sync_bars, prune, run_incremental), api (load_bars, status, latest), aggregate callers.
 BAR_TABLES = {"1Min": "bars_1min", "1Hour": "bars_1hour", "1Day": "bars_1day"}
 
 SCHEMA = """
@@ -63,6 +64,19 @@ CREATE TABLE IF NOT EXISTS halal_imports (
 
 
 def connect(path: Path) -> sqlite3.Connection:
+    """Open the market database with the settings every connection needs.
+
+    WAL mode lets the API read while the sync writes; foreign keys make deleting a symbol delete its bars.
+
+    Args:
+        path: database file; its folder is created if missing.
+
+    Returns:
+        A connection with sqlite3.Row rows, usable from several threads.
+
+    Used by: api (lifespan, get_conn, background jobs), scheduler.Scheduler._loop, __main__.main,
+    halal.compliant_tickers (read-only variant).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -73,6 +87,13 @@ def connect(path: Path) -> sqlite3.Connection:
 
 
 def init(conn: sqlite3.Connection) -> None:
+    """Create missing tables and add columns introduced after the first release (idempotent).
+
+    Args:
+        conn: an open connection (see connect).
+
+    Used by: api.create_app (startup), __main__.main.
+    """
     conn.executescript(SCHEMA)
     existing = {r[1] for r in conn.execute("PRAGMA table_info(symbols)")}
     for name, kind in SYMBOL_COLUMNS.items():
@@ -85,11 +106,31 @@ def init(conn: sqlite3.Connection) -> None:
 
 
 def get_state(conn: sqlite3.Connection, key: str) -> str | None:
+    """Read a sync bookkeeping value.
+
+    Args:
+        conn: an open connection.
+        key: one of "last_incremental_at", "last_nightly_at", "last_nightly_date".
+
+    Returns:
+        The stored string, or None if never set.
+
+    Used by: api.status, scheduler.due_jobs.
+    """
     row = conn.execute("SELECT value FROM sync_state WHERE key = ?", (key,)).fetchone()
     return row["value"] if row else None
 
 
 def set_state(conn: sqlite3.Connection, key: str, value: str) -> None:
+    """Store a sync bookkeeping value (insert or replace) and commit.
+
+    Args:
+        conn: an open connection.
+        key: see get_state.
+        value: ISO timestamp or date.
+
+    Used by: sync.run_incremental, sync.run_nightly.
+    """
     conn.execute(
         "INSERT INTO sync_state(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (key, value),

@@ -6,11 +6,44 @@ from pathlib import Path
 
 
 def _list(name: str, default: str) -> list[str]:
+    """Read a comma-separated environment variable as a list, dropping blanks.
+
+    Args:
+        name: environment variable name, e.g. "API_KEYS".
+        default: value used when the variable is not set.
+
+    Returns:
+        The trimmed, non-empty items.
+
+    Used by: Settings (api_keys, other_exchanges).
+    """
     return [v.strip() for v in os.environ.get(name, default).split(",") if v.strip()]
 
 
 @dataclass(frozen=True)
 class Settings:
+    """All market-service settings, read from environment variables when the object is created.
+
+    Attributes:
+        alpaca_key / alpaca_secret: Alpaca API credentials (ALPACA_KEY, ALPACA_SECRET). Required for any sync.
+        alpaca_data_url: market data API base (ALPACA_DATA_URL).
+        alpaca_trading_url: trading API base, used for assets and the calendar (ALPACA_TRADING_URL; paper by default).
+        alpaca_feed: bar feed, "sip" (all exchanges) or "iex" (ALPACA_FEED).
+        sip_delay_minutes: how far behind "now" bars are requested; 16 on the free plan, 0 on a paid one.
+        requests_per_minute: client-side rate limit for Alpaca calls (ALPACA_RPM).
+        sec_user_agent: contact sent to SEC EDGAR for sector lookups; empty disables sectors (SEC_USER_AGENT).
+        data_dir: folder holding market.db and halal.db (DATA_DIR).
+        api_keys: keys accepted on /v1 read endpoints (API_KEYS, comma separated).
+        admin_key: key for /admin endpoints, also accepted on /v1 (ADMIN_KEY).
+        other_exchanges: exchange codes kept from otherlisted.txt, e.g. ["N"] = NYSE (OTHER_EXCHANGES).
+        daily_history_days / hourly_history_days / minute_history_days: how long each bar timeframe is kept.
+        run_scheduler: start the background sync loop with the API (RUN_SCHEDULER).
+        sync_interval_minutes: time between incremental syncs during the session (SYNC_INTERVAL_MINUTES).
+
+    Used by: create_app (api), main (__main__), AlpacaClient, Scheduler/due_jobs, every sync function, make_client
+    (sectors).
+    """
+
     alpaca_key: str = field(default_factory=lambda: os.environ.get("ALPACA_KEY", ""))
     alpaca_secret: str = field(default_factory=lambda: os.environ.get("ALPACA_SECRET", ""))
     alpaca_data_url: str = field(
@@ -48,8 +81,10 @@ class Settings:
 
     @property
     def db_path(self) -> Path:
+        """Path of the market database (data_dir/market.db)."""
         return self.data_dir / "market.db"
 
     @property
     def halal_db_path(self) -> Path:
+        """Path of the current halal screening database (data_dir/halal.db)."""
         return self.data_dir / "halal.db"

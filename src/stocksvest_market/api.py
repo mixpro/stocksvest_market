@@ -22,10 +22,18 @@ from .symbols import SymbolSyncError
 
 log = logging.getLogger(__name__)
 
+# Largest `limit` accepted by list and bar endpoints. Used by: list_symbols, bars, multi_bars.
 MAX_LIMIT = 50000
 
 
 class Timeframe(str, Enum):
+    """Bar size requested by clients. 1Min/1Hour/1Day are stored (db.BAR_TABLES); 1Week/1Month/1Year are built
+    from 1Day bars by aggregate.aggregate.
+
+    Used by: bars, multi_bars (the `timeframe` query parameter), load_bars. The app service mirrors these values in
+    its /v1/market/bars* endpoints and sample chart.
+    """
+
     MIN = "1Min"
     HOUR = "1Hour"
     DAY = "1Day"
@@ -35,11 +43,23 @@ class Timeframe(str, Enum):
 
 
 class Session(str, Enum):
+    """Which part of the trading day intraday bars cover. ALL = pre-market + regular + after-hours;
+    REGULAR = 09:30-16:00 New York (from the calendar, so early closes count). Ignored for daily and longer bars.
+
+    Used by: bars, multi_bars (the `session` query parameter), load_bars.
+    """
+
     ALL = "all"  # pre-market + regular + after-hours
     REGULAR = "regular"
 
 
 class PeriodUnit(str, Enum):
+    """Unit of the look-back in GET /v1/price-change. MINUTES uses minute bars (limited to the minute history window),
+    HOURS hourly bars, the rest daily bars. Months are 30.4375 days, years 365.25 days (see _period).
+
+    Used by: price_change, _period. The app's filter action PRICE_CHANGE (TimePeriodUnit) sends these values.
+    """
+
     MINUTES = "MINUTES"
     HOURS = "HOURS"
     DAYS = "DAYS"
@@ -49,10 +69,32 @@ class PeriodUnit(str, Enum):
 
 
 def _iso(ts: int) -> str:
+    """Unix seconds -> "YYYY-MM-DDTHH:MM:SSZ" (UTC), the time format of every response.
+
+    Args:
+        ts: unix seconds.
+
+    Used by: _bar_json, snapshots, price_change.
+    """
     return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _parse_time(value: str | None, default: datetime) -> int:
+    """Read a `start`/`end` query value.
+
+    Args:
+        value: a date ("2026-10-01", midnight New York) or datetime; without a zone it is New York time.
+            Empty uses `default`.
+        default: used when value is empty.
+
+    Returns:
+        Unix seconds.
+
+    Raises:
+        HTTPException: 400 for an unreadable value.
+
+    Used by: load_bars (also to read calendar times).
+    """
     if not value:
         return int(default.timestamp())
     try:
@@ -65,10 +107,25 @@ def _parse_time(value: str | None, default: datetime) -> int:
 
 
 def _bar_json(r: dict) -> dict:
+    """A stored or aggregated bar -> response shape {t, o, h, l, c, v, n, vw}.
+
+    Args:
+        r: dict with ts, o, h, l, c, v, n, vw.
+
+    Used by: bars, multi_bars.
+    """
     return {"t": _iso(r["ts"]), "o": r["o"], "h": r["h"], "l": r["l"], "c": r["c"], "v": r["v"], "n": r["n"], "vw": r["vw"]}
 
 
 def _symbol_json(r: sqlite3.Row) -> dict:
+    """A symbols row -> response shape (id, ticker, name, exchange, assetType, sector, sic, sicDescription,
+    halalCompliant).
+
+    Args:
+        r: row from the symbols table.
+
+    Used by: list_symbols, get_symbol.
+    """
     return {
         "id": r["id"],
         "ticker": r["ticker"],
@@ -83,6 +140,14 @@ def _symbol_json(r: sqlite3.Row) -> dict:
 
 
 def _period(amount: int, unit: PeriodUnit) -> timedelta:
+    """A look-back period as a timedelta.
+
+    Args:
+        amount: how many units (>= 1).
+        unit: the PeriodUnit.
+
+    Used by: price_change.
+    """
     days = {"DAYS": 1, "WEEKS": 7, "MONTHS": 30.4375, "YEARS": 365.25}
     if unit == PeriodUnit.MINUTES:
         return timedelta(minutes=amount)
@@ -92,11 +157,27 @@ def _period(amount: int, unit: PeriodUnit) -> timedelta:
 
 
 def create_app(settings: Settings | None = None, client_factory: Callable[[Settings], AlpacaClient] = AlpacaClient):
+    """Build the market service: endpoints, auth, and (when enabled) the background sync scheduler.
+
+    Args:
+        settings: service settings; default reads the environment.
+        client_factory: builds the Alpaca client for admin jobs (tests pass a fake).
+
+    Returns:
+        The FastAPI app.
+
+    Used by: __main__.main (serve), tests.
+    """
     settings = settings or Settings()
     state: dict = {"scheduler": None}
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        """Startup: create/upgrade the DB and start the scheduler (RUN_SCHEDULER). Shutdown: stop it.
+
+        Args:
+            app: the FastAPI app.
+        """
         conn = db.connect(settings.db_path)
         db.init(conn)
         conn.close()
@@ -115,6 +196,7 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
     )
 
     def get_conn() -> Iterator[sqlite3.Connection]:
+        """Dependency: one DB connection per request, closed afterwards."""
         conn = db.connect(settings.db_path)
         try:
             yield conn
@@ -122,10 +204,26 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
             conn.close()
 
     def require_key(x_api_key: Annotated[str | None, Header()] = None) -> None:
+        """Dependency for /v1: accept any API_KEYS value or the admin key.
+
+        Args:
+            x_api_key: the X-API-Key header.
+
+        Raises:
+            HTTPException: 401 when missing or wrong.
+        """
         if not x_api_key or x_api_key not in settings.api_keys + ([settings.admin_key] if settings.admin_key else []):
             raise HTTPException(401, "missing or invalid X-API-Key")
 
     def require_admin(x_api_key: Annotated[str | None, Header()] = None) -> None:
+        """Dependency for /admin: accept only ADMIN_KEY (refuses everything when it is not set).
+
+        Args:
+            x_api_key: the X-API-Key header.
+
+        Raises:
+            HTTPException: 401 when missing or wrong.
+        """
         if not settings.admin_key or x_api_key != settings.admin_key:
             raise HTTPException(401, "missing or invalid admin X-API-Key")
 
@@ -134,12 +232,34 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
     admin = [Depends(require_admin)]
 
     def find_symbol(conn: sqlite3.Connection, symbol: str) -> sqlite3.Row:
+        """Look a symbol up by ticker (any case) or id.
+
+        Args:
+            conn: market DB connection.
+            symbol: ticker or Alpaca asset id.
+
+        Raises:
+            HTTPException: 404 when it isn't in the halal universe.
+
+        Used by: get_symbol, bars, symbol_rows.
+        """
         row = conn.execute("SELECT * FROM symbols WHERE ticker = ? OR id = ?", (symbol.upper(), symbol)).fetchone()
         if not row:
             raise HTTPException(404, f"unknown symbol '{symbol}' (not listed, or not halal compliant)")
         return row
 
     def symbol_rows(conn: sqlite3.Connection, symbols: str | None) -> list[sqlite3.Row]:
+        """Rows for a comma-separated list of tickers/ids, or every symbol when empty.
+
+        Args:
+            conn: market DB connection.
+            symbols: "AAPL,MSFT" or None.
+
+        Raises:
+            HTTPException: 404 for any unknown symbol.
+
+        Used by: multi_bars, snapshots, price_change.
+        """
         if not symbols:
             return conn.execute("SELECT * FROM symbols ORDER BY ticker").fetchall()
         return [find_symbol(conn, s.strip()) for s in symbols.split(",") if s.strip()]
@@ -147,6 +267,19 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
     def load_bars(
         conn, symbol_id: str, timeframe: Timeframe, start: str | None, end: str | None, limit: int, session: Session
     ) -> list[dict]:
+        """Bars of one symbol, oldest first.
+
+        Args:
+            conn: market DB connection.
+            symbol_id: the symbol's id.
+            timeframe: requested size; week/month/year are aggregated from daily bars.
+            start: first bar time (see _parse_time); default 10 years ago.
+            end: last bar time; default now.
+            limit: keep only the most recent `limit` bars.
+            session: REGULAR drops pre/after-market intraday bars.
+
+        Used by: bars, multi_bars.
+        """
         stored = timeframe.value if timeframe.value in db.BAR_TABLES else "1Day"
         now = datetime.now(timezone.utc)
         start_ts = _parse_time(start, now - timedelta(days=3650))
@@ -166,6 +299,11 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
             }
 
             def regular(ts: int) -> bool:
+                """True if a bar starting at `ts` (unix seconds) is inside that day's regular session.
+
+                Args:
+                    ts: bar start.
+                """
                 day = datetime.fromtimestamp(ts, timezone.utc).astimezone(sync.ET).date().isoformat()
                 return day in hours and hours[day][0] <= ts < hours[day][1]
 
@@ -178,10 +316,16 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
 
     @app.get("/health", tags=["status"])
     def health():
+        """Liveness check; no key needed."""
         return {"ok": True}
 
     @app.get("/v1/status", tags=["status"], dependencies=read)
     def status(conn: Conn):
+        """Symbol and bar counts, last sync times, last halal import, the running job and the last sync error.
+        \f
+        Args:
+            conn: market DB connection (one per request, injected).
+        """
         counts = {tf: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for tf, t in db.BAR_TABLES.items()}
         last_import = conn.execute("SELECT * FROM halal_imports ORDER BY id DESC LIMIT 1").fetchone()
         sched = state["scheduler"]
@@ -207,7 +351,17 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
         limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = 1000,
         offset: Annotated[int, Query(ge=0)] = 0,
     ):
-        """The halal universe. Use as the UNIVERSE input of a filter."""
+        """The halal universe. Use as the UNIVERSE input of a filter.
+        \f
+        Args:
+            conn: market DB connection (one per request, injected).
+            search: ticker prefix or part of the name.
+            exchange: "NASDAQ", "NYSE", ...
+            asset_type: "COMMON_STOCK" or "ADR".
+            sector: comma-separated keys of sectors.SECTORS.
+            limit: page size (1..MAX_LIMIT).
+            offset: rows to skip.
+        """
         where, args = [], []
         if search:
             where.append("(ticker LIKE ? OR name LIKE ?)")
@@ -229,7 +383,11 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
 
     @app.get("/v1/sectors", tags=["symbols"], dependencies=read)
     def list_sectors(conn: Conn):
-        """Sector keys and names with the number of halal symbols in each (SIC-based, approximate GICS)."""
+        """Sector keys and names with the number of halal symbols in each (SIC-based, approximate GICS).
+        \f
+        Args:
+            conn: market DB connection (one per request, injected).
+        """
         counts = dict(conn.execute("SELECT sector, COUNT(*) FROM symbols WHERE sector IS NOT NULL GROUP BY sector"))
         unassigned = conn.execute("SELECT COUNT(*) FROM symbols WHERE sector IS NULL").fetchone()[0]
         return {
@@ -239,7 +397,12 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
 
     @app.get("/v1/symbols/{symbol}", tags=["symbols"], dependencies=read)
     def get_symbol(symbol: str, conn: Conn):
-        """Look up by ticker or by id (the symbolId used in the UML designs)."""
+        """Look up by ticker or by id (the symbolId used in the UML designs).
+        \f
+        Args:
+            symbol: ticker or id.
+            conn: market DB connection (one per request, injected).
+        """
         return _symbol_json(find_symbol(conn, symbol))
 
     @app.get("/v1/bars/{symbol}", tags=["bars"], dependencies=read)
@@ -253,7 +416,17 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
         session: Session = Session.ALL,
     ):
         """Chart data. 1Min/1Hour/1Day are stored; 1Week/1Month/1Year are built from 1Day.
-        Times without a zone are New York time. `session=regular` drops pre/after-market bars."""
+        Times without a zone are New York time. `session=regular` drops pre/after-market bars.
+        \f
+        Args:
+            symbol: ticker or id.
+            conn: market DB connection (one per request, injected).
+            timeframe: bar size.
+            start: first bar time.
+            end: last bar time.
+            limit: most recent bars to return.
+            session: all or regular.
+        """
         row = find_symbol(conn, symbol)
         return {
             "symbol": row["ticker"],
@@ -271,7 +444,17 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
         limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = 1000,
         session: Session = Session.ALL,
     ):
-        """Bars for several comma-separated symbols (e.g. a watchlist or portfolio). `limit` is per symbol."""
+        """Bars for several comma-separated symbols (e.g. a watchlist or portfolio). `limit` is per symbol.
+        \f
+        Args:
+            conn: market DB connection (one per request, injected).
+            symbols: "AAPL,MSFT".
+            timeframe: bar size.
+            start: first bar time.
+            end: last bar time.
+            limit: most recent bars per symbol.
+            session: all or regular.
+        """
         return {
             "timeframe": timeframe.value,
             "bars": {
@@ -281,6 +464,16 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
         }
 
     def latest(conn, table: str, symbol_id: str, before_ts: int | None = None) -> sqlite3.Row | None:
+        """The newest bar (ts, c, v) of a symbol in a table, optionally at or before a time.
+
+        Args:
+            conn: market DB connection.
+            table: "bars_1min", "bars_1hour" or "bars_1day".
+            symbol_id: the symbol's id.
+            before_ts: unix seconds; None = the newest bar.
+
+        Used by: latest_price, snapshots, price_change.
+        """
         if before_ts is None:
             return conn.execute(
                 f"SELECT ts, c, v FROM {table} WHERE symbol_id = ? ORDER BY ts DESC LIMIT 1", (symbol_id,)
@@ -291,6 +484,14 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
         ).fetchone()
 
     def latest_price(conn, symbol_id: str) -> sqlite3.Row | None:
+        """The newest price: the latest minute bar, or the latest daily bar if it is newer (or no minute bars).
+
+        Args:
+            conn: market DB connection.
+            symbol_id: the symbol's id.
+
+        Used by: snapshots, price_change.
+        """
         minute, daily = latest(conn, "bars_1min", symbol_id), latest(conn, "bars_1day", symbol_id)
         if minute and (not daily or minute["ts"] >= daily["ts"]):
             return minute
@@ -299,7 +500,12 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
     @app.get("/v1/snapshots", tags=["prices"], dependencies=read)
     def snapshots(conn: Conn, symbols: str | None = None):
         """Latest price and daily change per symbol (all symbols if `symbols` is omitted).
-        Feeds position P&L, SymbolPriceAction (LAST_CLOSE / LATEST_BAR) and the DAILY_* ranking keys."""
+        Feeds position P&L, SymbolPriceAction (LAST_CLOSE / LATEST_BAR) and the DAILY_* ranking keys.
+        \f
+        Args:
+            conn: market DB connection (one per request, injected).
+            symbols: comma-separated tickers/ids, or None for all.
+        """
         out = {}
         for r in symbol_rows(conn, symbols):
             last = latest_price(conn, r["id"])
@@ -329,7 +535,14 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
         symbols: str | None = None,
     ):
         """Price change over a period, from the latest price back periodAmount × periodUnit.
-        Matches PriceChangeAction in FiltersPage.mmd (compare `changePercent` or `change`)."""
+        Matches PriceChangeAction in FiltersPage.mmd (compare `changePercent` or `change`).
+        \f
+        Args:
+            conn: market DB connection (one per request, injected).
+            period_amount: how many units (query: periodAmount).
+            period_unit: the PeriodUnit (query: periodUnit).
+            symbols: comma-separated tickers/ids, or None for all.
+        """
         span = _period(period_amount, period_unit)
         table = {"MINUTES": "bars_1min", "HOURS": "bars_1hour"}.get(period_unit.value, "bars_1day")
         if table == "bars_1min" and span > timedelta(days=settings.minute_history_days):
@@ -352,7 +565,13 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
     @app.get("/v1/calendar", tags=["calendar"], dependencies=read)
     def calendar(conn: Conn, start: date | None = None, end: date | None = None):
         """Trading days with session times (New York time). Matches TradingCalendar / SessionTimes in Scheduling.mmd;
-        a date missing from the list is not a trading day."""
+        a date missing from the list is not a trading day.
+        \f
+        Args:
+            conn: market DB connection (one per request, injected).
+            start: first date; default today (New York).
+            end: last date; default start + 30 days.
+        """
         start = start or datetime.now(sync.ET).date()
         end = end or start + timedelta(days=30)
         rows = conn.execute(
@@ -375,7 +594,16 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
     # ---------------------------------------------------------------- admin
 
     def run_in_background(name: str, fn: Callable[[], None]) -> None:
+        """Run `fn` in a daemon thread under sync.WRITE_LOCK; errors are logged.
+
+        Args:
+            name: thread name (shows in logs).
+            fn: the job.
+
+        Used by: upload_halal (backfill), trigger_sync.
+        """
         def target():
+            """Thread body: run the job under the write lock."""
             with sync.WRITE_LOCK:
                 try:
                     fn()
@@ -388,7 +616,16 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
     def upload_halal(conn: Conn, file: Annotated[UploadFile, File()], force: bool = False):
         """Replace the halal DB. Newly compliant symbols are added and backfilled in the background;
         symbols no longer compliant are deleted together with their price history.
-        `force=true` allows removing more than half of the current symbols."""
+        `force=true` allows removing more than half of the current symbols.
+        \f
+        Args:
+            conn: market DB connection (one per request, injected).
+            file: the uploaded SQLite halal DB.
+            force: see symbols.reconcile.
+
+        Raises:
+            HTTPException: 400 invalid file, 409 a sync is running or the change was refused.
+        """
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=settings.data_dir, suffix=".halal-upload")
         try:
@@ -410,6 +647,7 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
 
         if summary["added"]:
             def backfill():
+                """Download the history of the newly added symbols."""
                 bconn = db.connect(settings.db_path)
                 try:
                     sync.sync_all_timeframes(bconn, client, settings, datetime.now(timezone.utc))
@@ -421,12 +659,20 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
 
     @app.post("/admin/sync", tags=["admin"], dependencies=admin)
     def trigger_sync(job: Annotated[str, Query(pattern="^(incremental|nightly)$")] = "incremental"):
-        """Run a sync now in the background (normally the scheduler does this)."""
+        """Run a sync now in the background (normally the scheduler does this).
+        \f
+        Args:
+            job: "incremental" or "nightly".
+
+        Raises:
+            HTTPException: 409 when a sync is already running.
+        """
         if sync.WRITE_LOCK.locked():
             raise HTTPException(409, "a sync is already running")
         client = client_factory(settings)
 
         def run():
+            """Run the requested job on its own connection."""
             conn = db.connect(settings.db_path)
             try:
                 (sync.run_nightly if job == "nightly" else sync.run_incremental)(conn, client, settings)

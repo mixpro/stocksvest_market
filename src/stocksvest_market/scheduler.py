@@ -16,6 +16,17 @@ NIGHTLY_AFTER_CLOSE = timedelta(minutes=45)
 
 
 def _session(conn, day: str) -> tuple[datetime, datetime] | None:
+    """The extended session of a trading day.
+
+    Args:
+        conn: market DB connection.
+        day: New York date, "YYYY-MM-DD".
+
+    Returns:
+        (extended session open, extended session close), or None if the market is closed that day.
+
+    Used by: due_jobs.
+    """
     row = conn.execute("SELECT session_open, session_close FROM calendar WHERE date = ?", (day,)).fetchone()
     if not row:
         return None
@@ -23,7 +34,21 @@ def _session(conn, day: str) -> tuple[datetime, datetime] | None:
 
 
 def due_jobs(conn, settings: Settings, now: datetime) -> list[str]:
-    """Decide which jobs should run at `now`. Pure apart from DB reads, so it is easy to test."""
+    """Decide which jobs should run at `now`. Pure apart from DB reads, so it is easy to test.
+
+    Args:
+        conn: market DB connection.
+        settings: sip_delay_minutes and sync_interval_minutes.
+        now: current time, timezone-aware.
+
+    Returns:
+        A subset of ["incremental", "nightly"]: "nightly" alone on first start (no symbols or calendar yet);
+        "incremental" during the extended session (+ the data delay) when the interval has passed;
+        "nightly" once per day, NIGHTLY_AFTER_CLOSE after the extended session ends (20:45 New York on
+        non-trading days).
+
+    Used by: Scheduler._loop.
+    """
     if not conn.execute("SELECT 1 FROM symbols LIMIT 1").fetchone() or not conn.execute(
         "SELECT 1 FROM calendar LIMIT 1"
     ).fetchone():
@@ -50,7 +75,19 @@ def due_jobs(conn, settings: Settings, now: datetime) -> list[str]:
 
 
 class Scheduler:
+    """Background thread that runs due_jobs every TICK_SECONDS, one job at a time under sync.WRITE_LOCK.
+
+    Attributes:
+        running_job: "incremental" / "nightly" while one runs, else None (shown by GET /v1/status).
+        last_error: last failure with its time, cleared by the next successful tick (shown by GET /v1/status).
+
+    Used by: api.create_app (started in lifespan when RUN_SCHEDULER is on).
+    """
+
     def __init__(self, settings: Settings):
+        """Args:
+            settings: service settings (DB path, Alpaca keys, intervals).
+        """
         self.settings = settings
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, name="sync-scheduler", daemon=True)
@@ -58,12 +95,15 @@ class Scheduler:
         self.last_error: str | None = None
 
     def start(self) -> None:
+        """Start the background thread (daemon: it ends with the process)."""
         self._thread.start()
 
     def stop(self) -> None:
+        """Ask the loop to stop after the current tick."""
         self._stop.set()
 
     def _loop(self) -> None:
+        """The thread body: every tick, run the due jobs; errors are logged and kept in last_error."""
         conn = db.connect(self.settings.db_path)
         client = AlpacaClient(self.settings)
         while not self._stop.is_set():

@@ -7,6 +7,20 @@ from .sync import ET
 
 
 def bucket_start(ts: int, timeframe: str) -> date:
+    """The first day of the week, month or year a daily bar belongs to.
+
+    Args:
+        ts: daily bar start, unix seconds (midnight New York time).
+        timeframe: "1Week" (weeks start Monday), "1Month" or "1Year".
+
+    Returns:
+        The bucket's first calendar date.
+
+    Raises:
+        ValueError: any other timeframe.
+
+    Used by: aggregate.
+    """
     # Daily bars start at midnight ET, so the ET date is the trading day.
     d = datetime.fromtimestamp(ts, timezone.utc).astimezone(ET).date()
     if timeframe == "1Week":
@@ -19,8 +33,20 @@ def bucket_start(ts: int, timeframe: str) -> date:
 
 
 def aggregate(daily: Iterable[dict], timeframe: str) -> list[dict]:
-    """`daily` must be sorted by ts. Open = first open, close = last close, high/low = extremes,
-    volume and trade count summed, vwap volume-weighted. `ts` is the first trading day in the bucket."""
+    """Combine daily bars into weekly, monthly or yearly bars.
+
+    Open = first open, close = last close, high/low = extremes, volume and trade count summed, vwap
+    volume-weighted. A bucket's `ts` is its first trading day in the input.
+
+    Args:
+        daily: bar dicts (ts, o, h, l, c, v, n, vw), sorted by ts.
+        timeframe: "1Week", "1Month" or "1Year".
+
+    Returns:
+        One dict per bucket, same keys as the input.
+
+    Used by: api.load_bars (GET /v1/bars* with timeframe 1Week/1Month/1Year).
+    """
     out: list[dict] = []
     key = None
     for bar in daily:

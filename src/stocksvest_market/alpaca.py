@@ -14,11 +14,31 @@ log = logging.getLogger(__name__)
 
 
 class AlpacaError(RuntimeError):
+    """Alpaca refused a request (non-retryable status), or kept failing after retries, or keys are missing.
+
+    Used by: AlpacaClient (raised); callers let it propagate to the sync job, which records it as the
+    scheduler's last error.
+    """
+
     pass
 
 
 class AlpacaClient:
+    """Minimal Alpaca REST client for what the market service needs: tradable assets, the trading calendar and
+    historical bars. Calls are rate-limited across threads and retried on network errors, 429 and 5xx.
+
+    Used by: sync (all sync functions), scheduler.Scheduler, api.create_app (admin endpoints), __main__.main.
+    """
+
     def __init__(self, settings: Settings):
+        """Create a client.
+
+        Args:
+            settings: provides the keys, base URLs, feed and requests_per_minute.
+
+        Raises:
+            AlpacaError: ALPACA_KEY or ALPACA_SECRET is empty.
+        """
         if not settings.alpaca_key or not settings.alpaca_secret:
             raise AlpacaError("ALPACA_KEY and ALPACA_SECRET must be set")
         self.settings = settings
@@ -31,6 +51,18 @@ class AlpacaClient:
         self._lock = threading.Lock()
 
     def _get(self, url: str, params: dict | None = None) -> dict | list:
+        """GET a URL with rate limiting and retries (up to 6 attempts, exponential backoff or Retry-After).
+
+        Args:
+            url: full URL.
+            params: query parameters.
+
+        Returns:
+            The decoded JSON body.
+
+        Raises:
+            AlpacaError: a non-retryable status (e.g. 401, 403, 422), or still failing after all attempts.
+        """
         for attempt in range(6):
             with self._lock:
                 wait = self._last_call + self._min_interval - time.monotonic()
@@ -54,12 +86,25 @@ class AlpacaClient:
         raise AlpacaError(f"giving up on {url}")
 
     def assets(self) -> list[dict]:
+        """All active US equity assets (GET /v2/assets). Each has id, symbol, exchange, tradable, status, ...
+
+        Used by: sync.sync_symbols (to know which listed symbols Alpaca can trade, and their stable ids).
+        """
         return self._get(
             f"{self.settings.alpaca_trading_url}/v2/assets",
             {"status": "active", "asset_class": "us_equity"},
         )
 
     def calendar(self, start: date, end: date) -> list[dict]:
+        """Trading days between two dates (GET /v2/calendar). Each has date, open, close, session_open,
+        session_close (New York times, "HH:MM" or "HHMM").
+
+        Args:
+            start: first date (inclusive).
+            end: last date (inclusive).
+
+        Used by: sync.sync_calendar.
+        """
         return self._get(
             f"{self.settings.alpaca_trading_url}/v2/calendar",
             {"start": start.isoformat(), "end": end.isoformat()},
@@ -68,7 +113,20 @@ class AlpacaClient:
     def bars(
         self, symbols: list[str], timeframe: str, start: datetime, end: datetime
     ) -> Iterator[tuple[str, dict]]:
-        """Yield (ticker, bar) for split- and dividend-adjusted bars, following pagination."""
+        """Yield (ticker, bar) for split- and dividend-adjusted bars, following pagination.
+
+        Args:
+            symbols: tickers in Alpaca format (up to ~100 per call keeps URLs reasonable).
+            timeframe: "1Min", "1Hour" or "1Day".
+            start: first bar start (inclusive), timezone-aware.
+            end: last bar start (inclusive), timezone-aware; must be at least SIP_DELAY_MINUTES in the past on
+                the free plan.
+
+        Yields:
+            (ticker, bar) where bar has t (ISO time), o, h, l, c, v, n (trade count), vw (VWAP).
+
+        Used by: sync._fetch_and_store, sync.find_readjusted.
+        """
         params = {
             "symbols": ",".join(symbols),
             "timeframe": timeframe,

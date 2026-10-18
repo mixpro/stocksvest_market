@@ -18,6 +18,9 @@ TICKERS_URL = "https://www.sec.gov/files/company_tickers_exchange.json"
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik:010d}.json"
 SEC_MIN_INTERVAL = 0.15  # SEC allows 10 requests/second
 
+# Sector key -> display name. The keys are stored in symbols.sector and accepted by GET /v1/symbols?sector=;
+# they are the values of the app's filter action SECTOR.sectorIds.
+# Used by: sector_for_sic (via SIC_RANGES), api.list_sectors (GET /v1/sectors), db.SYMBOL_COLUMNS["sector"].
 SECTORS = {
     "BASIC_MATERIALS": "Basic Materials",
     "COMMUNICATION": "Communication Services",
@@ -34,6 +37,7 @@ SECTORS = {
 }
 
 # (first SIC, last SIC, sector). Checked in order, so specific ranges come before broad ones.
+# An approximation of GICS sectors from SEC Standard Industrial Classification codes. Used by: sector_for_sic.
 SIC_RANGES = [
     (3630, 3639, "CONSUMER_DISCRETIONARY"), (3711, 3716, "CONSUMER_DISCRETIONARY"),
     (3751, 3751, "CONSUMER_DISCRETIONARY"),
@@ -64,6 +68,16 @@ SIC_RANGES = [
 
 
 def sector_for_sic(sic: int | None) -> str:
+    """Map a SEC SIC code to a sector key.
+
+    Args:
+        sic: 4-digit SIC code from a company's SEC filings, or None when unknown.
+
+    Returns:
+        A key of SECTORS; "OTHER" for None or codes outside every range.
+
+    Used by: sync_sectors.
+    """
     if sic is None:
         return "OTHER"
     for lo, hi, sector in SIC_RANGES:
@@ -73,12 +87,30 @@ def sector_for_sic(sic: int | None) -> str:
 
 
 class SecClient:
+    """Minimal SEC EDGAR client: ticker -> CIK map and a company's SIC code. Throttled to SEC's 10 requests/second.
+
+    Used by: make_client (created), sync_sectors.
+    """
+
     def __init__(self, user_agent: str):
+        """Create a client.
+
+        Args:
+            user_agent: "<app name> <contact email>"; SEC refuses requests without a contact (403).
+        """
         self.session = requests.Session()
         self.session.headers["User-Agent"] = user_agent
         self._last = 0.0
 
     def _get(self, url: str) -> dict:
+        """GET JSON from SEC, waiting at least SEC_MIN_INTERVAL between calls.
+
+        Args:
+            url: full URL.
+
+        Raises:
+            requests.HTTPError: SEC answered with an error status.
+        """
         wait = self._last + SEC_MIN_INTERVAL - time.monotonic()
         if wait > 0:
             time.sleep(wait)
@@ -88,19 +120,47 @@ class SecClient:
         return r.json()
 
     def cik_by_ticker(self) -> dict[str, int]:
+        """Every SEC-registered ticker with its CIK (company id), tickers in Alpaca format (BRK.B).
+
+        Used by: sync_sectors.
+        """
         data = self._get(TICKERS_URL)
         idx = {name: i for i, name in enumerate(data["fields"])}
         # SEC writes share classes with a dash (BRK-B); we use a dot (BRK.B).
         return {row[idx["ticker"]].upper().replace("-", "."): int(row[idx["cik"]]) for row in data["data"]}
 
     def sic(self, cik: int) -> tuple[int | None, str | None]:
+        """A company's SIC code and its description from its SEC submissions.
+
+        Args:
+            cik: the company's CIK.
+
+        Returns:
+            (sic, description); either is None when SEC has none.
+
+        Used by: sync_sectors.
+        """
         data = self._get(SUBMISSIONS_URL.format(cik=cik))
         sic = data.get("sic")
         return (int(sic) if sic else None), (data.get("sicDescription") or None)
 
 
 def sync_sectors(conn: sqlite3.Connection, sec: SecClient, refresh_all: bool = False) -> dict:
-    """Fill sic / sector for symbols that don't have one yet (or all with refresh_all)."""
+    """Look up SIC codes and sectors for symbols that don't have one yet.
+
+    A symbol without a CIK or SIC gets sector "OTHER" (so it isn't looked up again); a failed lookup is skipped
+    and retried on the next sync.
+
+    Args:
+        conn: market DB connection.
+        sec: client from make_client.
+        refresh_all: look up every symbol again, not only those without a sector.
+
+    Returns:
+        {"updated": symbols written, "unknown": symbols without a SIC code}.
+
+    Used by: sync.run_nightly.
+    """
     where = "" if refresh_all else "WHERE sector IS NULL"
     todo = conn.execute(f"SELECT id, ticker FROM symbols {where}").fetchall()
     if not todo:
@@ -131,6 +191,13 @@ def sync_sectors(conn: sqlite3.Connection, sec: SecClient, refresh_all: bool = F
 
 
 def make_client(settings: Settings) -> SecClient | None:
+    """A SEC client, or None (with a warning) when SEC_USER_AGENT is not set and sectors must be skipped.
+
+    Args:
+        settings: provides sec_user_agent.
+
+    Used by: sync.run_nightly.
+    """
     if not settings.sec_user_agent:
         log.warning("SEC_USER_AGENT is not set; skipping sector sync")
         return None
