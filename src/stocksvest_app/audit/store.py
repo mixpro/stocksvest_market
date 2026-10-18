@@ -41,14 +41,22 @@ CREATE INDEX IF NOT EXISTS audit_by_correlation ON audit_log(correlation_id);
 """
 
 # Set per API request / automation run, so everything it causes can be linked.
+# Set by: middleware.install (API), automations.scheduler (SCHEDULER). Read by: record (defaults).
 correlation_id: ContextVar[str | None] = ContextVar("correlation_id", default=None)
 current_source: ContextVar[str] = ContextVar("current_source", default="SYSTEM")
 current_actor: ContextVar[str] = ContextVar("current_actor", default="system")
 
-MAX_JSON = 8000
+MAX_JSON = 8000  # longer related/details JSON is truncated. Used by: _dump
 
 
 def _dump(value) -> str:
+    """A value as JSON text, truncated to MAX_JSON characters.
+
+    Args:
+        value: the value (None -> {}).
+
+    Used by: record.
+    """
     text = json.dumps(value or {}, default=str)
     return text if len(text) <= MAX_JSON else json.dumps({"truncated": text[:MAX_JSON]})
 
@@ -58,7 +66,29 @@ def record(conn: sqlite3.Connection | None, action: str, entity_type: str | None
            source: str | None = None, actor: str | None = None, method: str | None = None, path: str | None = None,
            status: int | None = None, duration_ms: int | None = None, db_path=None,
            correlation: str | None = None) -> None:
-    """Write one entry. Never raises: the activity log must not break the operation it describes."""
+    """Write one entry. Never raises: the activity log must not break the operation it describes.
+    Inside the caller's transaction the entry is committed (or rolled back) with it; otherwise it is committed now.
+
+    Args:
+        conn: app DB connection, or None to open one on db_path.
+        action: what happened, e.g. ORDER_PLACED.
+        entity_type: what it is about, e.g. ORDER.
+        entity_id: its id.
+        related: other ids it concerns (empty values dropped).
+        details: anything useful (JSON).
+        outcome: OK or FAILED.
+        error: failure message.
+        source: API, SCHEDULER, SYNC or SYSTEM (default: current_source).
+        actor: who (default: current_actor).
+        method: HTTP method (API entries).
+        path: request path (API entries).
+        status: HTTP status (API entries).
+        duration_ms: request time (API entries).
+        db_path: app DB file, when conn is None.
+        correlation: correlation id (default: correlation_id).
+
+    Used by: middleware.install, orders.service, automations.scheduler, api.create_app (startup), db (upgrades).
+    """
     own = conn is None
     try:
         if own:
@@ -82,6 +112,13 @@ def record(conn: sqlite3.Connection | None, action: str, entity_type: str | None
 
 
 def entry_json(r: sqlite3.Row) -> dict:
+    """An audit_log row in API form.
+
+    Args:
+        r: the row.
+
+    Used by: query, routes.entry.
+    """
     return {"id": r["id"], "at": r["at"], "source": r["source"], "actor": r["actor"], "action": r["action"],
             "entityType": r["entity_type"], "entityId": r["entity_id"], "related": json.loads(r["related"]),
             "outcome": r["outcome"], "error": r["error"], "details": json.loads(r["details"]), "method": r["method"],
@@ -91,6 +128,24 @@ def entry_json(r: sqlite3.Row) -> dict:
 
 def query(conn, *, entity_type=None, entity_id=None, related_id=None, action=None, source=None, outcome=None,
           correlation=None, since=None, until=None, before_id=None, limit=100) -> list[dict]:
+    """Activity entries, newest first.
+
+    Args:
+        conn: app DB connection.
+        entity_type: only this entity type.
+        entity_id: about this id or mentioning it.
+        related_id: mentioning this id.
+        action: only this action.
+        source: only this source.
+        outcome: OK or FAILED.
+        correlation: only this correlation id.
+        since: from this time.
+        until: up to this time.
+        before_id: only entries with a smaller id (paging).
+        limit: how many.
+
+    Used by: routes.activity.
+    """
     where, args = [], []
     for col, val in (("entity_type", entity_type), ("action", action), ("source", source), ("outcome", outcome),
                      ("correlation_id", correlation)):

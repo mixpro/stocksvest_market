@@ -15,13 +15,22 @@ from ..portfolios.store import D, D0
 from . import store
 
 log = logging.getLogger(__name__)
-ET = ZoneInfo("America/New_York")
-INTERVAL = timedelta(minutes=15)
-# Prices are ~16 minutes delayed: wait this long after the close before the end-of-day snapshot.
+ET = ZoneInfo("America/New_York")  # Used by: scheduled, snapshot_*, routes.automation_performance
+INTERVAL = timedelta(minutes=15)  # INTERVAL snapshot spacing. Used by: scheduled
+# Prices are ~16 minutes delayed: wait this long after the close before the end-of-day snapshot. Used by: scheduled
 AFTER_CLOSE = timedelta(minutes=20)
 
 
 def _prices(ctx: AppContext, symbols: set[str]) -> dict[str, Decimal]:
+    """Latest prices of symbols; {} when the market API is down (positions are then valued at cost).
+
+    Args:
+        ctx: app context (market API for prices).
+        conn: app DB connection.
+        symbols: tickers.
+
+    Used by: portfolio_values, automation_values.
+    """
     try:
         snaps = ctx.market.snapshots(symbols)
     except MarketError as e:
@@ -31,7 +40,14 @@ def _prices(ctx: AppContext, symbols: set[str]) -> dict[str, Decimal]:
 
 
 def _value(lots_positions: list[dict], prices: dict[str, Decimal]) -> tuple[Decimal, Decimal]:
-    """(market value, cost basis). A symbol without a price is valued at its cost."""
+    """(market value, cost basis). A symbol without a price is valued at its cost.
+
+    Args:
+        lots_positions: positions (symbol, quantity, costBasis).
+        prices: ticker -> price.
+
+    Used by: portfolio_values, automation_values.
+    """
     value = basis = D0
     for x in lots_positions:
         basis += x["costBasis"]
@@ -41,6 +57,19 @@ def _value(lots_positions: list[dict], prices: dict[str, Decimal]) -> tuple[Deci
 
 
 def portfolio_values(ctx: AppContext, conn, portfolio: dict, prices: dict | None = None) -> dict:
+    """A portfolio's values now.
+
+    Args:
+        ctx: app context (market API for prices).
+        conn: app DB connection.
+        portfolio: the portfolio dict.
+        prices: prices to use (default: fetched).
+
+    Returns:
+        allocated, cash, unallocated, invested, positions_value, equity, realized_pnl, unrealized_pnl (Decimals).
+
+    Used by: snapshot_portfolio, routes.portfolio_history.
+    """
     positions = portfolios_store.positions(conn, portfolio["id"])
     prices = prices if prices is not None else _prices(ctx, {x["symbol"] for x in positions})
     value, basis = _value(positions, prices)
@@ -52,6 +81,20 @@ def portfolio_values(ctx: AppContext, conn, portfolio: dict, prices: dict | None
 
 
 def automation_values(ctx: AppContext, conn, pool_row, date: str, prices: dict | None = None) -> dict:
+    """An automation's values now, plus its orders and fills of one trading day.
+
+    Args:
+        ctx: app context (market API for prices).
+        conn: app DB connection.
+        pool_row: its budget_pools row.
+        date: New York trading date, YYYY-MM-DD.
+        prices: prices to use (default: fetched).
+
+    Returns:
+        portfolio_id, allocated, cash, reserved, invested, positions_value, equity, realized_pnl, unrealized_pnl, fees, return_percent, open_positions, orders_placed, fills.
+
+    Used by: snapshot_automations, routes.automation_performance.
+    """
     aid, pid = pool_row["automation_id"], pool_row["portfolio_id"]
     positions = portfolios_store.positions(conn, pid, automation_id=aid)
     prices = prices if prices is not None else _prices(ctx, {x["symbol"] for x in positions})
@@ -72,6 +115,20 @@ def automation_values(ctx: AppContext, conn, pool_row, date: str, prices: dict |
 
 
 def snapshot_portfolio(ctx: AppContext, conn, portfolio: dict, kind: str, now: datetime) -> dict:
+    """Compute and store one portfolio snapshot.
+
+    Args:
+        ctx: app context (market API for prices).
+        conn: app DB connection.
+        portfolio: the portfolio dict.
+        kind: INTERVAL, CLOSE or MANUAL.
+        now: the snapshot time.
+
+    Returns:
+        The stored values.
+
+    Used by: scheduled, routes.snapshot_now.
+    """
     values = portfolio_values(ctx, conn, portfolio)
     with conn:
         store.insert_portfolio(conn, portfolio["id"], iso(now), now.astimezone(ET).date().isoformat(), kind, values)
@@ -79,6 +136,18 @@ def snapshot_portfolio(ctx: AppContext, conn, portfolio: dict, kind: str, now: d
 
 
 def snapshot_automations(ctx: AppContext, conn, now: datetime) -> int:
+    """Store today's snapshot of every automation with a budget (replacing an earlier one of the day).
+
+    Args:
+        ctx: app context (market API for prices).
+        conn: app DB connection.
+        now: the snapshot time.
+
+    Returns:
+        How many were stored.
+
+    Used by: scheduled.
+    """
     date = now.astimezone(ET).date().isoformat()
     pools = conn.execute("SELECT * FROM budget_pools").fetchall()
     with conn:
@@ -89,7 +158,16 @@ def snapshot_automations(ctx: AppContext, conn, now: datetime) -> int:
 
 def scheduled(ctx: AppContext, conn, now: datetime | None = None) -> None:
     """Called every scheduler tick: INTERVAL snapshots each 15 minutes of the regular session, then one CLOSE
-    snapshot per portfolio and one per automation after each trading day."""
+    snapshot per portfolio and one per automation after each trading day. Does nothing on closed days or when
+    the market API is down.
+
+    Args:
+        ctx: app context (market API for prices).
+        conn: app DB connection.
+        now: the tick time (tests pin it); default now.
+
+    Used by: automations.scheduler.AutomationScheduler._loop.
+    """
     now = now or datetime.now(timezone.utc)
     today = now.astimezone(ET).date().isoformat()
     try:

@@ -17,17 +17,30 @@ from .timing import fires_between, next_fires
 log = logging.getLogger(__name__)
 
 # A time this late or less is "on time"; older due times are "missed" (the app was down or busy).
-GRACE = timedelta(minutes=2)
-MAX_CATCH_UP_RUNS = 50
+GRACE = timedelta(minutes=2)  # Used by: _tick_schedule (late vs on time)
+MAX_CATCH_UP_RUNS = 50  # RUN_ALL cap. Used by: _tick_schedule
 _schedule = TypeAdapter(Schedule)
 
 
 def _iso(t: datetime | None) -> str | None:
+    """A datetime as ISO UTC, or None.
+
+    Args:
+        t: the time.
+    """
     return t.astimezone(timezone.utc).isoformat() if t else None
 
 
 def tick(ctx: AppContext, conn, now: datetime | None = None) -> list[dict]:
-    """One scheduler pass. Returns the runs it started."""
+    """One scheduler pass. Returns the runs it started.
+
+    Args:
+        ctx: app context.
+        conn: app DB connection.
+        now: the pass time (tests pin it); default now.
+
+    Used by: AutomationScheduler._loop, tests.
+    """
     now = now or datetime.now(timezone.utc)
     calendar = ctx.market.calendar_days
     runs = []
@@ -46,6 +59,21 @@ def tick(ctx: AppContext, conn, now: datetime | None = None) -> list[dict]:
 
 
 def _tick_schedule(ctx, conn, automation, s, created, calendar, now) -> list[dict]:
+    """Handle one schedule of an ACTIVE automation: plan it the first time, then run what is due (by its missed
+    policy and end COUNT), each time claimed once, and record skipped/missed times.
+
+    Args:
+        ctx: app context.
+        conn: app DB connection.
+        automation: the automation dict.
+        s: the validated schedule.
+        created: the automation's creation time.
+        calendar: trading days (MarketData.calendar_days).
+        now: the pass time.
+
+    Returns:
+        Runs started (and SKIPPED/MISSED records).
+    """
     state = store.get_state(conn, s.id)
     if state is None:
         # New, edited or resumed schedule: start from now, nothing is replayed.
@@ -113,11 +141,18 @@ def _tick_schedule(ctx, conn, automation, s, created, calendar, now) -> list[dic
     return runs
 
 
-BROKER_SYNC_EVERY = timedelta(seconds=60)
+BROKER_SYNC_EVERY = timedelta(seconds=60)  # Used by: AutomationScheduler._loop
 
 
 def sync_brokers(ctx: AppContext, conn) -> None:
-    """Import balances, fills and order updates for every broker account that has a portfolio."""
+    """Import balances, fills and order updates for every broker account that has a portfolio.
+
+    Args:
+        ctx: app context (broker factory).
+        conn: app DB connection.
+
+    Used by: AutomationScheduler._loop (every BROKER_SYNC_EVERY).
+    """
     from ..brokers import store as brokers_store
     from ..brokers.base import BrokerError
     from ..orders import service
@@ -132,7 +167,19 @@ def sync_brokers(ctx: AppContext, conn) -> None:
 
 
 class AutomationScheduler:
+    """Background thread: every scheduler_tick_seconds, sync brokers (each minute), run due schedules and take
+    history snapshots. Errors are logged, kept in last_error and recorded in the activity log.
+
+    Attributes:
+        last_tick_at: time of the last pass (shown by GET /v1/automations/switch).
+        last_error: last failure, cleared by the next good pass.
+
+    Used by: api.create_app (when APP_RUN_SCHEDULER is on), automations.routes.get_switch.
+    """
     def __init__(self, ctx: AppContext):
+        """Args:
+            ctx: app context.
+        """
         self.ctx = ctx
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, name="automation-scheduler", daemon=True)
@@ -141,12 +188,15 @@ class AutomationScheduler:
         self._last_broker_sync: datetime | None = None
 
     def start(self) -> None:
+        """Start the background thread (daemon)."""
         self._thread.start()
 
     def stop(self) -> None:
+        """Ask the loop to stop after the current pass."""
         self._stop.set()
 
     def _loop(self) -> None:
+        """The thread body: one pass per tick on a fresh connection."""
         while not self._stop.is_set():
             conn = db.connect(self.ctx.settings.db_path)
             try:

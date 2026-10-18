@@ -12,14 +12,28 @@ CALENDAR_TTL_SECONDS = 3600
 
 
 class MarketData:
+    """Helpers on top of MarketAPI that the engine and jobs need: a cached universe, batched per-symbol lookups,
+    and a cached trading calendar.
+
+    Used by: deps.AppContext.market; filters.engine.Evaluator, automations (runner, scheduler, routes),
+    performance.snapshots, portfolios.routes.
+    """
+
     def __init__(self, api: MarketAPI):
+        """Args:
+            api: the market endpoint functions.
+        """
         self.api = api
         self._universe: tuple[float, dict[str, dict]] | None = None
         self._lock = threading.Lock()
         self._calendar: dict[tuple[str, str], tuple[float, list[dict]]] = {}
 
     def universe(self) -> dict[str, dict]:
-        """All halal symbols by ticker, cached for a few minutes."""
+        """All halal symbols by ticker, cached for UNIVERSE_TTL_SECONDS.
+
+        Used by: filters.engine (UNIVERSE input, SYMBOL_TYPE and SECTOR actions, result rows), portfolios.routes
+        (halal check before a manual order).
+        """
         with self._lock:
             if self._universe and time.monotonic() - self._universe[0] < UNIVERSE_TTL_SECONDS:
                 return self._universe[1]
@@ -29,22 +43,52 @@ class MarketData:
 
     @staticmethod
     def _symbols_arg(tickers: set[str]) -> list[str] | None:
+        """The `symbols` argument for a lookup: the sorted tickers, or None (= all symbols) above
+        MAX_SYMBOLS_PER_CALL so URLs stay short.
+
+        Args:
+            tickers: the tickers needed.
+        """
         return sorted(tickers) if len(tickers) <= MAX_SYMBOLS_PER_CALL else None  # None = all symbols
 
     def snapshots(self, tickers: set[str]) -> dict[str, dict]:
+        """Market snapshots (latest price, daily change, ...) for these tickers only.
+
+        Args:
+            tickers: tickers wanted; empty = no call.
+
+        Used by: filters.engine (SYMBOL_PRICE, result rows), automations planner context, portfolios.routes
+        (position values), performance.snapshots.
+        """
         if not tickers:
             return {}
         data = self.api.snapshots(self._symbols_arg(tickers))["snapshots"]
         return {t: v for t, v in data.items() if t in tickers}
 
     def price_changes(self, tickers: set[str], amount: int, unit: str) -> dict[str, dict]:
+        """Price changes over a period for these tickers only.
+
+        Args:
+            tickers: tickers wanted; empty = no call.
+            amount: how many units back.
+            unit: "MINUTES" ... "YEARS".
+
+        Used by: filters.engine (PRICE_CHANGE action).
+        """
         if not tickers:
             return {}
         data = self.api.price_change(amount, unit, self._symbols_arg(tickers))["changes"]
         return {t: v for t, v in data.items() if t in tickers}
 
     def calendar_days(self, start, end) -> list[dict]:
-        """Trading days between two dates (inclusive), cached for an hour."""
+        """Trading days between two dates (inclusive), cached for CALENDAR_TTL_SECONDS.
+
+        Args:
+            start: date or "YYYY-MM-DD".
+            end: date or "YYYY-MM-DD".
+
+        Used by: automations.timing (MARKET schedules, via the scheduler and next-run endpoints).
+        """
         key = (str(start), str(end))
         with self._lock:
             hit = self._calendar.get(key)
@@ -56,9 +100,19 @@ class MarketData:
         return days
 
     def trading_day(self, day: str) -> dict | None:
+        """One day's session times, or None when the market is closed.
+
+        Args:
+            day: "YYYY-MM-DD" (New York).
+
+        Used by: filters.engine (LAST_CLOSE), automations.runner.market_context, performance.snapshots.scheduled.
+        """
         days = self.api.calendar(day, day)["days"]
         return days[0] if days else None
 
     def sector_options(self) -> list[dict]:
-        """Sectors that have symbols, as {value, label} options."""
+        """Sectors that have symbols, as {value, label} options for the filter editor.
+
+        Used by: filters.routes.filter_actions.
+        """
         return [{"value": s["key"], "label": s["name"]} for s in self.api.sectors()["sectors"] if s["symbols"]]

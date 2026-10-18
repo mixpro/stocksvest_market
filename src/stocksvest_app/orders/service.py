@@ -22,21 +22,51 @@ from ..portfolios.store import D, D0
 from . import store
 
 # Market and stop buys can fill above the last price; reserve a little extra and release the rest later.
+# Used by: cost_basis_price, automations.planner.plan
 PRICE_BUFFER = Decimal("0.01")
-# A PENDING order the broker has never heard of after this long is treated as rejected.
+# A PENDING order the broker has never heard of after this long is treated as rejected. Used by: sync_account
 PENDING_TIMEOUT = timedelta(minutes=5)
 
 
 class OrderRejected(ValueError):
-    """The app refused the order before sending it (`reason` is a SkipReason-style code)."""
+    """The app refused the order before sending it.
+
+    Attributes:
+        reason: a SkipReason-style code (ZERO_QUANTITY, NOT_SUPPORTED_BY_BROKER, NOT_HELD, NO_PRICE,
+            INSUFFICIENT_BUDGET, INVALID_ORDER).
+
+    Used by: check_request, _check_funds, place_order, cancel_order (raised); automations.planner (-> SKIP),
+    automations.runner, orders.routes.cancel and portfolios.routes.place_manual_order (-> 409/422).
+    """
 
     def __init__(self, message: str, reason: str = "INVALID_ORDER"):
+        """Args:
+            message: readable explanation.
+            reason: the code.
+        """
         super().__init__(message)
         self.reason = reason
 
 
 def check_request(broker: Broker, *, type: str, time_in_force: str, quantity: Decimal, limit_price, stop_price,
                   trail_percent, extended_hours: bool) -> None:
+    """Check an order against the broker's capabilities and its own fields.
+
+    Args:
+        broker: the Broker (its capabilities).
+        type: order type.
+        time_in_force: time in force.
+        quantity: shares (whole, above 0).
+        limit_price: needed for LIMIT / STOP_LIMIT.
+        stop_price: needed for STOP / STOP_LIMIT.
+        trail_percent: needed for TRAILING_STOP.
+        extended_hours: extended hours (LIMIT + DAY only).
+
+    Raises:
+        OrderRejected: the first problem found.
+
+    Used by: place_order, automations.planner.plan (same checks in previews).
+    """
     caps = broker.capabilities()
     if quantity <= 0 or quantity != quantity.to_integral_value():
         raise OrderRejected("quantity must be a whole number of shares above 0", "ZERO_QUANTITY")
@@ -55,7 +85,19 @@ def check_request(broker: Broker, *, type: str, time_in_force: str, quantity: De
 
 
 def cost_basis_price(type: str, limit_price, stop_price, estimated_price) -> Decimal | None:
-    """The price used to reserve money for a buy."""
+    """The price used to reserve money for a buy: the limit price, else the stop or estimated price + PRICE_BUFFER.
+
+    Args:
+        type: order type.
+        limit_price: limit price.
+        stop_price: stop price.
+        estimated_price: last price when placed.
+
+    Returns:
+        Price per share, or None without any price.
+
+    Used by: _check_funds, open_manual_buys.
+    """
     if type in ("LIMIT", "STOP_LIMIT"):
         return D(limit_price)
     base = stop_price if type == "STOP" and stop_price is not None else estimated_price
@@ -63,7 +105,14 @@ def cost_basis_price(type: str, limit_price, stop_price, estimated_price) -> Dec
 
 
 def open_manual_buys(conn, portfolio_id: str) -> Decimal:
-    """Money tied up by open manual buy orders (automation buys are covered by their pools)."""
+    """Money tied up by open manual buy orders (automation buys are covered by their pools).
+
+    Args:
+        conn: app DB connection.
+        portfolio_id: the portfolio's id.
+
+    Used by: automations.budget.unallocated_cash, performance.snapshots.portfolio_values, portfolios.routes.summary.
+    """
     rows = conn.execute("SELECT * FROM orders WHERE portfolio_id = ? AND automation_id IS NULL AND side = 'BUY' "
                         "AND status IN ('PENDING', 'SUBMITTED', 'PARTIALLY_FILLED')", (portfolio_id,)).fetchall()
     total = D0
@@ -74,6 +123,16 @@ def open_manual_buys(conn, portfolio_id: str) -> Decimal:
 
 
 def open_sell_quantity(conn, portfolio_id: str, symbol: str, automation_id: str | None) -> Decimal:
+    """Shares already being sold by open sell orders of one owner.
+
+    Args:
+        conn: app DB connection.
+        portfolio_id: the portfolio's id.
+        symbol: ticker.
+        automation_id: the owning automation; None = the portfolio's manual shares.
+
+    Used by: _check_funds.
+    """
     rows = conn.execute("SELECT quantity, filled_quantity FROM orders WHERE portfolio_id = ? AND symbol = ? "
                         "AND automation_id IS ? AND side = 'SELL' AND status IN ('PENDING', 'SUBMITTED', "
                         "'PARTIALLY_FILLED')", (portfolio_id, symbol, automation_id)).fetchall()
@@ -82,7 +141,28 @@ def open_sell_quantity(conn, portfolio_id: str, symbol: str, automation_id: str 
 
 def _check_funds(conn, portfolio: dict, symbol: str, side: str, type: str, quantity: Decimal, limit_price, stop_price,
                  estimated_price, automation_id: str | None) -> Decimal:
-    """Raise OrderRejected if the shares (sell) or money (buy) aren't there. Returns the money to reserve."""
+    """Raise OrderRejected if the shares (sell) or money (buy) aren't there. Call inside db.immediate().
+
+    Args:
+        conn: app DB connection.
+        portfolio: the portfolio dict.
+        symbol: ticker.
+        side: BUY or SELL.
+        type: order type.
+        quantity: shares.
+        limit_price: limit price.
+        stop_price: stop price.
+        estimated_price: last price.
+        automation_id: the owning automation (its budget), or None (unallocated cash).
+
+    Returns:
+        The money to reserve (0 for sells).
+
+    Raises:
+        OrderRejected: NOT_HELD, NO_PRICE or INSUFFICIENT_BUDGET.
+
+    Used by: place_order.
+    """
     if side == "SELL":
         free = pf.held(conn, portfolio["id"], symbol, automation_id) - open_sell_quantity(conn, portfolio["id"], symbol,
                                                                                         automation_id)
@@ -107,8 +187,35 @@ def place_order(conn: sqlite3.Connection, broker: Broker, portfolio: dict, *, sy
                 quantity: Decimal, time_in_force: str, limit_price=None, stop_price=None, trail_percent=None,
                 extended_hours: bool = False, automation_id: str | None = None, run_id: str | None = None,
                 client_order_id: str | None = None, estimated_price=None) -> dict:
-    """Check, record, reserve budget, and send to the broker. Raises OrderRejected for app-side refusals;
-    broker refusals are recorded as REJECTED orders."""
+    """Check, record, reserve budget, and send to the broker. Broker refusals are recorded as REJECTED
+    orders; an unknown outcome leaves the order PENDING for the next sync. Every outcome goes to the activity log.
+
+    Args:
+        conn: app DB connection.
+        broker: the portfolio's Broker.
+        portfolio: the portfolio dict.
+        symbol: ticker.
+        side: BUY or SELL.
+        type: order type.
+        quantity: whole shares.
+        time_in_force: time in force.
+        limit_price: limit price.
+        stop_price: stop price.
+        trail_percent: trail percent.
+        extended_hours: extended hours.
+        automation_id: owning automation (its budget and shares), or None for a manual order.
+        run_id: the automation run that placed it.
+        client_order_id: idempotency key; an existing order with it is returned unchanged. Default: a new id.
+        estimated_price: last price, for the reservation and slippage.
+
+    Returns:
+        The order.
+
+    Raises:
+        OrderRejected: refused by the app (nothing stored).
+
+    Used by: automations.runner._place_orders, portfolios.routes.place_manual_order.
+    """
     check_request(broker, type=type, time_in_force=time_in_force, quantity=quantity, limit_price=limit_price,
                   stop_price=stop_price, trail_percent=trail_percent, extended_hours=extended_hours)
     if client_order_id and store.get_order_row(conn, client_order_id=client_order_id):
@@ -158,7 +265,19 @@ def place_order(conn: sqlite3.Connection, broker: Broker, portfolio: dict, *, sy
 
 
 def apply_order_update(conn, row: sqlite3.Row, bo: BrokerOrder, log: bool = True) -> bool:
-    """Copy the broker's view of an order. Returns True if anything changed."""
+    """Copy the broker's view of an order; finalize it when it reaches a final status.
+
+    Args:
+        conn: app DB connection.
+        row: the order row.
+        bo: the broker's BrokerOrder.
+        log: record status changes in the activity log.
+
+    Returns:
+        True if anything changed.
+
+    Used by: place_order, cancel_order, sync_account.
+    """
     changed = (bo.status != row["status"] or str(bo.filled_quantity) != row["filled_quantity"]
                or bo.broker_order_id != row["broker_order_id"])
     if log and bo.status != row["status"]:
@@ -181,7 +300,14 @@ def apply_order_update(conn, row: sqlite3.Row, bo: BrokerOrder, log: bool = True
 
 
 def finalize(conn, row: sqlite3.Row) -> None:
-    """An order reached a final status: stamp the time and give unused reserved budget back."""
+    """An order reached a final status: stamp the time and give unused reserved budget back.
+
+    Args:
+        conn: app DB connection.
+        row: the order row (already updated to its final status).
+
+    Used by: place_order, apply_order_update, sync_account.
+    """
     ts = now_iso()
     if row["status"] == "FILLED":
         store.update_order(conn, row["id"], filled_at=ts)
@@ -195,7 +321,17 @@ def finalize(conn, row: sqlite3.Row) -> None:
 
 def apply_fill(conn, row: sqlite3.Row, fill: BrokerFill) -> list[dict]:
     """Record a fill of an app order and update lots, the portfolio's cash and the owning automation's budget.
-    Returns mismatches, if any."""
+
+    Args:
+        conn: app DB connection.
+        row: the order row.
+        fill: the broker's BrokerFill.
+
+    Returns:
+        Mismatches (a sell of more shares than held), if any.
+
+    Used by: sync_account.
+    """
     portfolio_id, owner, order_id = row["portfolio_id"], row["automation_id"], row["id"]
     fill_id = store.insert_fill(conn, order_id, portfolio_id, fill)
     audit.record(conn, "FILL_IMPORTED", "ORDER", order_id, source="SYNC",
@@ -235,6 +371,22 @@ def apply_fill(conn, row: sqlite3.Row, fill: BrokerFill) -> list[dict]:
 
 
 def cancel_order(conn, broker: Broker, order_id: str) -> dict:
+    """Ask the broker to cancel an open order and record its new state.
+
+    Args:
+        conn: app DB connection.
+        broker: the portfolio's Broker.
+        order_id: the order's id.
+
+    Returns:
+        The order.
+
+    Raises:
+        OrderRejected: already final, or not at the broker yet.
+        BrokerError: the broker failed.
+
+    Used by: orders.routes.cancel.
+    """
     row = store.get_order_row(conn, id=order_id)
     if row["status"] in FINAL_STATUSES:
         raise OrderRejected(f"order is already {row['status'].lower()}")
@@ -249,7 +401,21 @@ def cancel_order(conn, broker: Broker, order_id: str) -> dict:
 def sync_account(conn, broker: Broker, account: dict) -> dict:
     """Sync one broker account and all its portfolios: balances, fills (assigned to portfolios through their
     orders; fills of orders placed outside the app are recorded as external), order updates, then compare
-    the app's positions and cash with the broker. Shares and cash not in any portfolio are "unassigned"."""
+    the app's positions and cash with the broker. Shares and cash not in any portfolio are "unassigned".
+
+    Args:
+        conn: app DB connection.
+        broker: the portfolio's Broker.
+        account: the broker account dict.
+
+    Returns:
+        The stored sync record (store.last_sync).
+
+    Raises:
+        BrokerError: the broker failed.
+
+    Used by: run_account_sync.
+    """
     from ..brokers import store as brokers_store
 
     snap = broker.account_snapshot()
@@ -322,7 +488,21 @@ def sync_account(conn, broker: Broker, account: dict) -> dict:
 
 
 def run_account_sync(conn, broker_factory, account: dict) -> dict:
-    """sync_account with the account's status kept up to date. Raises BrokerError when the broker fails."""
+    """sync_account with the account's status kept up to date and failures recorded.
+
+    Args:
+        conn: app DB connection.
+        broker_factory: creates the Broker for the account (ctx.broker_factory).
+        account: the broker account dict.
+
+    Returns:
+        The sync record.
+
+    Raises:
+        BrokerError: the broker failed (status ERROR, failed sync stored).
+
+    Used by: automations.scheduler.sync_brokers, automations.runner.Trading, portfolios.routes.run_sync.
+    """
     from ..brokers import store as brokers_store
 
     try:

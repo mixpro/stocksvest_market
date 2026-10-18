@@ -10,6 +10,8 @@ from decimal import Decimal
 from typing import Protocol, runtime_checkable
 
 # Normalized order statuses (UML/Orders.mmd). FINAL statuses never change again.
+# Used by: adapters (alpaca.STATUS_MAP), orders.service (REJECTED, FINAL_STATUSES), tests.fake_broker.
+# orders.store and orders.service also query them by value in SQL.
 PENDING = "PENDING"  # created in the app, not yet accepted by the broker
 SUBMITTED = "SUBMITTED"
 PARTIALLY_FILLED = "PARTIALLY_FILLED"
@@ -19,20 +21,46 @@ REJECTED = "REJECTED"
 EXPIRED = "EXPIRED"
 FINAL_STATUSES = {FILLED, CANCELLED, REJECTED, EXPIRED}
 
+# Every order type / time in force the app knows; each adapter declares its subset in capabilities().
+# Reference lists for adapters (not read at runtime).
 ORDER_TYPES = {"MARKET", "LIMIT", "STOP", "STOP_LIMIT", "TRAILING_STOP"}
 TIME_IN_FORCE = {"DAY", "GTC", "GTD", "OPG", "CLS", "IOC", "FOK"}
 
 
 class BrokerError(RuntimeError):
-    """`retryable` = a temporary problem (network, rate limit); otherwise the broker refused the request."""
+    """A broker call failed.
+
+    Attributes:
+        retryable: a temporary problem (network, rate limit, 5xx); otherwise the broker refused the request.
+
+    Used by: every adapter (raised), registry (missing credentials, live/unknown provider), orders.service
+    (rejected vs uncertain submit), automations runner/scheduler, and the brokers, orders, portfolios and
+    performance routes (-> 4xx/502).
+    """
 
     def __init__(self, message: str, retryable: bool = False):
+        """Args:
+            message: what went wrong.
+            retryable: whether trying again later may work.
+        """
         super().__init__(message)
         self.retryable = retryable
 
 
 @dataclass(frozen=True)
 class BrokerCapabilities:
+    """What a broker supports; orders are checked against it before anything is sent.
+
+    Attributes:
+        order_types: supported ORDER_TYPES.
+        time_in_force: supported TIME_IN_FORCE values.
+        fractional_shares: fractional quantities allowed.
+        extended_hours: extended-hours orders allowed (rules per broker, e.g. Alpaca: LIMIT + DAY only).
+        short_selling: selling shares not held allowed (the app never does it).
+        max_orders_per_minute: the broker's rate limit.
+
+    Used by: Broker.capabilities (adapters build it), orders.service.check_request, brokers.routes (shown).
+    """
     order_types: frozenset[str]
     time_in_force: frozenset[str]
     fractional_shares: bool
@@ -41,6 +69,7 @@ class BrokerCapabilities:
     max_orders_per_minute: int
 
     def to_json(self) -> dict:
+        """The capabilities in API form (camelCase keys, sorted lists)."""
         return {"orderTypes": sorted(self.order_types), "timeInForce": sorted(self.time_in_force),
                 "fractionalShares": self.fractional_shares, "extendedHours": self.extended_hours,
                 "shortSelling": self.short_selling, "maxOrdersPerMinute": self.max_orders_per_minute}
@@ -48,6 +77,22 @@ class BrokerCapabilities:
 
 @dataclass(frozen=True)
 class BrokerOrderRequest:
+    """An order to send.
+
+    Attributes:
+        client_order_id: the app's id for it (idempotency: resending the same id never doubles the order).
+        symbol: ticker.
+        side: BUY or SELL.
+        type: one of ORDER_TYPES.
+        quantity: shares.
+        time_in_force: one of TIME_IN_FORCE.
+        limit_price: for LIMIT / STOP_LIMIT.
+        stop_price: for STOP / STOP_LIMIT.
+        trail_percent: for TRAILING_STOP.
+        extended_hours: may fill outside regular hours.
+
+    Used by: orders.service.place_order (built), Broker.submit_order.
+    """
     client_order_id: str
     symbol: str
     side: str  # BUY | SELL
@@ -62,6 +107,25 @@ class BrokerOrderRequest:
 
 @dataclass
 class BrokerOrder:
+    """An order as the broker reports it.
+
+    Attributes:
+        broker_order_id: the broker's id.
+        client_order_id: the app's id.
+        symbol: ticker.
+        side: BUY or SELL.
+        type: order type.
+        status: normalized status (PENDING ... EXPIRED).
+        raw_status: the broker's own value.
+        quantity: ordered shares.
+        filled_quantity: shares filled so far.
+        average_fill_price: average price of the fills, or None.
+        reject_reason: why it was rejected, if it was.
+        submitted_at: when the broker accepted it.
+        updated_at: last change at the broker.
+
+    Used by: Broker.submit_order / get_order / get_order_by_client_id (returned), orders.service.apply_order_update.
+    """
     broker_order_id: str
     client_order_id: str
     symbol: str
@@ -79,6 +143,20 @@ class BrokerOrder:
 
 @dataclass(frozen=True)
 class BrokerFill:
+    """One execution.
+
+    Attributes:
+        broker_fill_id: the broker's id (fills are imported once by this id).
+        broker_order_id: the order it belongs to.
+        symbol: ticker.
+        side: BUY or SELL.
+        quantity: shares filled.
+        price: execution price.
+        fee: fees charged.
+        executed_at: execution time.
+
+    Used by: Broker.list_fills (returned), orders.service.apply_fill.
+    """
     broker_fill_id: str
     broker_order_id: str
     symbol: str
@@ -91,6 +169,16 @@ class BrokerFill:
 
 @dataclass(frozen=True)
 class BrokerPosition:
+    """Shares the broker account holds of one symbol.
+
+    Attributes:
+        symbol: ticker.
+        quantity: shares.
+        average_cost: average entry price.
+        market_value: current value, if the broker reports it.
+
+    Used by: Broker.positions (returned), brokers.routes (account positions).
+    """
     symbol: str
     quantity: Decimal
     average_cost: Decimal
@@ -99,6 +187,18 @@ class BrokerPosition:
 
 @dataclass(frozen=True)
 class AccountSnapshot:
+    """The broker account's balances at one time.
+
+    Attributes:
+        cash: cash balance.
+        buying_power: what can be spent now.
+        equity: cash + positions.
+        currency: e.g. USD.
+        at: when it was read.
+        raw: the broker's full answer (not compared).
+
+    Used by: Broker.account_snapshot (returned), orders.service.sync_account (stored on the account).
+    """
     cash: Decimal
     buying_power: Decimal
     equity: Decimal
@@ -109,24 +209,88 @@ class AccountSnapshot:
 
 @runtime_checkable
 class Broker(Protocol):
-    def capabilities(self) -> BrokerCapabilities: ...
+    """What every broker adapter provides. Money and quantities are Decimal.
 
-    def account_snapshot(self) -> AccountSnapshot: ...
+    Used by: registry.make_broker (returns one), deps.AppContext.broker_factory, orders.service,
+    automations.planner/runner, and the brokers, orders, portfolios and performance routes.
+    """
+    def capabilities(self) -> BrokerCapabilities:
+        """What the broker supports."""
+        ...
 
-    def submit_order(self, request: BrokerOrderRequest) -> BrokerOrder: ...
+    def account_snapshot(self) -> AccountSnapshot:
+        """Current balances.
 
-    def cancel_order(self, broker_order_id: str) -> None: ...
+        Raises:
+            BrokerError: the broker can't be reached or refused.
+        """
+        ...
 
-    def get_order(self, broker_order_id: str) -> BrokerOrder: ...
+    def submit_order(self, request: BrokerOrderRequest) -> BrokerOrder:
+        """Send an order.
 
-    def get_order_by_client_id(self, client_order_id: str) -> BrokerOrder | None: ...
+        Args:
+            request: the order.
 
-    def list_fills(self, since: datetime | None) -> list[BrokerFill]: ...
+        Returns:
+            The order as accepted (or rejected) by the broker.
 
-    def positions(self) -> list[BrokerPosition]: ...
+        Raises:
+            BrokerError: refused (retryable=False) or unknown outcome (retryable=True).
+        """
+        ...
+
+    def cancel_order(self, broker_order_id: str) -> None:
+        """Ask the broker to cancel an open order.
+
+        Args:
+            broker_order_id: the broker's id of the order.
+        """
+        ...
+
+    def get_order(self, broker_order_id: str) -> BrokerOrder:
+        """One order's current state.
+
+        Args:
+            broker_order_id: the broker's id of the order.
+        """
+        ...
+
+    def get_order_by_client_id(self, client_order_id: str) -> BrokerOrder | None:
+        """Find an order by the app's id (to resolve submits with an unknown outcome).
+
+        Args:
+            client_order_id: the app's id of the order.
+
+        Returns:
+            The order, or None if the broker never received it.
+        """
+        ...
+
+    def list_fills(self, since: datetime | None) -> list[BrokerFill]:
+        """Executions, oldest first.
+
+        Args:
+            since: only fills after this time (None = all the broker keeps).
+        """
+        ...
+
+    def positions(self) -> list[BrokerPosition]:
+        """Shares the account holds now."""
+        ...
 
 
 class SupportsEquityHistory(Protocol):
-    """Optional: brokers that can report the account's past equity."""
+    """Optional: brokers that can report the account's past equity (checked with hasattr).
 
-    def equity_history(self, period: str, timeframe: str) -> list[dict]: ...
+    Used by: performance.routes.equity_history (AlpacaBroker implements it).
+    """
+
+    def equity_history(self, period: str, timeframe: str) -> list[dict]:
+        """The account's past equity.
+
+        Args:
+            period: how far back, e.g. "1M".
+            timeframe: point spacing, e.g. "1D".
+        """
+        ...

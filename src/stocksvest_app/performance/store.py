@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS automation_snapshots (
 );
 """
 
+# Money columns of each table (stored as decimal text). Used by: insert_*, *_points
 PORTFOLIO_FIELDS = ("allocated", "cash", "unallocated", "invested", "positions_value", "equity", "realized_pnl",
                     "unrealized_pnl")
 AUTOMATION_FIELDS = ("allocated", "cash", "reserved", "invested", "positions_value", "equity", "realized_pnl",
@@ -52,11 +53,30 @@ AUTOMATION_FIELDS = ("allocated", "cash", "reserved", "invested", "positions_val
 
 
 def _camel(name: str) -> str:
+    """snake_case -> camelCase (pnl -> PnL), e.g. realized_pnl -> realizedPnL.
+
+    Args:
+        name: the name.
+
+    Used by: _row_json, routes._json.
+    """
     head, *rest = name.split("_")
     return head + "".join(w.capitalize() for w in rest).replace("Pnl", "PnL")
 
 
 def insert_portfolio(conn, portfolio_id: str, at: str, date: str, kind: str, values: dict) -> None:
+    """Store a portfolio snapshot (inside the caller's transaction).
+
+    Args:
+        conn: app DB connection.
+        portfolio_id: the portfolio's id.
+        at: snapshot time, ISO.
+        date: New York trading date.
+        kind: INTERVAL, CLOSE or MANUAL.
+        values: PORTFOLIO_FIELDS values.
+
+    Used by: snapshots.snapshot_portfolio.
+    """
     conn.execute(
         f"INSERT OR REPLACE INTO portfolio_snapshots(portfolio_id, at, date, kind, {', '.join(PORTFOLIO_FIELDS)}) "
         f"VALUES (?, ?, ?, ?, {', '.join('?' * len(PORTFOLIO_FIELDS))})",
@@ -65,6 +85,17 @@ def insert_portfolio(conn, portfolio_id: str, at: str, date: str, kind: str, val
 
 
 def insert_automation(conn, automation_id: str, date: str, at: str, values: dict) -> None:
+    """Store (or replace) an automation's snapshot of a day (inside the caller's transaction).
+
+    Args:
+        conn: app DB connection.
+        automation_id: the automation's id.
+        date: New York trading date.
+        at: snapshot time, ISO.
+        values: snapshots.automation_values result.
+
+    Used by: snapshots.snapshot_automations.
+    """
     conn.execute(
         f"INSERT OR REPLACE INTO automation_snapshots(automation_id, date, at, portfolio_id, "
         f"{', '.join(AUTOMATION_FIELDS)}, return_percent, open_positions, orders_placed, fills) "
@@ -76,6 +107,14 @@ def insert_automation(conn, automation_id: str, date: str, at: str, values: dict
 
 
 def _row_json(r: sqlite3.Row, fields) -> dict:
+    """A snapshot row in API form.
+
+    Args:
+        r: the row.
+        fields: money columns to include.
+
+    Used by: portfolio_points, automation_points.
+    """
     out = {"at": r["at"], "date": r["date"]}
     for f in fields:
         out[_camel(f)] = float(r[f])
@@ -83,6 +122,17 @@ def _row_json(r: sqlite3.Row, fields) -> dict:
 
 
 def portfolio_points(conn, portfolio_id: str, start: str | None, end: str | None, kind: str | None) -> list[dict]:
+    """A portfolio's snapshots, oldest first.
+
+    Args:
+        conn: app DB connection.
+        portfolio_id: the portfolio's id.
+        start: from this time.
+        end: up to this time.
+        kind: only this kind.
+
+    Used by: routes.portfolio_history.
+    """
     sql, args = "SELECT * FROM portfolio_snapshots WHERE portfolio_id = ?", [portfolio_id]
     for cond, val in (("at >= ?", start), ("at <= ?", end), ("kind = ?", kind)):
         if val:
@@ -92,6 +142,16 @@ def portfolio_points(conn, portfolio_id: str, start: str | None, end: str | None
 
 
 def automation_points(conn, automation_id: str, start: str | None, end: str | None) -> list[dict]:
+    """An automation's daily snapshots, oldest first.
+
+    Args:
+        conn: app DB connection.
+        automation_id: the automation's id.
+        start: from this date (first 10 chars used).
+        end: up to this date.
+
+    Used by: routes.automation_performance.
+    """
     sql, args = "SELECT * FROM automation_snapshots WHERE automation_id = ?", [automation_id]
     for cond, val in (("date >= ?", start), ("date <= ?", end)):
         if val:
@@ -106,6 +166,17 @@ def automation_points(conn, automation_id: str, start: str | None, end: str | No
 
 
 def has_portfolio_snapshot(conn, portfolio_id: str, kind: str, since: str | None = None, date: str | None = None) -> bool:
+    """Whether a portfolio already has a snapshot of a kind in a slot or on a day.
+
+    Args:
+        conn: app DB connection.
+        portfolio_id: the portfolio's id.
+        kind: the kind.
+        since: at or after this time.
+        date: on this trading date.
+
+    Used by: snapshots.scheduled.
+    """
     sql, args = "SELECT 1 FROM portfolio_snapshots WHERE portfolio_id = ? AND kind = ?", [portfolio_id, kind]
     if since:
         sql += " AND at >= ?"

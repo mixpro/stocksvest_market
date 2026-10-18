@@ -12,16 +12,32 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from ..deps import AppContext
 from .client import MarketError
 
+# Accepted values, mirroring the market API's enums (see stocksvest_market.api). Used by: the routes below.
 Timeframe = Literal["1Min", "1Hour", "1Day", "1Week", "1Month", "1Year"]
 Session = Literal["all", "regular"]
 PeriodUnit = Literal["MINUTES", "HOURS", "DAYS", "WEEKS", "MONTHS", "YEARS"]
 
 
 def _split(value: str | None) -> list[str] | None:
+    """"A,B, C" -> ["A", "B", "C"]; empty -> None.
+
+    Args:
+        value: comma-separated query value.
+
+    Used by: symbols, multi_bars, snapshots, price_change.
+    """
     return [v.strip() for v in value.split(",") if v.strip()] if value else None
 
 
 def call(fn: Callable[[], dict]) -> dict:
+    """Run a market call and turn failures into HTTP errors: MarketError keeps its status, anything unexpected
+    becomes 502.
+
+    Args:
+        fn: the call.
+
+    Used by: every route below.
+    """
     try:
         return fn()
     except MarketError as e:
@@ -31,6 +47,13 @@ def call(fn: Callable[[], dict]) -> dict:
 
 
 def router(ctx: AppContext) -> APIRouter:
+    """The /v1/market routes, each backed by one MarketAPI function.
+
+    Args:
+        ctx: app context (market_api and the key check).
+
+    Used by: api.create_app.
+    """
     r = APIRouter(prefix="/v1/market", tags=["market"], dependencies=[Depends(ctx.require_key)])
     api = ctx.market_api
 
@@ -43,12 +66,25 @@ def router(ctx: AppContext) -> APIRouter:
         limit: Annotated[int | None, Query(ge=1, le=50000)] = None,
         offset: Annotated[int | None, Query(ge=0)] = None,
     ):
-        """Halal symbols (market `GET /v1/symbols`)."""
+        """Halal symbols (market `GET /v1/symbols`).
+        \f
+        Args:
+            search: ticker prefix or name part.
+            exchange: exchange name.
+            asset_type: COMMON_STOCK or ADR.
+            sector: comma-separated sector keys.
+            limit: page size.
+            offset: rows to skip.
+        """
         return call(lambda: api.symbols(search, exchange, asset_type, _split(sector), limit, offset))
 
     @r.get("/symbols/{symbol}")
     def symbol(symbol: str):
-        """One symbol by ticker or id (market `GET /v1/symbols/{symbol}`)."""
+        """One symbol by ticker or id (market `GET /v1/symbols/{symbol}`).
+        \f
+        Args:
+            symbol: ticker or id.
+        """
         return call(lambda: api.symbol(symbol))
 
     @r.get("/sectors")
@@ -65,7 +101,16 @@ def router(ctx: AppContext) -> APIRouter:
         limit: Annotated[int | None, Query(ge=1, le=50000)] = None,
         session: Session | None = None,
     ):
-        """Chart bars for one symbol (market `GET /v1/bars/{symbol}`)."""
+        """Chart bars for one symbol (market `GET /v1/bars/{symbol}`).
+        \f
+        Args:
+            symbol: ticker or id.
+            timeframe: bar size.
+            start: first bar time.
+            end: last bar time.
+            limit: most recent bars.
+            session: all or regular.
+        """
         return call(lambda: api.bars(symbol, timeframe, start, end, limit, session))
 
     @r.get("/bars")
@@ -77,12 +122,25 @@ def router(ctx: AppContext) -> APIRouter:
         limit: Annotated[int | None, Query(ge=1, le=50000)] = None,
         session: Session | None = None,
     ):
-        """Bars for several comma-separated symbols (market `GET /v1/bars`)."""
+        """Bars for several comma-separated symbols (market `GET /v1/bars`).
+        \f
+        Args:
+            symbols: comma-separated tickers or ids.
+            timeframe: bar size.
+            start: first bar time.
+            end: last bar time.
+            limit: most recent bars per symbol.
+            session: all or regular.
+        """
         return call(lambda: api.multi_bars(_split(symbols), timeframe, start, end, limit, session))
 
     @r.get("/snapshots")
     def snapshots(symbols: str | None = None):
-        """Latest price and daily change (market `GET /v1/snapshots`)."""
+        """Latest price and daily change (market `GET /v1/snapshots`).
+        \f
+        Args:
+            symbols: comma-separated tickers or ids; empty = all.
+        """
         return call(lambda: api.snapshots(_split(symbols)))
 
     @r.get("/price-change")
@@ -91,12 +149,23 @@ def router(ctx: AppContext) -> APIRouter:
         period_unit: Annotated[PeriodUnit, Query(alias="periodUnit")],
         symbols: str | None = None,
     ):
-        """Price change over a period (market `GET /v1/price-change`)."""
+        """Price change over a period (market `GET /v1/price-change`).
+        \f
+        Args:
+            period_amount: how many units back (periodAmount).
+            period_unit: unit (periodUnit).
+            symbols: comma-separated tickers or ids; empty = all.
+        """
         return call(lambda: api.price_change(period_amount, period_unit, _split(symbols)))
 
     @r.get("/calendar")
     def calendar(start: date | None = None, end: date | None = None):
-        """Trading days and session times (market `GET /v1/calendar`)."""
+        """Trading days and session times (market `GET /v1/calendar`).
+        \f
+        Args:
+            start: first date.
+            end: last date.
+        """
         return call(lambda: api.calendar(start.isoformat() if start else None, end.isoformat() if end else None))
 
     @r.get("/status")

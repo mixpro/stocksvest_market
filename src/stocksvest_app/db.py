@@ -9,19 +9,48 @@ from pathlib import Path
 
 def iso(dt: datetime) -> str:
     """The one timestamp format stored in the DB: UTC, seconds, 'Z'. Text order = time order
-    (ties within a second keep insertion order via rowid)."""
+    (ties within a second keep insertion order via rowid).
+
+    Args:
+        dt: a timezone-aware datetime.
+
+    Returns:
+        E.g. "2026-10-19T13:30:00Z".
+
+    Used by: now_iso, orders (fills, submitted times), performance.snapshots.
+    """
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def now_iso() -> str:
+    """The current time in the stored format (see iso). Used by: every store module when stamping rows."""
     return iso(datetime.now(timezone.utc))
 
 
 def new_id(prefix: str) -> str:
+    """A new unique id like "flt_3f2a…".
+
+    Args:
+        prefix: names the kind of thing: flt (filter), grp (group), aut (automation), sch (schedule), run, ord
+            (order), fill, pf (portfolio), pfe/bge (ledger entries), bka (broker account), ntf (notification),
+            evt (event), fire, sync, req (request correlation id), sv (client order id).
+
+    Used by: every store module, the audit middleware, the runner and order placement.
+    """
     return f"{prefix}_{uuid.uuid4().hex}"
 
 
 def connect(path: Path) -> sqlite3.Connection:
+    """Open the app database: WAL mode (readers don't block the writer), foreign keys on, 30 s lock wait.
+
+    Args:
+        path: database file; its folder is created if missing.
+
+    Returns:
+        A connection with sqlite3.Row rows, usable from several threads.
+
+    Used by: deps.AppContext.conn (per request), api lifespan, the scheduler thread, audit.store.record.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -33,7 +62,17 @@ def connect(path: Path) -> sqlite3.Connection:
 @contextmanager
 def immediate(conn: sqlite3.Connection):
     """A write transaction that takes the database's write lock before reading anything. Use it around
-    "check a balance, then change it" so two requests can't both pass the check (they queue instead)."""
+    "check a balance, then change it" so two requests can't both pass the check (they queue instead).
+
+    Args:
+        conn: the connection to run the transaction on; an open implicit transaction is committed first.
+
+    Yields:
+        The same connection. Committed on success, rolled back on any exception.
+
+    Used by: portfolio capital (create/allocate/withdraw), budget allocate/withdraw/close, order placement
+    (_check_funds + reserve), fill import in sync_account, deleting an automation.
+    """
     if conn.in_transaction:
         conn.commit()
     conn.execute("BEGIN IMMEDIATE")
@@ -46,6 +85,13 @@ def immediate(conn: sqlite3.Connection):
 
 
 def init(conn: sqlite3.Connection) -> None:
+    """Create every feature's tables, add later columns, and run upgrades (idempotent).
+
+    Args:
+        conn: an open connection.
+
+    Used by: api.create_app (startup), tests.
+    """
     from .audit import store as audit_store
     from .automations import budget
     from .automations import store as automations_store
@@ -69,10 +115,27 @@ def init(conn: sqlite3.Connection) -> None:
 
 
 def _columns(conn, table: str) -> set[str]:
+    """Column names of a table.
+
+    Args:
+        conn: an open connection.
+        table: table name.
+
+    Used by: migrate.
+    """
     return {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
 
 
 def _create_statement(schema: str, table: str, new_name: str) -> str:
+    """Take a table's CREATE statement out of a module SCHEMA, renamed (used to rebuild tables).
+
+    Args:
+        schema: a module's SCHEMA text.
+        table: the table whose statement to take.
+        new_name: name for the new table.
+
+    Used by: _rebuild.
+    """
     start = schema.index(f"CREATE TABLE IF NOT EXISTS {table} (")
     end = schema.index(";", start)
     return schema[start:end].replace(f"CREATE TABLE IF NOT EXISTS {table} (", f"CREATE TABLE {new_name} (", 1)
@@ -80,7 +143,17 @@ def _create_statement(schema: str, table: str, new_name: str) -> str:
 
 def _rebuild(conn, table: str, schema: str, copy_sql: str, after=None) -> None:
     """SQLite's safe table rebuild: create new, copy, drop old, rename new (references from other tables
-    keep pointing at the table name, so they follow the new table)."""
+    keep pointing at the table name, so they follow the new table). Foreign keys are off meanwhile.
+
+    Args:
+        conn: an open connection.
+        table: the table to rebuild.
+        schema: the owning module's SCHEMA (holds the new CREATE statement).
+        copy_sql: INSERT ... SELECT from the old table; "{new}" is replaced by the new table's name.
+        after: optional callable run after the copy, before the old table is dropped.
+
+    Used by: migrate.
+    """
     conn.commit()
     conn.execute("PRAGMA foreign_keys=OFF")
     try:
@@ -96,7 +169,16 @@ def _rebuild(conn, table: str, schema: str, copy_sql: str, after=None) -> None:
 
 
 def migrate(conn: sqlite3.Connection) -> None:
-    """Upgrade databases created by earlier versions. Each step checks the old layout, so it runs once."""
+    """Upgrade databases created by earlier versions. Each step checks the old layout, so it runs once.
+
+    Steps: v2 portfolios with their own capital (an old portfolio keeps the whole account as allocated capital,
+    with an ALLOCATE ledger entry); v2 broker sync records per account instead of per portfolio.
+
+    Args:
+        conn: an open connection.
+
+    Used by: init.
+    """
     from decimal import Decimal
 
     from .orders.store import SCHEMA as orders_schema
@@ -110,6 +192,7 @@ def migrate(conn: sqlite3.Connection) -> None:
         old = conn.execute("SELECT id, cash FROM portfolios").fetchall()
 
         def opening_capital():  # each old portfolio owned its whole account: keep that as allocated capital
+            """Give each upgraded portfolio its old cash as allocated capital, with a ledger entry."""
             for r in old:
                 amount = Decimal(r["cash"] or "0")
                 if amount > 0:

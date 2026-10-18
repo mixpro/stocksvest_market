@@ -13,12 +13,14 @@ from starlette.concurrency import run_in_threadpool
 from ..db import new_id
 from . import store
 
+# Methods that get an entry (reads are not logged). Used by: install
 MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
+# First path word -> entity type. Used by: describe
 ENTITIES = {
     "filters": "FILTER", "filter-groups": "FILTER_GROUP", "automations": "AUTOMATION", "portfolios": "PORTFOLIO",
     "broker-accounts": "BROKER_ACCOUNT", "orders": "ORDER", "notifications": "NOTIFICATION", "runs": "RUN",
 }
-# Clearer names where the generic "<ENTITY>_<path words>" would be awkward.
+# Clearer names where the generic "<ENTITY>_<path words>" would be awkward. Used by: describe
 ACTIONS = {
     ("POST", "/v1/portfolios/{portfolio_id}/orders"): ("ORDER_PLACE_MANUAL", "PORTFOLIO"),
     ("POST", "/v1/orders/{order_id}/cancel"): ("ORDER_CANCEL", "ORDER"),
@@ -28,6 +30,13 @@ ACTIONS = {
 
 
 def fingerprint(api_key: str | None) -> str:
+    """Who made the request, without storing the key: "key:" + 10 hex chars of its SHA-256, or "anonymous".
+
+    Args:
+        api_key: the X-API-Key header.
+
+    Used by: install.activity_log.
+    """
     if not api_key:
         return "anonymous"
     return "key:" + hashlib.sha256(api_key.encode()).hexdigest()[:10]
@@ -35,7 +44,14 @@ def fingerprint(api_key: str | None) -> str:
 
 def describe(method: str, template: str) -> tuple[str, str | None]:
     """(action, entity type) for a route template, e.g. POST /v1/automations/{automation_id}/pause ->
-    (AUTOMATION_PAUSE, AUTOMATION)."""
+    (AUTOMATION_PAUSE, AUTOMATION).
+
+    Args:
+        method: HTTP method.
+        template: the route's path template.
+
+    Used by: install.activity_log.
+    """
     if (method, template) in ACTIONS:
         return ACTIONS[(method, template)]
     parts = [p for p in template.removeprefix("/v1/").split("/") if p]
@@ -55,6 +71,14 @@ def describe(method: str, template: str) -> tuple[str, str | None]:
 
 
 def _related(path_params: dict, body) -> dict:
+    """Ids the request mentions: path parameters (automation_id -> automationId) and body fields ending in Id / Ids.
+
+    Args:
+        path_params: the route's path parameters.
+        body: the parsed JSON body.
+
+    Used by: install.activity_log.
+    """
     out = {re.sub(r"_id$", "Id", re.sub(r"_(\w)", lambda m: m.group(1).upper(), k)): v
            for k, v in path_params.items()}
     if isinstance(body, dict):
@@ -67,8 +91,23 @@ def _related(path_params: dict, body) -> dict:
 
 
 def install(app: FastAPI, db_path) -> None:
+    """Add the activity log middleware to the app.
+
+    Args:
+        app: the FastAPI app.
+        db_path: app DB file (each entry is written on its own connection).
+
+    Used by: api.create_app.
+    """
     @app.middleware("http")
     async def activity_log(request: Request, call_next):
+        """Run the request with a new correlation id (also returned as the x-correlation-id header), then record
+        the request, its ids, its outcome and how long it took.
+
+        Args:
+            request: the incoming request.
+            call_next: the rest of the app.
+        """
         if request.method not in MUTATING or not request.url.path.startswith("/v1/"):
             return await call_next(request)
         started = time.monotonic()

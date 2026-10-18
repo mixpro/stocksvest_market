@@ -25,13 +25,21 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-DEFAULT_URL = "http://localhost:8100"
-PAGE = 1000
+DEFAULT_URL = "http://localhost:8100"  # Used by: main (--url default)
+PAGE = 1000  # entries per request (the API maximum). Used by: fetch
+# CSV columns, in order. Used by: write
 FIELDS = ["id", "at", "source", "actor", "action", "entityType", "entityId", "outcome", "status", "error",
           "method", "path", "durationMs", "correlationId", "related", "details"]
 
 
 def load_env(path: Path) -> dict:
+    """KEY=VALUE pairs of a .env file (quotes removed); {} when it doesn't exist.
+
+    Args:
+        path: the file.
+
+    Used by: main.
+    """
     env = {}
     if path.exists():
         for line in path.read_text().splitlines():
@@ -43,7 +51,19 @@ def load_env(path: Path) -> dict:
 
 
 def parse_time(value: str | None) -> str | None:
-    """'30m', '2h', '3d', '1w' (ago), or an ISO date/time -> UTC 'YYYY-MM-DDTHH:MM:SSZ'."""
+    """'30m', '2h', '3d', '1w' (ago), or an ISO date/time (local when no zone) -> UTC 'YYYY-MM-DDTHH:MM:SSZ'.
+
+    Args:
+        value: the time, or None.
+
+    Returns:
+        The UTC time, or None.
+
+    Raises:
+        SystemExit: unreadable time.
+
+    Used by: main (--since, --until).
+    """
     if not value:
         return None
     m = re.fullmatch(r"(\d+)([mhdw])", value.strip())
@@ -62,10 +82,30 @@ def parse_time(value: str | None) -> str | None:
 
 
 class Client:
+    """Minimal client for GET /v1/activity.
+
+    Attributes:
+        url: app URL.
+        key: API key.
+
+    Used by: main, fetch.
+    """
     def __init__(self, url: str, key: str):
+        """Args:
+            url: app URL (trailing / removed).
+            key: API key.
+        """
         self.url, self.key = url.rstrip("/"), key
 
     def activity(self, **params) -> dict:
+        """One page of activity entries; exits with a readable error when the app answers an error or can't be reached.
+
+        Args:
+            params: the /v1/activity query parameters (empty ones are dropped).
+
+        Returns:
+            {"entries", "nextBeforeId"}.
+        """
         query = urllib.parse.urlencode({k: v for k, v in params.items() if v not in (None, "")})
         req = urllib.request.Request(f"{self.url}/v1/activity?{query}", headers={"X-API-Key": self.key})
         try:
@@ -79,7 +119,15 @@ class Client:
 
 
 def fetch(client: Client, filters: dict, limit: int | None) -> list[dict]:
-    """Newest first, following pages until `limit` entries (None = all)."""
+    """Newest first, following pages until `limit` entries (None = all).
+
+    Args:
+        client: the Client.
+        filters: query parameters.
+        limit: how many.
+
+    Used by: main.
+    """
     out, before = [], None
     while True:
         want = PAGE if limit is None else min(PAGE, limit - len(out))
@@ -93,11 +141,27 @@ def fetch(client: Client, filters: dict, limit: int | None) -> list[dict]:
 
 
 def short(value, width: int) -> str:
+    """Text cut to a width with … when longer.
+
+    Args:
+        value: the value (None -> "").
+        width: maximum characters.
+
+    Used by: print_table.
+    """
     text = "" if value is None else str(value)
     return text if len(text) <= width else text[: width - 1] + "…"
 
 
 def print_table(entries: list[dict], file) -> None:
+    """One line per entry: local time, source, action, entity, outcome/status, error.
+
+    Args:
+        entries: the entries.
+        file: where to print.
+
+    Used by: write.
+    """
     for e in entries:
         local = datetime.fromisoformat(e["at"].replace("Z", "+00:00")).astimezone().strftime("%Y-%m-%d %H:%M:%S")
         entity = f"{(e['entityType'] or '').lower()} {e['entityId'] or ''}".strip()
@@ -108,6 +172,15 @@ def print_table(entries: list[dict], file) -> None:
 
 
 def write(entries: list[dict], fmt: str, file) -> None:
+    """Write entries in a format.
+
+    Args:
+        entries: the entries.
+        fmt: table, json, jsonl or csv.
+        file: where to write.
+
+    Used by: main.
+    """
     if fmt == "table":
         print_table(entries, file)
     elif fmt == "json":
@@ -124,6 +197,7 @@ def write(entries: list[dict], fmt: str, file) -> None:
 
 
 def main() -> None:
+    """Command line entry point: parse the options, then print, save or follow the activity log."""
     root = Path(__file__).resolve().parent.parent
     env = {**load_env(root / ".env"), **os.environ}
     p = argparse.ArgumentParser(description="Pull the StocksVest app's activity log.",

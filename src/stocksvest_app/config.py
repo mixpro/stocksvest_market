@@ -7,6 +7,20 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class Settings:
+    """All app-service settings, read from environment variables when the object is created.
+
+    Attributes:
+        market_url: base URL of the market service (MARKET_URL; http://market:8000 in Docker Compose).
+        market_api_key: the key this app sends to the market service (MARKET_API_KEY).
+        api_keys: keys accepted from clients in X-API-Key (APP_API_KEYS, comma separated).
+        data_dir: folder holding app.db (DATA_DIR).
+        run_retention_days: how long the run history is kept (RUN_RETENTION_DAYS, default 183 = ~6 months).
+        run_scheduler: start the automation scheduler with the API (APP_RUN_SCHEDULER; off in tests).
+        scheduler_tick_seconds: time between scheduler passes (SCHEDULER_TICK_SECONDS).
+
+    Used by: api.create_app, deps.AppContext, market.client.MarketClient, __main__.main.
+    """
+
     market_url: str = field(default_factory=lambda: os.environ.get("MARKET_URL", "http://localhost:8000"))
     market_api_key: str = field(default_factory=lambda: os.environ.get("MARKET_API_KEY", ""))
     # Keys clients (and the sample UI) send in X-API-Key, comma separated.
@@ -25,4 +39,5 @@ class Settings:
 
     @property
     def db_path(self) -> Path:
+        """Path of the app database (data_dir/app.db)."""
         return self.data_dir / "app.db"

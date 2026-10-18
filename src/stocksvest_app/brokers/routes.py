@@ -13,6 +13,16 @@ from . import store
 
 
 class BrokerAccountIn(BaseModel):
+    """Body of POST /v1/broker-accounts.
+
+    Attributes:
+        name: display name.
+        provider: ALPACA (IBKR later; refused until available).
+        environment: PAPER only (live trading is not enabled).
+        credentialsRef: names the .env variables <REF>_KEY and <REF>_SECRET.
+
+    Used by: router.create_account.
+    """
     name: str = Field(min_length=1, max_length=100)
     provider: Literal["ALPACA", "IBKR"]
     environment: Literal["PAPER", "LIVE"] = "PAPER"
@@ -21,6 +31,11 @@ class BrokerAccountIn(BaseModel):
     @field_validator("environment")
     @classmethod
     def paper_only(cls, v):
+        """Refuse LIVE accounts.
+
+        Args:
+            v: the environment.
+        """
         if v != "PAPER":
             raise ValueError("live trading is not enabled; only PAPER accounts can be added")
         return v
@@ -28,28 +43,61 @@ class BrokerAccountIn(BaseModel):
     @field_validator("provider")
     @classmethod
     def available(cls, v):
+        """Refuse providers not in registry.PROVIDERS.
+
+        Args:
+            v: the provider.
+        """
         if v not in PROVIDERS:
             raise ValueError(f"{v} is not available yet")
         return v
 
 
 def snapshot_json(s) -> dict:
+    """An AccountSnapshot in API form.
+
+    Args:
+        s: the snapshot.
+
+    Used by: router.check.
+    """
     return {"cash": float(s.cash), "buyingPower": float(s.buying_power), "equity": float(s.equity),
             "currency": s.currency, "at": s.at.isoformat()}
 
 
 def router(ctx: AppContext) -> APIRouter:
+    """The /v1/broker-accounts routes.
+
+    Args:
+        ctx: app context (DB, broker factory, key check).
+
+    Used by: api.create_app.
+    """
     r = APIRouter(prefix="/v1/broker-accounts", tags=["brokers"], dependencies=[Depends(ctx.require_key)])
     Conn = Annotated[sqlite3.Connection, Depends(ctx.conn)]
 
     def load(conn, account_id: str) -> dict:
+        """A stored broker account, or 404.
+
+        Args:
+            conn: app DB connection.
+            account_id: the account's id.
+        """
         a = store.get_account(conn, account_id)
         if not a:
             raise HTTPException(404, f"broker account '{account_id}' not found")
         return a
 
     def overview(conn, account: dict) -> dict:
-        """Portfolios on the account and what is not in any of them (cash and shares)."""
+        """Portfolios on the account and what is not in any of them (cash and shares).
+
+        Args:
+            conn: app DB connection.
+            account: the account dict.
+
+        Returns:
+            {portfolios, assignedCash, unassignedCash, unassignedShares, lastSync}.
+        """
         from ..orders import store as orders_store
         from ..portfolios import store as portfolios_store
 
@@ -62,7 +110,15 @@ def router(ctx: AppContext) -> APIRouter:
                 "unassignedShares": (last or {}).get("unassigned", {}).get("shares", {}), "lastSync": last}
 
     def check(conn, account: dict) -> dict:
-        """Connect, record the status and balances, and return the account with its capabilities."""
+        """Connect, record the status and balances, and return the account with its capabilities.
+
+        Args:
+            conn: app DB connection.
+            account: the account dict.
+
+        Returns:
+            The account + overview + capabilities and snapshot (both None when the broker can't be reached).
+        """
         try:
             broker = ctx.broker_factory(account)
             snap = broker.account_snapshot()
@@ -78,21 +134,42 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.get("")
     def list_accounts(conn: Conn):
+        """Every broker account (stored balances; no broker call).
+        \f
+        Args:
+            conn: app DB connection (injected).
+        """
         return {"accounts": store.list_accounts(conn)}
 
     @r.post("", status_code=201)
     def create_account(body: BrokerAccountIn, conn: Conn):
-        """Add a paper account. The connection is tested right away (status CONNECTED or ERROR)."""
+        """Add a paper account. The connection is tested right away (status CONNECTED or ERROR).
+        \f
+        Args:
+            body: the account.
+            conn: app DB connection (injected).
+        """
         account = store.create_account(conn, body.model_dump(), "DISABLED", None)
         return check(conn, account)
 
     @r.get("/{account_id}")
     def get_account(account_id: str, conn: Conn):
-        """The account with live balances, what it supports, its portfolios and its unassigned cash and shares."""
+        """The account with live balances, what it supports, its portfolios and its unassigned cash and shares.
+        \f
+        Args:
+            account_id: the broker account's id (path).
+            conn: app DB connection (injected).
+        """
         return check(conn, load(conn, account_id))
 
     @r.delete("/{account_id}", status_code=204)
     def delete_account(account_id: str, conn: Conn):
+        """Remove the account. Refused (409) while a portfolio uses it.
+        \f
+        Args:
+            account_id: the broker account's id (path).
+            conn: app DB connection (injected).
+        """
         load(conn, account_id)
         used = conn.execute("SELECT name FROM portfolios WHERE broker_account_id = ?", (account_id,)).fetchall()
         if used:

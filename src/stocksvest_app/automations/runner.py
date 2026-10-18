@@ -28,19 +28,47 @@ from .timing import ET
 log = logging.getLogger(__name__)
 
 # One run per automation at a time, and one order-placing run per portfolio at a time.
+# Used by: _lock_for, run_automation (tests hold a lock to simulate an overlapping run).
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 
 
 def _lock_for(key: str) -> threading.Lock:
+    """The lock for an automation id or "portfolio:<id>", created on first use.
+
+    Args:
+        key: the lock's name.
+    """
     with _locks_guard:
         return _locks.setdefault(key, threading.Lock())
 
 
 class Trading:
-    """Portfolio, broker and planning state for one run of an automation that places orders."""
+    """Portfolio, broker and planning state for one run of an automation that places orders.
+
+    Attributes:
+        portfolio: the automation's portfolio (refreshed after the broker sync).
+        account: its broker account.
+        broker: the Broker adapter (ctx.broker_factory).
+        guards: the automation's OrderGuards (defaults when missing).
+        plan_ctx: PlanContext, built on first use and shared by every order action of the run.
+
+    Used by: run_automation, _place_orders.
+    """
 
     def __init__(self, ctx: AppContext, conn, automation: dict, preview: bool):
+        """Load the portfolio and broker; for real runs, sync the broker account first so fills and balances are current.
+
+        Args:
+            ctx: app context.
+            conn: app DB connection.
+            automation: the automation dict.
+            preview: skip the broker sync (previews change nothing).
+
+        Raises:
+            ValueError: the portfolio no longer exists.
+            BrokerError: the broker can't be reached or synced.
+        """
         self.conn, self.automation = conn, automation
         self.portfolio = portfolios_store.get_portfolio(conn, automation["portfolioId"])
         if not self.portfolio:
@@ -54,15 +82,24 @@ class Trading:
         self.plan_ctx: planner.PlanContext | None = None
 
     def pool(self) -> dict | None:
+        """The automation's budget pool, or None."""
         return budget.get_pool(self.conn, self.automation["id"])
 
     def budget_snapshot(self) -> dict | None:
+        """Budget figures for the run record (budgetBefore / budgetAfter), or None without a pool."""
         p = self.pool()
         if not p:
             return None
         return {k: p[k] for k in ("cash", "reserved", "available", "invested", "realizedPnL", "fees", "allocated")}
 
     def context(self, snapshots: dict, session, data_age) -> planner.PlanContext:
+        """The run's PlanContext, built once from the automation's holdings, open orders and budget.
+
+        Args:
+            snapshots: market snapshots of the matched symbols.
+            session: market session now.
+            data_age: market data age in minutes.
+        """
         if self.plan_ctx is None:
             aid, pid = self.automation["id"], self.portfolio["id"]
             holdings = {p["symbol"]: planner.Holding(p["quantity"], p["costBasis"])
@@ -84,7 +121,17 @@ class Trading:
 
 
 def market_context(ctx: AppContext, now: datetime) -> dict:
-    """Which session the market is in and how old the synced data is."""
+    """Which session the market is in and how old the synced data is.
+
+    Args:
+        ctx: app context (market API and helpers).
+        now: the run time.
+
+    Returns:
+        {"session", "marketLastSyncAt", "dataAgeMinutes"} (+ "error" when the market API failed).
+
+    Used by: run_automation (tests replace it to pin the session and data age).
+    """
     out = {"session": None, "marketLastSyncAt": None, "dataAgeMinutes": None}
     try:
         status = ctx.market_api.status()
@@ -112,10 +159,31 @@ def market_context(ctx: AppContext, now: datetime) -> dict:
 
 
 def _render(text: str, automation: dict, symbols: list[str]) -> str:
+    """Fill {name} and {count} in a notification title or message.
+
+    Args:
+        text: the template.
+        automation: provides the name.
+        symbols: matched tickers (count).
+    """
     return text.replace("{name}", automation["name"]).replace("{count}", str(len(symbols)))
 
 
 def _run_targets(conn, ctx: AppContext, automation: dict) -> tuple[list[dict], set[str], Evaluator]:
+    """Run the automation's filters and groups.
+
+    Args:
+        conn: app DB connection.
+        ctx: app context.
+        automation: the automation dict.
+
+    Returns:
+        (per-target results with steps and counts, union of matched tickers, the Evaluator used).
+
+    Raises:
+        EngineError: a target no longer exists, or a filter can't run.
+        MarketError: market data unavailable.
+    """
     ev = Evaluator(conn, ctx.market)
     targets, union = [], set()
     for target in automation["runTargets"]:
@@ -147,7 +215,26 @@ def run_automation(ctx: AppContext, conn: sqlite3.Connection, automation: dict, 
                    scheduled_for: datetime | None = None, schedule_id: str | None = None,
                    fire_id: str | None = None, preview: bool = False) -> dict:
     """Execute (or preview) one automation. A real run is stored in the run history and returned;
-    a preview returns the same shape without storing anything or creating notifications."""
+    a preview returns the same shape without storing anything or creating notifications.
+
+    Scheduled runs are skipped (stored as SKIPPED) when the global switch is off or the automation is paused;
+    manual runs ignore both. A run already in progress for the automation gives SKIPPED / OVERLAP.
+
+    Args:
+        ctx: app context.
+        conn: app DB connection.
+        automation: the automation dict (its configuration is copied into the run).
+        trigger: "SCHEDULE" or "MANUAL".
+        scheduled_for: the scheduled time (scheduled runs).
+        schedule_id: the schedule that fired.
+        fire_id: the fire record to link to the run.
+        preview: plan and show, change nothing.
+
+    Returns:
+        The stored run (with result), or {"preview": True, "status", "error", "result"}.
+
+    Used by: scheduler._tick_schedule, routes (run, preview, unsaved preview).
+    """
     started = time.monotonic()
     now = datetime.now(timezone.utc)
     run_id = new_id("run")
@@ -165,6 +252,12 @@ def run_automation(ctx: AppContext, conn: sqlite3.Connection, automation: dict, 
     trading: Trading | None = None
 
     def finish(status: str, error: str | None = None) -> dict:
+        """Fill in the metrics and store (or, for previews, return) the run.
+
+        Args:
+            status: SUCCEEDED, PARTIAL, FAILED or SKIPPED.
+            error: failure message, if any.
+        """
         intents = [i for a in result["actions"] for i in a.get("intents", [])]
         cost = lambda side, decision: sum(i["estimatedCost"] or 0 for i in intents  # noqa: E731
                                           if i["side"] == side and i["decision"] == decision)
@@ -268,7 +361,25 @@ def run_automation(ctx: AppContext, conn: sqlite3.Connection, automation: dict, 
 
 def _place_orders(ctx, conn, automation, trading: Trading, action: PlaceOrderAction, index: int, tickers: list[str],
                   ev, market: dict, entry: dict, run_id: str, preview: bool) -> None:
-    """Plan orders for the matched symbols and (unless previewing) submit the ones that pass every guard."""
+    """Plan orders for the matched symbols and (unless previewing) submit the ones that pass every guard.
+
+    Args:
+        ctx: app context.
+        conn: app DB connection.
+        automation: the automation dict.
+        trading: the run's Trading state.
+        action: the PLACE_ORDER action.
+        index: the action's position (part of each client order id).
+        tickers: matched tickers.
+        ev: the Evaluator (its cached snapshots are reused).
+        market: market_context result.
+        entry: the action's result entry (filled with intents, side, notHeld, status).
+        run_id: the run's id (client order ids are <runId>-<index>-<ticker>).
+        preview: plan only.
+
+    Raises:
+        ValueError: the automation has no budget.
+    """
     if not trading.pool():
         raise ValueError("this automation has no budget; allocate money to it first")
     plan_ctx = trading.context(ev._snaps(set(tickers)), market.get("session"), market.get("dataAgeMinutes"))

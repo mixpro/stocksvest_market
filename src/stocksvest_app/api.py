@@ -35,11 +35,30 @@ log = logging.getLogger(__name__)
 
 def create_app(settings: Settings | None = None, market_factory: Callable[[Settings], MarketAPI] = MarketClient,
                broker_factory: Callable[[dict], Broker] = make_broker):
+    """Build the app service: shared context, every feature's routes, the activity-log middleware, the sample UI,
+    and (when enabled) the automation scheduler.
+
+    Args:
+        settings: app settings; default reads the environment.
+        market_factory: builds the market API client (tests pass a fake).
+        broker_factory: broker account -> Broker adapter (tests pass a fake).
+
+    Returns:
+        The FastAPI app.
+
+    Used by: __main__.main (serve), tests.
+    """
     settings = settings or Settings()
     ctx = AppContext(settings, market_factory(settings), broker_factory=broker_factory)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        """Startup: create/upgrade the DB, log APP_STARTED, return budgets left by deleted automations, start the
+        scheduler. Shutdown: stop the scheduler.
+
+        Args:
+            app: the FastAPI app.
+        """
         conn = db.connect(settings.db_path)
         db.init(conn)
         audit_store.record(conn, "APP_STARTED", details={"version": app.version}, source="SYSTEM")
@@ -65,10 +84,12 @@ def create_app(settings: Settings | None = None, market_factory: Callable[[Setti
 
     @app.get("/health", tags=["status"])
     def health():
+        """Liveness check; no key needed."""
         return {"ok": True}
 
     @app.get("/", include_in_schema=False)
     def root():
+        """Send browsers to the sample UI."""
         return RedirectResponse("/ui/")
 
     app.include_router(filters_routes.router(ctx))

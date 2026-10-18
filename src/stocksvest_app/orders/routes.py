@@ -12,10 +12,23 @@ from . import service, store
 
 
 def router(ctx: AppContext) -> APIRouter:
+    """The /v1/orders routes.
+
+    Args:
+        ctx: app context (DB, broker factory, key check).
+
+    Used by: api.create_app.
+    """
     r = APIRouter(prefix="/v1/orders", tags=["orders"], dependencies=[Depends(ctx.require_key)])
     Conn = Annotated[sqlite3.Connection, Depends(ctx.conn)]
 
     def load(conn, order_id: str) -> dict:
+        """A stored order, or 404.
+
+        Args:
+            conn: app DB connection.
+            order_id: the order's id.
+        """
         o = store.get_order(conn, order_id)
         if not o:
             raise HTTPException(404, f"order '{order_id}' not found")
@@ -23,11 +36,23 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.get("/{order_id}")
     def get_order(order_id: str, conn: Conn):
+        """One order with its fills.
+        \f
+        Args:
+            order_id: the order's id (path).
+            conn: app DB connection (injected).
+        """
         o = load(conn, order_id)
         return {**o, "fills": store.list_fills(conn, o["portfolioId"], order_id=order_id)}
 
     @r.post("/{order_id}/cancel")
     def cancel(order_id: str, conn: Conn):
+        """Cancel an open order at the broker. 409 when it is already final or not at the broker yet; 502 when the broker fails.
+        \f
+        Args:
+            order_id: the order's id (path).
+            conn: app DB connection (injected).
+        """
         o = load(conn, order_id)
         try:
             broker = ctx.broker_factory(brokers_store.get_account(conn, o["brokerAccountId"]))

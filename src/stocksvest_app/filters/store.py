@@ -38,6 +38,13 @@ CREATE TABLE IF NOT EXISTS filter_group_members (
 
 
 def filter_json(r: sqlite3.Row) -> dict:
+    """A filters row -> API shape {id, name, description, isActive, inputs, actions, createdAt, updatedAt}.
+
+    Args:
+        r: row from the filters table.
+
+    Used by: get_filter, list_filters.
+    """
     return {
         "id": r["id"],
         "name": r["name"],
@@ -51,15 +58,42 @@ def filter_json(r: sqlite3.Row) -> dict:
 
 
 def get_filter(conn, filter_id: str) -> dict | None:
+    """One filter, or None.
+
+    Args:
+        conn: app DB connection.
+        filter_id: the filter's id.
+
+    Used by: routes, engine (evaluation and reference checks), automations (run targets, validation).
+    """
     r = conn.execute("SELECT * FROM filters WHERE id = ?", (filter_id,)).fetchone()
     return filter_json(r) if r else None
 
 
 def list_filters(conn) -> list[dict]:
+    """Every filter, by name.
+
+    Args:
+        conn: app DB connection.
+
+    Used by: routes.list_filters, filter_users, group_users.
+    """
     return [filter_json(r) for r in conn.execute("SELECT * FROM filters ORDER BY name")]
 
 
 def save_filter(conn, data: dict, filter_id: str | None = None) -> dict:
+    """Create a filter (filter_id None) or replace one.
+
+    Args:
+        conn: app DB connection.
+        data: validated FilterIn as JSON-ready dict (name, description, isActive, inputs, actions).
+        filter_id: the filter to replace; None creates a new id.
+
+    Returns:
+        The stored filter.
+
+    Used by: routes.create_filter, routes.update_filter, tests.
+    """
     ts = now_iso()
     args = (data["name"], data["description"], int(data["isActive"]),
             json.dumps(data["inputs"]), json.dumps(data["actions"]), ts)
@@ -81,12 +115,27 @@ def save_filter(conn, data: dict, filter_id: str | None = None) -> dict:
 
 
 def delete_filter(conn, filter_id: str) -> None:
+    """Delete a filter (callers check it is unused first; its run history is kept).
+
+    Args:
+        conn: app DB connection.
+        filter_id: the filter's id.
+
+    Used by: routes.delete_filter.
+    """
     with conn:
         conn.execute("DELETE FROM filters WHERE id = ?", (filter_id,))
 
 
 def filter_users(conn, filter_id: str) -> list[str]:
-    """Names of filters and groups that use this filter."""
+    """Names of filters (as an input) and groups (as a member) that use this filter.
+
+    Args:
+        conn: app DB connection.
+        filter_id: the filter's id.
+
+    Used by: routes.delete_filter (409 when not empty).
+    """
     users = [f["name"] for f in list_filters(conn) if any(i.get("id") == filter_id for i in f["inputs"])]
     users += [r["name"] for r in conn.execute(
         "SELECT g.name FROM filter_groups g JOIN filter_group_members m ON m.group_id = g.id WHERE m.filter_id = ?",
@@ -99,6 +148,14 @@ def filter_users(conn, filter_id: str) -> list[str]:
 
 
 def get_group(conn, group_id: str) -> dict | None:
+    """One group {id, name, description, filterIds (in order), createdAt, updatedAt}, or None.
+
+    Args:
+        conn: app DB connection.
+        group_id: the group's id.
+
+    Used by: routes, engine (evaluation, reference and cycle checks), automations (run targets).
+    """
     r = conn.execute("SELECT * FROM filter_groups WHERE id = ?", (group_id,)).fetchone()
     if not r:
         return None
@@ -109,10 +166,29 @@ def get_group(conn, group_id: str) -> dict | None:
 
 
 def list_groups(conn) -> list[dict]:
+    """Every group, by name.
+
+    Args:
+        conn: app DB connection.
+
+    Used by: routes.list_groups.
+    """
     return [get_group(conn, r["id"]) for r in conn.execute("SELECT id FROM filter_groups ORDER BY name")]
 
 
 def save_group(conn, data: dict, group_id: str | None = None) -> dict:
+    """Create a group (group_id None) or replace one, including its member list.
+
+    Args:
+        conn: app DB connection.
+        data: validated GroupIn as dict (name, description, filterIds).
+        group_id: the group to replace; None creates a new id.
+
+    Returns:
+        The stored group.
+
+    Used by: routes.create_group, routes.update_group.
+    """
     ts = now_iso()
     with conn:
         if group_id is None:
@@ -133,9 +209,25 @@ def save_group(conn, data: dict, group_id: str | None = None) -> dict:
 
 
 def delete_group(conn, group_id: str) -> None:
+    """Delete a group and its member list (callers check it is unused first).
+
+    Args:
+        conn: app DB connection.
+        group_id: the group's id.
+
+    Used by: routes.delete_group.
+    """
     with conn:
         conn.execute("DELETE FROM filter_groups WHERE id = ?", (group_id,))
 
 
 def group_users(conn, group_id: str) -> list[str]:
+    """Names of filters that use this group as an input.
+
+    Args:
+        conn: app DB connection.
+        group_id: the group's id.
+
+    Used by: routes.delete_group (409 when not empty).
+    """
     return [f["name"] for f in list_filters(conn) if any(i.get("id") == group_id for i in f["inputs"])]

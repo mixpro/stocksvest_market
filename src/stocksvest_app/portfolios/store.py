@@ -59,15 +59,28 @@ CREATE TABLE IF NOT EXISTS position_lots (
 CREATE INDEX IF NOT EXISTS lots_open ON position_lots(portfolio_id, symbol, automation_id, closed_at);
 """
 
-D0 = Decimal(0)
+D0 = Decimal(0)  # Used by: this module, automations.budget, orders.service, performance.snapshots, portfolios.routes
 
 
 def D(v) -> Decimal:
+    """Any number or decimal string as Decimal (None -> 0).
+
+    Args:
+        v: the value.
+
+    Used by: this module, automations.budget, orders.service, performance.snapshots.
+    """
     return Decimal(str(v)) if v is not None else D0
 
 
 def num(v) -> float | None:
-    """Decimal (or decimal string) -> JSON number."""
+    """Decimal (or decimal string) -> JSON number.
+
+    Args:
+        v: the value; None stays None.
+
+    Used by: the *_json helpers here and in automations.budget and orders.store, portfolios.routes.summary.
+    """
     return float(v) if v is not None else None
 
 
@@ -75,17 +88,40 @@ def num(v) -> float | None:
 
 
 def portfolio_json(r: sqlite3.Row) -> dict:
+    """A portfolios row in API form.
+
+    Args:
+        r: the row.
+
+    Used by: get_portfolio, list_portfolios.
+    """
     return {"id": r["id"], "name": r["name"], "description": r["description"],
             "brokerAccountId": r["broker_account_id"], "currency": r["currency"], "allocated": num(r["allocated"]),
             "cash": num(r["cash"]), "createdAt": r["created_at"], "updatedAt": r["updated_at"]}
 
 
 def get_portfolio(conn, portfolio_id: str) -> dict | None:
+    """One portfolio, or None.
+
+    Args:
+        conn: app DB connection.
+        portfolio_id: the portfolio's id.
+
+    Used by: portfolios.routes, automations.routes, automations.runner.Trading, performance.routes.
+    """
     r = conn.execute("SELECT * FROM portfolios WHERE id = ?", (portfolio_id,)).fetchone()
     return portfolio_json(r) if r else None
 
 
 def list_portfolios(conn, broker_account_id: str | None = None) -> list[dict]:
+    """Portfolios by name.
+
+    Args:
+        conn: app DB connection.
+        broker_account_id: only this broker account's (default all).
+
+    Used by: portfolios.routes, brokers.routes.overview, orders.service.sync_account, performance.snapshots.scheduled.
+    """
     if broker_account_id:
         rows = conn.execute("SELECT * FROM portfolios WHERE broker_account_id = ? ORDER BY name", (broker_account_id,))
     else:
@@ -94,7 +130,20 @@ def list_portfolios(conn, broker_account_id: str | None = None) -> list[dict]:
 
 
 def create_portfolio(conn, name: str, description: str, account: dict, capital: Decimal) -> dict:
-    """Call inside a transaction (the caller checks the account's unassigned cash under the same lock)."""
+    """Store a new portfolio with its initial capital. Call inside a transaction (the caller checks the account's unassigned cash under the same lock).
+
+    Args:
+        conn: app DB connection.
+        name: display name.
+        description: description.
+        account: its broker account dict.
+        capital: initial capital (an ALLOCATE ledger entry when above 0).
+
+    Returns:
+        The stored portfolio.
+
+    Used by: portfolios.routes.create_portfolio.
+    """
     pid, ts = new_id("pf"), now_iso()
     conn.execute(
         "INSERT INTO portfolios(id, name, description, broker_account_id, currency, created_at, updated_at) "
@@ -107,6 +156,19 @@ def create_portfolio(conn, name: str, description: str, account: dict, capital: 
 
 
 def update_portfolio(conn, portfolio_id: str, name: str, description: str) -> dict:
+    """Rename / redescribe a portfolio.
+
+    Args:
+        conn: app DB connection.
+        portfolio_id: the portfolio's id.
+        name: new name.
+        description: new description.
+
+    Returns:
+        The portfolio.
+
+    Used by: portfolios.routes.update_portfolio.
+    """
     with conn:
         conn.execute("UPDATE portfolios SET name = ?, description = ?, updated_at = ? WHERE id = ?",
                      (name, description, now_iso(), portfolio_id))
@@ -114,6 +176,14 @@ def update_portfolio(conn, portfolio_id: str, name: str, description: str) -> di
 
 
 def delete_portfolio(conn, portfolio_id: str) -> None:
+    """Delete a portfolio and its ledger (the routes check it is empty first).
+
+    Args:
+        conn: app DB connection.
+        portfolio_id: the portfolio's id.
+
+    Used by: portfolios.routes.delete_portfolio.
+    """
     with conn:
         conn.execute("DELETE FROM portfolio_entries WHERE portfolio_id = ?", (portfolio_id,))
         conn.execute("DELETE FROM portfolios WHERE id = ?", (portfolio_id,))
@@ -123,14 +193,35 @@ def delete_portfolio(conn, portfolio_id: str) -> None:
 
 
 def assigned_cash(conn, broker_account_id: str) -> Decimal:
-    """Cash of all portfolios on a broker account."""
+    """Cash of all portfolios on a broker account.
+
+    Args:
+        conn: app DB connection.
+        broker_account_id: the account's id.
+
+    Used by: orders.service.sync_account, portfolios.routes.unassigned_cash.
+    """
     rows = conn.execute("SELECT cash FROM portfolios WHERE broker_account_id = ?", (broker_account_id,))
     return sum((D(r["cash"]) for r in rows), D0)
 
 
 def change_cash(conn, portfolio_id: str, type_: str, amount: Decimal, *, allocated: Decimal = D0,
                 automation_id=None, order_id=None, fill_id=None, note=None) -> None:
-    """Apply a signed cash change and record it. Call inside a transaction."""
+    """Apply a signed cash change and record it in the ledger. Call inside a transaction.
+
+    Args:
+        conn: app DB connection.
+        portfolio_id: the portfolio's id.
+        type_: entry type: ALLOCATE, WITHDRAW, BUY_FILL, SELL_FILL or FEE.
+        amount: signed change of cash.
+        allocated: signed change of the allocated capital (ALLOCATE / WITHDRAW).
+        automation_id: the automation it concerns.
+        order_id: the order it concerns.
+        fill_id: the fill it concerns.
+        note: free text.
+
+    Used by: create_portfolio, orders.service.apply_fill, portfolios.routes.allocate / withdraw.
+    """
     r = conn.execute("SELECT cash, allocated FROM portfolios WHERE id = ?", (portfolio_id,)).fetchone()
     cash = D(r["cash"]) + amount
     conn.execute("UPDATE portfolios SET cash = ?, allocated = ?, updated_at = ? WHERE id = ?",
@@ -143,6 +234,15 @@ def change_cash(conn, portfolio_id: str, type_: str, amount: Decimal, *, allocat
 
 
 def entries(conn, portfolio_id: str, limit: int = 200) -> list[dict]:
+    """A portfolio's ledger, newest first.
+
+    Args:
+        conn: app DB connection.
+        portfolio_id: the portfolio's id.
+        limit: how many.
+
+    Used by: portfolios.routes.ledger.
+    """
     rows = conn.execute("SELECT * FROM portfolio_entries WHERE portfolio_id = ? ORDER BY created_at DESC, rowid DESC "
                         "LIMIT ?", (portfolio_id, limit))
     return [{"id": r["id"], "type": r["type"], "amount": num(r["amount"]), "cashAfter": num(r["cash_after"]),
@@ -154,6 +254,13 @@ def entries(conn, portfolio_id: str, limit: int = 200) -> list[dict]:
 
 
 def lot_json(r: sqlite3.Row) -> dict:
+    """A position_lots row in API form.
+
+    Args:
+        r: the row.
+
+    Used by: portfolios.routes.lots.
+    """
     return {"id": r["id"], "symbol": r["symbol"], "automationId": r["automation_id"], "source": r["source"],
             "quantity": num(r["quantity"]), "remainingQuantity": num(r["remaining_quantity"]),
             "costPerShare": num(r["cost_per_share"]), "realizedPnL": num(r["realized_pnl"]),
@@ -163,6 +270,21 @@ def lot_json(r: sqlite3.Row) -> dict:
 def open_lot(conn, portfolio_id: str, symbol: str, automation_id: str | None, quantity: Decimal,
              cost_per_share: Decimal, source: str = "FILL", buy_fill_id: str | None = None,
              opened_at: str | None = None) -> None:
+    """Open a lot for bought shares (inside the caller's transaction).
+
+    Args:
+        conn: app DB connection.
+        portfolio_id: the portfolio's id.
+        symbol: ticker.
+        automation_id: owning automation, or None (manual).
+        quantity: shares.
+        cost_per_share: fill price.
+        source: FILL, or OPENING for shares present when the app started.
+        buy_fill_id: the fill that opened it.
+        opened_at: time (default now).
+
+    Used by: orders.service.apply_fill.
+    """
     conn.execute(
         "INSERT INTO position_lots(id, portfolio_id, symbol, automation_id, source, buy_fill_id, quantity, "
         "remaining_quantity, cost_per_share, opened_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -173,7 +295,17 @@ def open_lot(conn, portfolio_id: str, symbol: str, automation_id: str | None, qu
 
 def open_lots(conn, portfolio_id: str, symbol: str | None = None, automation_id: str | None = None,
               any_owner: bool = False) -> list[sqlite3.Row]:
-    """Open lots, oldest first. By default only one owner: the automation, or manual when automation_id is None."""
+    """Open lots, oldest first. By default only one owner: the automation, or manual when automation_id is None.
+
+    Args:
+        conn: app DB connection.
+        portfolio_id: the portfolio's id.
+        symbol: only this ticker.
+        automation_id: the owner.
+        any_owner: ignore the owner.
+
+    Used by: held, close_lots_fifo.
+    """
     sql, args = "SELECT * FROM position_lots WHERE portfolio_id = ? AND closed_at IS NULL", [portfolio_id]
     if symbol:
         sql += " AND symbol = ?"
@@ -185,13 +317,37 @@ def open_lots(conn, portfolio_id: str, symbol: str | None = None, automation_id:
 
 
 def held(conn, portfolio_id: str, symbol: str, automation_id: str | None = None, any_owner: bool = False) -> Decimal:
+    """Shares a portfolio holds of a symbol (one owner unless any_owner).
+
+    Args:
+        conn: app DB connection.
+        portfolio_id: the portfolio's id.
+        symbol: ticker.
+        automation_id: the owner; None = manual.
+        any_owner: all owners.
+
+    Used by: orders.service._check_funds.
+    """
     return sum((D(r["remaining_quantity"]) for r in open_lots(conn, portfolio_id, symbol, automation_id, any_owner)), D0)
 
 
 def close_lots_fifo(conn, portfolio_id: str, symbol: str, automation_id: str | None, quantity: Decimal,
                     price: Decimal) -> tuple[Decimal, Decimal, Decimal]:
-    """Sell `quantity` from the owner's lots, oldest first.
-    Returns (quantity actually taken from lots, their cost basis, realized P&L)."""
+    """Sell `quantity` from the owner's lots, oldest first (inside the caller's transaction).
+
+    Args:
+        conn: app DB connection.
+        portfolio_id: the portfolio's id.
+        symbol: ticker.
+        automation_id: the owner; None = manual.
+        quantity: shares sold.
+        price: sell price.
+
+    Returns:
+        (quantity actually taken from lots, their cost basis, realized P&L).
+
+    Used by: orders.service.apply_fill.
+    """
     left, basis, pnl = quantity, D0, D0
     for lot in open_lots(conn, portfolio_id, symbol, automation_id):
         if left <= 0:
@@ -212,7 +368,19 @@ def close_lots_fifo(conn, portfolio_id: str, symbol: str, automation_id: str | N
 
 def positions(conn, portfolio_id: str, automation_id: str | None = None, by_owner: bool = False) -> list[dict]:
     """Current positions from open lots: quantity, average cost and cost basis per symbol
-    (per owner too with by_owner). `automation_id` limits to one automation's shares."""
+    (per owner too with by_owner).
+
+    Args:
+        conn: app DB connection.
+        portfolio_id: the portfolio's id.
+        automation_id: only this automation's shares.
+        by_owner: one row per symbol and owner (adds automationId).
+
+    Returns:
+        [{symbol, quantity, costBasis, averageCost[, automationId]}] (Decimals).
+
+    Used by: portfolios.routes, orders.service.sync_account, automations.runner.Trading.context, performance.snapshots.
+    """
     sql = "SELECT * FROM position_lots WHERE portfolio_id = ? AND closed_at IS NULL"
     args = [portfolio_id]
     if automation_id:
@@ -234,6 +402,15 @@ def positions(conn, portfolio_id: str, automation_id: str | None = None, by_owne
 
 
 def realized_pnl(conn, portfolio_id: str, automation_id: str | None = None) -> Decimal:
+    """Realized P&L of a portfolio's lots (or of one automation's).
+
+    Args:
+        conn: app DB connection.
+        portfolio_id: the portfolio's id.
+        automation_id: only this automation's.
+
+    Used by: portfolios.routes.summary, performance.snapshots.portfolio_values.
+    """
     sql, args = "SELECT realized_pnl FROM position_lots WHERE portfolio_id = ?", [portfolio_id]
     if automation_id:
         sql += " AND automation_id = ?"

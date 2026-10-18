@@ -8,10 +8,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-DEFAULT_TZ = "America/New_York"
+DEFAULT_TZ = "America/New_York"  # Used by: ScheduleBase.timezone default
 
 
 class Weekday(str, Enum):
+    """Days of the week for WEEKLY and INTERVAL schedules.
+
+    Used by: WeeklySchedule.onDays, IntervalSchedule.onDays, WEEKDAY_INDEX, timing (_raw_fires, _allowed).
+    """
     MON = "MON"
     TUE = "TUE"
     WED = "WED"
@@ -21,28 +25,44 @@ class Weekday(str, Enum):
     SUN = "SUN"
 
 
-WEEKDAY_INDEX = {d: i for i, d in enumerate(Weekday)}  # Monday = 0, like date.weekday()
+WEEKDAY_INDEX = {d: i for i, d in enumerate(Weekday)}  # Monday = 0, like date.weekday(). Used by: timing
 
 
 class MissedPolicy(str, Enum):
+    """What the scheduler does with times that passed while the app was down or busy (more than 2 minutes late).
+
+    RUN_ONCE: one catch-up run for all of them. SKIP: none (recorded as one SKIPPED / MISSED run).
+    RUN_ALL: one run per missed time, up to 50 (not allowed for automations that place orders).
+
+    Used by: ScheduleBase.missedPolicy, AutomationIn.check_trading, scheduler._tick_schedule.
+    """
     SKIP = "SKIP"  # runs missed while the app was down are dropped
     RUN_ONCE = "RUN_ONCE"  # one catch-up run for everything missed
     RUN_ALL = "RUN_ALL"  # one run per missed time (not allowed for automations that place orders)
 
 
 class EndType(str, Enum):
+    """When a schedule stops: NEVER, UNTIL a time, or after COUNT fires.
+
+    Used by: EndCondition.type, timing.iter_fires (UNTIL), timing.next_fires and scheduler (COUNT).
+    """
     NEVER = "NEVER"
     UNTIL = "UNTIL"
     COUNT = "COUNT"
 
 
 class EndCondition(BaseModel):
+    """A schedule's end: {"type": "NEVER"} | {"type": "UNTIL", "until": time} | {"type": "COUNT", "count": n}.
+
+    Used by: ScheduleBase.end.
+    """
     type: EndType = EndType.NEVER
     until: datetime | None = None
     count: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def check(self):
+        """UNTIL needs `until`; COUNT needs `count`."""
         if self.type == EndType.UNTIL and self.until is None:
             raise ValueError("UNTIL needs until")
         if self.type == EndType.COUNT and self.count is None:
@@ -51,17 +71,34 @@ class EndCondition(BaseModel):
 
 
 class TimeWindow(BaseModel):
+    """Time of day range (in the schedule's time zone) an INTERVAL schedule may fire in; both ends included.
+
+    Used by: IntervalSchedule.window, timing._allowed.
+    """
     start: time
     end: time
 
     @model_validator(mode="after")
     def check(self):
+        """The end must be after the start."""
         if self.end <= self.start:
             raise ValueError("window end must be after start")
         return self
 
 
 class ScheduleBase(BaseModel):
+    """Fields every schedule has.
+
+    Attributes:
+        id: stable id, assigned when the automation is saved (kept across edits).
+        timezone: IANA zone the times are in (default New York); MARKET schedules always use New York.
+        startAt: no fires before this time (needs an offset).
+        end: EndCondition.
+        exceptions: dates (in the schedule's zone) with no fires.
+        missedPolicy: MissedPolicy.
+
+    Used by: every schedule type below; timing, scheduler.
+    """
     id: str | None = None  # assigned on save
     timezone: str = DEFAULT_TZ
     startAt: datetime | None = None
@@ -72,6 +109,11 @@ class ScheduleBase(BaseModel):
     @field_validator("timezone")
     @classmethod
     def known_zone(cls, v: str) -> str:
+        """The time zone must exist.
+
+        Args:
+            v: zone name, e.g. "Asia/Jerusalem".
+        """
         try:
             ZoneInfo(v)
         except (ZoneInfoNotFoundError, ValueError):
@@ -81,30 +123,48 @@ class ScheduleBase(BaseModel):
     @field_validator("startAt")
     @classmethod
     def aware(cls, v):
+        """startAt must carry a time zone offset.
+
+        Args:
+            v: the value.
+        """
         if v is not None and v.tzinfo is None:
             raise ValueError("startAt needs a time zone offset, e.g. 2026-10-20T09:30:00-04:00")
         return v
 
 
 class OnceSchedule(ScheduleBase):
+    """Fires once, at `at` (with an offset). Used by: Schedule, timing._raw_fires."""
     type: Literal["ONCE"]
     at: datetime
 
     @field_validator("at")
     @classmethod
     def aware_at(cls, v):
+        """`at` must carry a time zone offset.
+
+        Args:
+            v: the value.
+        """
         if v.tzinfo is None:
             raise ValueError("at needs a time zone offset, e.g. 2026-10-20T09:30:00-04:00")
         return v
 
 
 class IntervalUnit(str, Enum):
+    """Step unit of an INTERVAL schedule. MINUTE/HOUR steps are exact; DAY steps follow the wall clock (DST-safe).
+
+    Used by: IntervalSchedule.unit, timing._raw_fires.
+    """
     MINUTE = "MINUTE"
     HOUR = "HOUR"
     DAY = "DAY"
 
 
 class IntervalSchedule(ScheduleBase):
+    """Fires every `every` x `unit` from startAt (or the automation's creation), optionally only on `onDays` and
+    inside `window`. The smallest interval is 5 minutes. Used by: Schedule, timing.
+    """
     type: Literal["INTERVAL"]
     every: int = Field(ge=1)
     unit: IntervalUnit
@@ -113,17 +173,22 @@ class IntervalSchedule(ScheduleBase):
 
     @model_validator(mode="after")
     def check_minimum(self):
+        """At least 5 minutes between fires."""
         if self.unit == IntervalUnit.MINUTE and self.every < 5:
             raise ValueError("the smallest interval is 5 minutes")
         return self
 
 
 class DailySchedule(ScheduleBase):
+    """Fires every day at each of `atTimes`. Used by: Schedule, timing._raw_fires."""
     type: Literal["DAILY"]
     atTimes: list[time] = Field(min_length=1)
 
 
 class WeeklySchedule(ScheduleBase):
+    """Fires on `onDays` at each of `atTimes`, every `everyNWeeks` weeks (counted from startAt or creation).
+    Used by: Schedule, timing._raw_fires.
+    """
     type: Literal["WEEKLY"]
     everyNWeeks: int = Field(default=1, ge=1)
     onDays: list[Weekday] = Field(min_length=1)
@@ -131,6 +196,10 @@ class WeeklySchedule(ScheduleBase):
 
 
 class MarketAnchor(str, Enum):
+    """Session time a MARKET schedule is relative to (that trading day's own times, so early closes count).
+
+    Used by: MarketSchedule.anchor / repeatUntil, timing.ANCHOR_FIELD.
+    """
     PRE_MARKET_OPEN = "PRE_MARKET_OPEN"
     REGULAR_OPEN = "REGULAR_OPEN"
     REGULAR_CLOSE = "REGULAR_CLOSE"
@@ -138,7 +207,11 @@ class MarketAnchor(str, Enum):
 
 
 class MarketSchedule(ScheduleBase):
-    """Runs on trading days only, relative to the session times of that day (holidays and early closes included)."""
+    """Fires on trading days only, at anchor + offsetMinutes, then (optionally) every repeatEveryMinutes until just
+    before repeatUntil (default the regular close). Holidays come from the market calendar.
+
+    Used by: Schedule, timing._raw_fires (via MarketData.calendar_days).
+    """
 
     type: Literal["MARKET"]
     anchor: MarketAnchor
@@ -148,27 +221,43 @@ class MarketSchedule(ScheduleBase):
 
     @model_validator(mode="after")
     def check_repeat(self):
+        """repeatUntil only makes sense with repeatEveryMinutes."""
         if self.repeatUntil and not self.repeatEveryMinutes:
             raise ValueError("repeatUntil needs repeatEveryMinutes")
         return self
 
 
+# Any schedule; the "type" field picks the model. Used by: AutomationIn.schedules, timing, scheduler, routes.
 Schedule = Annotated[
     Union[OnceSchedule, IntervalSchedule, DailySchedule, WeeklySchedule, MarketSchedule], Field(discriminator="type")
 ]
 
 
 class RunTargetType(str, Enum):
+    """What an automation runs: a filter or a filter group. Used by: RunTarget, runner._run_targets."""
     FILTER = "FILTER"
     FILTER_GROUP = "FILTER_GROUP"
 
 
 class RunTarget(BaseModel):
+    """One filter or group an automation runs; the matched symbols of all targets are combined as a union.
+    Used by: AutomationIn.runTargets, runner._run_targets, routes.prepare (existence check).
+    """
     type: RunTargetType
     id: str
 
 
 class NotifyAction(BaseModel):
+    """Send an in-app notification. In title and message, {name} = automation name, {count} = matches.
+
+    Attributes:
+        title: required.
+        message: optional text.
+        includeMatchedSymbols: list the matched tickers in the notification.
+        skipWhenNoMatches: send nothing (action SKIPPED) when there are no matches.
+
+    Used by: Action, runner.run_automation.
+    """
     type: Literal["NOTIFY"]
     title: str = Field(min_length=1, max_length=200)
     message: str = ""
@@ -177,21 +266,33 @@ class NotifyAction(BaseModel):
 
 
 class LaterAction(BaseModel):
-    """Action types from the design that arrive in later phases."""
+    """Action types from the design that arrive later (ADD_TO_WATCHLIST); always refused with "not available yet".
+    Used by: Action.
+    """
 
     type: Literal["ADD_TO_WATCHLIST"]
 
     @model_validator(mode="after")
     def not_yet(self):
+        """Always refuse."""
         raise ValueError(f"{self.type} actions are not available yet")
 
 
 class SelectionMode(str, Enum):
+    """Which matches a PLACE_ORDER action trades: ALL_MATCHES (one sizing each) or the TOP_N by a ranking key.
+
+    Used by: SymbolSelection.mode, PlaceOrderAction.check, planner.plan.
+    """
     ALL_MATCHES = "ALL_MATCHES"
     TOP_N = "TOP_N"
 
 
 class RankingKey(str, Enum):
+    """How TOP_N ranks the matches (descending by default). POSITION_VALUE and UNREALIZED_PNL_PERCENT use the
+    automation's own shares (unheld symbols rank last).
+
+    Used by: SymbolSelection.rankBy, planner._rank_value.
+    """
     LAST_PRICE = "LAST_PRICE"
     DAILY_CHANGE_PERCENT = "DAILY_CHANGE_PERCENT"
     DAILY_VOLUME = "DAILY_VOLUME"
@@ -200,6 +301,7 @@ class RankingKey(str, Enum):
 
 
 class SymbolSelection(BaseModel):
+    """Which matched symbols an order action uses. Used by: PlaceOrderAction.selection, planner.plan."""
     mode: SelectionMode = SelectionMode.ALL_MATCHES
     topN: int | None = Field(default=None, ge=1, le=100)
     rankBy: RankingKey | None = None
@@ -207,12 +309,19 @@ class SymbolSelection(BaseModel):
 
     @model_validator(mode="after")
     def check(self):
+        """TOP_N needs topN and rankBy."""
         if self.mode == SelectionMode.TOP_N and (self.topN is None or self.rankBy is None):
             raise ValueError("TOP_N needs topN and rankBy")
         return self
 
 
 class SizingMode(str, Enum):
+    """How big each order is. Buys: QUANTITY (shares), CASH_AMOUNT (dollars), PERCENT_OF_BUDGET (of the budget
+    available when the run starts). Sells: QUANTITY, PERCENT_OF_POSITION (of the automation's own shares).
+    Quantities are rounded down to whole shares.
+
+    Used by: OrderSizing.mode, BUY_SIZINGS / SELL_SIZINGS, planner.plan.
+    """
     QUANTITY = "QUANTITY"  # shares
     CASH_AMOUNT = "CASH_AMOUNT"  # buy: money per symbol
     PERCENT_OF_BUDGET = "PERCENT_OF_BUDGET"  # buy: % of the budget available when the run starts
@@ -220,23 +329,40 @@ class SizingMode(str, Enum):
 
 
 class OrderSizing(BaseModel):
+    """One sizing: mode + value (> 0; percentages <= 100). Used by: PlaceOrderAction.sizings, planner.plan."""
     mode: SizingMode
     value: Decimal = Field(gt=0)
 
     @model_validator(mode="after")
     def check(self):
+        """Percentages can't exceed 100."""
         if self.mode in (SizingMode.PERCENT_OF_BUDGET, SizingMode.PERCENT_OF_POSITION) and self.value > 100:
             raise ValueError("a percentage must be at most 100")
         return self
 
 
+# Which sizing modes each side accepts. Used by: PlaceOrderAction.check.
 BUY_SIZINGS = {SizingMode.QUANTITY, SizingMode.CASH_AMOUNT, SizingMode.PERCENT_OF_BUDGET}
 SELL_SIZINGS = {SizingMode.QUANTITY, SizingMode.PERCENT_OF_POSITION}
 
 
 class PlaceOrderAction(BaseModel):
     """Turn the matched symbols into orders. ALL_MATCHES: one sizing for every symbol.
-    TOP_N: one sizing for all ranks, or N sizings where sizings[i] is for rank i+1."""
+    TOP_N: one sizing for all ranks, or N sizings where sizings[i] is for rank i+1.
+
+    Attributes:
+        side: BUY, or SELL (only the automation's own shares).
+        orderType: MARKET, LIMIT, STOP, STOP_LIMIT or TRAILING_STOP.
+        timeInForce: DAY, GTC, OPG, CLS, IOC or FOK (checked against the broker's capabilities).
+        limitOffsetPercent: limit price = latest price x (1 + offset%); required for LIMIT / STOP_LIMIT.
+        stopOffsetPercent: stop price likewise; required for STOP / STOP_LIMIT.
+        trailPercent: required for TRAILING_STOP.
+        extendedHours: only with LIMIT + DAY.
+        selection: SymbolSelection.
+        sizings: OrderSizing list (see above).
+
+    Used by: Action, AutomationIn.check_trading, runner._place_orders, planner.plan.
+    """
 
     type: Literal["PLACE_ORDER"]
     side: Literal["BUY", "SELL"]
@@ -251,6 +377,7 @@ class PlaceOrderAction(BaseModel):
 
     @model_validator(mode="after")
     def check(self):
+        """Sizing modes fit the side and selection; order types have the prices they need."""
         allowed = BUY_SIZINGS if self.side == "BUY" else SELL_SIZINGS
         bad = [s.mode.value for s in self.sizings if s.mode not in allowed]
         if bad:
@@ -271,6 +398,18 @@ class PlaceOrderAction(BaseModel):
 
 
 class OrderGuards(BaseModel):
+    """Limits applied to every order an automation plans (defaults shown in the API docs).
+
+    Attributes:
+        maxOrdersPerRun: orders across all order actions of one run.
+        maxPositionValue: cap per symbol on the automation's shares, in dollars (buys shrink to fit).
+        maxPositionPercent: same cap as a % of the automation's equity (budget cash + invested).
+        regularHoursOnly: place nothing outside the regular session.
+        skipBuyIfHeld: no buy when the automation holds the symbol or has a buy open.
+        maxDataAgeMinutes: place nothing when the market data is older than this.
+
+    Used by: AutomationIn.orderGuards, runner.Trading, planner.plan.
+    """
     maxOrdersPerRun: int | None = Field(default=10, ge=1)
     maxPositionValue: Decimal | None = Field(default=None, gt=0)  # per symbol, the automation's shares
     maxPositionPercent: Decimal | None = Field(default=None, gt=0, le=100)  # of the automation's equity
@@ -279,10 +418,24 @@ class OrderGuards(BaseModel):
     maxDataAgeMinutes: int = Field(default=30, ge=1)
 
 
+# Any automation action; the "type" field picks the model. Used by: AutomationIn.actions, runner.run_automation.
 Action = Annotated[Union[NotifyAction, PlaceOrderAction, LaterAction], Field(discriminator="type")]
 
 
 class AutomationIn(BaseModel):
+    """An automation as clients send it (create, update, preview).
+
+    Attributes:
+        name: 1-100 characters.
+        description: free text.
+        portfolioId: required when an action places orders.
+        orderGuards: OrderGuards; defaults applied when an action places orders.
+        runTargets: at least one RunTarget (union).
+        schedules: at least one Schedule.
+        actions: at least one Action, run in order.
+
+    Used by: routes (create, update, preview), runner (via the stored definition).
+    """
     name: str = Field(min_length=1, max_length=100)
     description: str = ""
     portfolioId: str | None = None  # required for automations that place orders
@@ -293,6 +446,7 @@ class AutomationIn(BaseModel):
 
     @model_validator(mode="after")
     def check_trading(self):
+        """Order-placing automations need a portfolio, can't use RUN_ALL, and get default guards."""
         if any(a.type == "PLACE_ORDER" for a in self.actions):
             if not self.portfolioId:
                 raise ValueError("automations that place orders need a portfolioId")
@@ -304,10 +458,16 @@ class AutomationIn(BaseModel):
 
 
 class BudgetChangeIn(BaseModel):
+    """Body of budget allocate/withdraw: amount (> 0, cents) and an optional note for the ledger.
+    Used by: routes.allocate, routes.withdraw.
+    """
     amount: Decimal = Field(gt=0, decimal_places=2)
     note: str | None = None
 
 
 class SwitchIn(BaseModel):
+    """Body of PUT /v1/automations/switch: turn scheduled runs on/off, with an optional reason.
+    Used by: routes.set_switch.
+    """
     automationsEnabled: bool
     reason: str | None = None

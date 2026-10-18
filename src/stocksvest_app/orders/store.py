@@ -86,6 +86,13 @@ CREATE TABLE IF NOT EXISTS external_fills (
 
 
 def order_json(r: sqlite3.Row) -> dict:
+    """An orders row in API form (numbers as floats, plus slippage = average fill - estimated price).
+
+    Args:
+        r: the row.
+
+    Used by: get_order, list_orders.
+    """
     est, avg = r["estimated_price"], r["average_fill_price"]
     return {
         "id": r["id"], "portfolioId": r["portfolio_id"], "brokerAccountId": r["broker_account_id"],
@@ -103,17 +110,45 @@ def order_json(r: sqlite3.Row) -> dict:
 
 
 def get_order(conn, order_id: str) -> dict | None:
+    """One order, or None.
+
+    Args:
+        conn: app DB connection.
+        order_id: the order's id.
+
+    Used by: orders.routes, orders.service.
+    """
     r = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
     return order_json(r) if r else None
 
 
 def get_order_row(conn, **where) -> sqlite3.Row | None:
+    """The raw orders row matching one column, or None.
+
+    Args:
+        conn: app DB connection.
+        where: exactly one column=value, e.g. id=..., client_order_id=... or broker_order_id=....
+
+    Used by: orders.service.
+    """
     (col, val), = where.items()
     return conn.execute(f"SELECT * FROM orders WHERE {col} = ?", (val,)).fetchone()
 
 
 def list_orders(conn, portfolio_id: str | None = None, automation_id: str | None = None, status: str | None = None,
                 open_only: bool = False, limit: int = 200) -> list[dict]:
+    """Orders, newest first.
+
+    Args:
+        conn: app DB connection.
+        portfolio_id: only this portfolio's.
+        automation_id: only this automation's.
+        status: only this status.
+        open_only: only PENDING, SUBMITTED or PARTIALLY_FILLED.
+        limit: how many.
+
+    Used by: orders.service.sync_account, automations.runner.Trading.context, portfolios.routes.
+    """
     where, args = [], []
     for col, val in (("portfolio_id", portfolio_id), ("automation_id", automation_id), ("status", status)):
         if val:
@@ -127,6 +162,17 @@ def list_orders(conn, portfolio_id: str | None = None, automation_id: str | None
 
 
 def insert_order(conn, **f) -> str:
+    """Store a new PENDING order (inside the caller's transaction).
+
+    Args:
+        conn: app DB connection.
+        f: portfolio_id, broker_account_id, symbol, client_order_id, side, type, time_in_force, quantity; optional automation_id, run_id, limit_price, stop_price, trail_percent, extended_hours, estimated_price, reserved.
+
+    Returns:
+        The new order id.
+
+    Used by: orders.service.place_order.
+    """
     oid, ts = new_id("ord"), now_iso()
     conn.execute(
         "INSERT INTO orders(id, portfolio_id, broker_account_id, symbol, automation_id, automation_run_id, "
@@ -142,10 +188,24 @@ def insert_order(conn, **f) -> str:
 
 
 def _s(v) -> str | None:
+    """A value as text for storage, or None.
+
+    Args:
+        v: the value.
+    """
     return str(v) if v is not None else None
 
 
 def update_order(conn, order_id: str, **fields) -> None:
+    """Change some fields of an order (inside the caller's transaction); updated_at is set.
+
+    Args:
+        conn: app DB connection.
+        order_id: the order's id.
+        fields: any of broker_order_id, status, raw_status, reject_reason, filled_quantity, average_fill_price, submitted_at, filled_at, cancelled_at, reserved.
+
+    Used by: orders.service.
+    """
     cols = {"broker_order_id": "broker_order_id", "status": "status", "raw_status": "raw_broker_status",
             "reject_reason": "reject_reason", "filled_quantity": "filled_quantity",
             "average_fill_price": "average_fill_price", "submitted_at": "submitted_at", "filled_at": "filled_at",
@@ -158,12 +218,29 @@ def update_order(conn, order_id: str, **fields) -> None:
 
 
 def fill_exists(conn, broker_fill_id: str) -> bool:
+    """Whether a broker fill was already imported (as an app or external fill).
+
+    Args:
+        conn: app DB connection.
+        broker_fill_id: the broker's fill id.
+
+    Used by: orders.service.sync_account.
+    """
     return (conn.execute("SELECT 1 FROM fills WHERE broker_fill_id = ?", (broker_fill_id,)).fetchone() is not None
             or conn.execute("SELECT 1 FROM external_fills WHERE broker_fill_id = ?", (broker_fill_id,)).fetchone()
             is not None)
 
 
 def insert_external_fill(conn, account_id: str, f) -> None:
+    """Record a fill of an order placed outside the app.
+
+    Args:
+        conn: app DB connection.
+        account_id: the broker account's id.
+        f: the BrokerFill.
+
+    Used by: orders.service.sync_account.
+    """
     conn.execute(
         "INSERT INTO external_fills(broker_fill_id, broker_account_id, symbol, side, quantity, price, executed_at, "
         "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -172,6 +249,19 @@ def insert_external_fill(conn, account_id: str, f) -> None:
 
 
 def insert_fill(conn, order_id: str | None, portfolio_id: str, f) -> str:
+    """Record a fill of an app order.
+
+    Args:
+        conn: app DB connection.
+        order_id: the app order's id.
+        portfolio_id: its portfolio.
+        f: the BrokerFill.
+
+    Returns:
+        The new fill id.
+
+    Used by: orders.service.apply_fill.
+    """
     fid = new_id("fill")
     conn.execute(
         "INSERT INTO fills(id, order_id, portfolio_id, broker_fill_id, symbol, side, quantity, price, fee, executed_at, "
@@ -183,6 +273,14 @@ def insert_fill(conn, order_id: str | None, portfolio_id: str, f) -> str:
 
 
 def last_fill_time(conn, account_id: str) -> str | None:
+    """Time of the newest imported fill of a broker account (app or external), or None.
+
+    Args:
+        conn: app DB connection.
+        account_id: the broker account's id.
+
+    Used by: orders.service.sync_account (fills are fetched from a day before).
+    """
     r = conn.execute(
         "SELECT MAX(t) AS t FROM (SELECT MAX(f.executed_at) AS t FROM fills f JOIN portfolios p ON p.id = f.portfolio_id "
         "WHERE p.broker_account_id = ? UNION ALL SELECT MAX(executed_at) FROM external_fills WHERE broker_account_id = ?)",
@@ -191,6 +289,16 @@ def last_fill_time(conn, account_id: str) -> str | None:
 
 
 def list_fills(conn, portfolio_id: str, order_id: str | None = None, limit: int = 200) -> list[dict]:
+    """A portfolio's fills, newest first.
+
+    Args:
+        conn: app DB connection.
+        portfolio_id: the portfolio's id.
+        order_id: only this order's.
+        limit: how many.
+
+    Used by: orders.routes.get_order, portfolios.routes.fills.
+    """
     sql, args = "SELECT * FROM fills WHERE portfolio_id = ?", [portfolio_id]
     if order_id:
         sql += " AND order_id = ?"
@@ -203,6 +311,23 @@ def list_fills(conn, portfolio_id: str, order_id: str | None = None, limit: int 
 
 def add_sync(conn, account_id: str, orders_updated: int, fills_imported: int, mismatches: list[dict],
              error: str | None, external_fills: int = 0, unassigned: dict | None = None) -> dict:
+    """Store the result of a broker sync.
+
+    Args:
+        conn: app DB connection.
+        account_id: the broker account's id.
+        orders_updated: orders whose state changed.
+        fills_imported: app fills imported.
+        mismatches: where the app and the broker disagree.
+        error: failure message, if it failed.
+        external_fills: fills of orders placed outside the app.
+        unassigned: cash and shares in no portfolio.
+
+    Returns:
+        The stored record (last_sync).
+
+    Used by: orders.service.sync_account, run_account_sync.
+    """
     with conn:
         conn.execute(
             "INSERT INTO broker_syncs(id, broker_account_id, ran_at, orders_updated, fills_imported, external_fills, "
@@ -214,6 +339,14 @@ def add_sync(conn, account_id: str, orders_updated: int, fills_imported: int, mi
 
 
 def last_sync(conn, account_id: str) -> dict | None:
+    """The newest sync record of a broker account, or None.
+
+    Args:
+        conn: app DB connection.
+        account_id: the broker account's id.
+
+    Used by: orders.service.sync_account, brokers.routes.overview, portfolios.routes.summary.
+    """
     r = conn.execute("SELECT * FROM broker_syncs WHERE broker_account_id = ? ORDER BY ran_at DESC, rowid DESC LIMIT 1",
                      (account_id,)).fetchone()
     if not r:

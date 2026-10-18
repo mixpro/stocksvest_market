@@ -24,21 +24,52 @@ _schedule = TypeAdapter(Schedule)
 
 
 class SchedulePreviewIn(BaseModel):
+    """Body of POST /v1/automations/schedule-preview.
+
+    Attributes:
+        schedules: one or more schedules being edited (ids optional).
+
+    Used by: router.schedule_preview.
+    """
     schedules: list[Schedule] = Field(min_length=1)
 
 
 def router(ctx: AppContext) -> APIRouter:
+    """The /v1/automations and /v1/notifications routes.
+
+    Args:
+        ctx: app context (DB, market helpers, scheduler, broker factory, key check).
+
+    Used by: api.create_app.
+    """
     r = APIRouter(dependencies=[Depends(ctx.require_key)])
     Conn = Annotated[sqlite3.Connection, Depends(ctx.conn)]
 
     def load(conn, automation_id: str) -> dict:
+        """A stored automation, or 404.
+
+        Args:
+            conn: app DB connection.
+            automation_id: the automation's id.
+        """
         a = store.get_automation(conn, automation_id)
         if not a:
             raise HTTPException(404, f"automation '{automation_id}' not found")
         return a
 
     def prepare(conn, body: AutomationIn) -> dict:
-        """Check references and give every schedule a stable id."""
+        """Check references and give every schedule a stable id.
+
+        Args:
+            conn: app DB connection.
+            body: the automation being saved.
+
+        Returns:
+            The automation as a JSON-ready dict.
+
+        Raises:
+            HTTPException: 422 when the portfolio, a filter or a group doesn't exist.
+        """
         if body.portfolioId and not portfolios_store.get_portfolio(conn, body.portfolioId):
             raise HTTPException(422, f"portfolio '{body.portfolioId}' does not exist")
         for t in body.runTargets:
@@ -54,6 +85,21 @@ def router(ctx: AppContext) -> APIRouter:
         return data
 
     def upcoming(conn, automation_id: str, schedules: list[dict], created: datetime, count: int) -> list[dict]:
+        """Next fire times of each schedule.
+
+        Args:
+            conn: app DB connection.
+            automation_id: the automation's id ("" for drafts: nothing fired yet).
+            schedules: schedule dicts.
+            created: when the automation was created (schedules count from here).
+            count: how many times per schedule.
+
+        Returns:
+            [{"scheduleId", "type", "next": [ISO times]}].
+
+        Raises:
+            HTTPException: 502 (or the market's 4xx) when the trading calendar is unavailable.
+        """
         now = datetime.now(timezone.utc)
         out = []
         try:
@@ -67,7 +113,15 @@ def router(ctx: AppContext) -> APIRouter:
         return out
 
     def with_status(conn, a: dict) -> dict:
-        """Add when it runs next and how the last run went, so clients can show both at a glance."""
+        """Add when it runs next and how the last run went, so clients can show both at a glance.
+
+        Args:
+            conn: app DB connection.
+            a: the automation dict.
+
+        Returns:
+            The automation plus nextRunAt (null when paused or nothing is coming) and lastRun.
+        """
         next_at = None
         if a["status"] == "ACTIVE":
             created = datetime.fromisoformat(a["createdAt"])
@@ -96,7 +150,11 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.get("/v1/automations/switch", tags=["automations"])
     def get_switch(conn: Conn):
-        """The global on/off switch for scheduled runs, plus scheduler health."""
+        """The global on/off switch for scheduled runs, plus scheduler health.
+        \f
+        Args:
+            conn: app DB connection (injected).
+        """
         sched = ctx.scheduler
         return {
             **store.get_switch(conn),
@@ -109,21 +167,37 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.put("/v1/automations/switch", tags=["automations"])
     def set_switch(body: SwitchIn, conn: Conn):
-        """Turn all scheduled runs off (they are recorded as SKIPPED / SWITCH_OFF) or back on."""
+        """Turn all scheduled runs off (they are recorded as SKIPPED / SWITCH_OFF) or back on.
+        \f
+        Args:
+            body: automationsEnabled and an optional reason.
+            conn: app DB connection (injected).
+        """
         return store.set_switch(conn, body.automationsEnabled, body.reason)
 
     # ---------------------------------------------------------------- previews without saving
 
     @r.post("/v1/automations/preview", tags=["automations"])
     def preview_unsaved(body: AutomationIn, conn: Conn):
-        """Run an unsaved automation: filters run and actions are shown, nothing is stored or sent."""
+        """Run an unsaved automation: filters run and actions are shown, nothing is stored or sent.
+        \f
+        Args:
+            body: the automation to try.
+            conn: app DB connection (injected).
+        """
         data = prepare(conn, body)
         draft = {"id": "preview", "status": "ACTIVE", "configVersion": 0, **data}
         return run_automation(ctx, conn, draft, "MANUAL", preview=True)
 
     @r.post("/v1/automations/schedule-preview", tags=["automations"])
     def schedule_preview(body: SchedulePreviewIn, conn: Conn, count: Annotated[int, Query(ge=1, le=50)] = 5):
-        """Next fire times for schedules being edited."""
+        """Next fire times for schedules being edited.
+        \f
+        Args:
+            body: the schedules.
+            conn: app DB connection (injected).
+            count: fire times per schedule, 1-50 (query).
+        """
         schedules = [dict(s.model_dump(mode="json"), id=s.id or f"draft{i}") for i, s in enumerate(body.schedules)]
         return {"schedules": upcoming(conn, "", schedules, datetime.now(timezone.utc), count)}
 
@@ -131,22 +205,44 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.get("/v1/automations", tags=["automations"])
     def list_automations(conn: Conn, status: str | None = None):
+        """Every automation, each with nextRunAt and lastRun.
+        \f
+        Args:
+            conn: app DB connection (injected).
+            status: only ACTIVE or PAUSED ones (query, optional).
+        """
         return {"automations": [with_status(conn, a) for a in store.list_automations(conn, status)]}
 
     @r.post("/v1/automations", tags=["automations"], status_code=201)
     def create_automation(body: AutomationIn, conn: Conn):
-        """New automations start ACTIVE; their schedules start counting from now."""
+        """New automations start ACTIVE; their schedules start counting from now.
+        \f
+        Args:
+            body: the automation.
+            conn: app DB connection (injected).
+        """
         return store.create_automation(conn, prepare(conn, body))
 
     @r.get("/v1/automations/{automation_id}", tags=["automations"])
     def get_automation(automation_id: str, conn: Conn):
-        """Includes nextRunAt (null when paused or nothing is coming) and lastRun."""
+        """Includes nextRunAt (null when paused or nothing is coming) and lastRun.
+        \f
+        Args:
+            automation_id: the automation's id (path).
+            conn: app DB connection (injected).
+        """
         return with_status(conn, load(conn, automation_id))
 
     @r.put("/v1/automations/{automation_id}", tags=["automations"])
     def update_automation(automation_id: str, body: AutomationIn, conn: Conn):
         """Replace the definition. configVersion goes up and schedules restart from now. Moving it to another
-        portfolio is refused while its budget, shares or open orders are in the current one."""
+        portfolio is refused while its budget, shares or open orders are in the current one.
+        \f
+        Args:
+            automation_id: the automation's id (path).
+            body: the new definition.
+            conn: app DB connection (injected).
+        """
         current = load(conn, automation_id)
         pool = budget.get_pool(conn, automation_id)
         if pool and body.portfolioId != pool["portfolioId"]:
@@ -163,7 +259,13 @@ def router(ctx: AppContext) -> APIRouter:
     def delete_automation(automation_id: str, conn: Conn,
                           return_budget: Annotated[bool, Query(alias="returnBudget")] = False):
         """Deletes the automation; its run history and budget ledger stay. Refused while it holds shares or has
-        open orders. Budget cash must go back to the portfolio first: withdraw it, or pass returnBudget=true."""
+        open orders. Budget cash must go back to the portfolio first: withdraw it, or pass returnBudget=true.
+        \f
+        Args:
+            automation_id: the automation's id (path).
+            conn: app DB connection (injected).
+            return_budget: return the budget's cash to the portfolio (query returnBudget).
+        """
         load(conn, automation_id)
         reasons = budget.holdings_blocking_removal(conn, automation_id)
         if reasons:
@@ -179,28 +281,55 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.post("/v1/automations/{automation_id}/pause", tags=["automations"])
     def pause(automation_id: str, conn: Conn):
+        """Stop scheduled runs until resumed (manual runs still work).
+        \f
+        Args:
+            automation_id: the automation's id (path).
+            conn: app DB connection (injected).
+        """
         load(conn, automation_id)
         return store.set_status(conn, automation_id, "PAUSED")
 
     @r.post("/v1/automations/{automation_id}/resume", tags=["automations"])
     def resume(automation_id: str, conn: Conn):
-        """Resume from now: times missed while paused are not run."""
+        """Resume from now: times missed while paused are not run.
+        \f
+        Args:
+            automation_id: the automation's id (path).
+            conn: app DB connection (injected).
+        """
         load(conn, automation_id)
         return store.set_status(conn, automation_id, "ACTIVE")
 
     @r.post("/v1/automations/{automation_id}/preview", tags=["automations"])
     def preview(automation_id: str, conn: Conn):
-        """What a run would do now. Nothing is stored or sent."""
+        """What a run would do now. Nothing is stored or sent.
+        \f
+        Args:
+            automation_id: the automation's id (path).
+            conn: app DB connection (injected).
+        """
         return run_automation(ctx, conn, load(conn, automation_id), "MANUAL", preview=True)
 
     @r.post("/v1/automations/{automation_id}/run", tags=["automations"])
     def run_now(automation_id: str, conn: Conn):
-        """Run now (also when paused or switched off) and store the run."""
+        """Run now (also when paused or switched off) and store the run.
+        \f
+        Args:
+            automation_id: the automation's id (path).
+            conn: app DB connection (injected).
+        """
         return run_automation(ctx, conn, load(conn, automation_id), "MANUAL")
 
     @r.get("/v1/automations/{automation_id}/runs", tags=["automations"])
     def runs(automation_id: str, conn: Conn, limit: Annotated[int, Query(ge=1, le=500)] = 20):
-        """Also works for deleted automations: their run history is kept."""
+        """Also works for deleted automations: their run history is kept.
+        \f
+        Args:
+            automation_id: the automation's id (path).
+            conn: app DB connection (injected).
+            limit: how many to return, newest first (query).
+        """
         runs = runs_store.list_runs(conn, "AUTOMATION", automation_id, limit=limit)
         if not runs and not store.get_automation(conn, automation_id):
             raise HTTPException(404, f"automation '{automation_id}' not found")
@@ -208,7 +337,13 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.get("/v1/automations/{automation_id}/next-runs", tags=["automations"])
     def next_runs(automation_id: str, conn: Conn, count: Annotated[int, Query(ge=1, le=50)] = 5):
-        """Upcoming fire times per schedule (empty while paused)."""
+        """Upcoming fire times per schedule (empty while paused).
+        \f
+        Args:
+            automation_id: the automation's id (path).
+            conn: app DB connection (injected).
+            count: fire times per schedule, 1-50 (query).
+        """
         a = load(conn, automation_id)
         if a["status"] != "ACTIVE":
             return {"status": a["status"], "schedules": []}
@@ -217,7 +352,13 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.get("/v1/automations/{automation_id}/events", tags=["automations"])
     def events(automation_id: str, conn: Conn, limit: Annotated[int, Query(ge=1, le=500)] = 100):
-        """Change log: created, updated (with what changed), paused, resumed. Kept after deletion."""
+        """Change log: created, updated (with what changed), paused, resumed. Kept after deletion.
+        \f
+        Args:
+            automation_id: the automation's id (path).
+            conn: app DB connection (injected).
+            limit: how many to return, newest first (query).
+        """
         events = store.list_events(conn, automation_id, limit)
         if not events and not store.get_automation(conn, automation_id):
             raise HTTPException(404, f"automation '{automation_id}' not found")
@@ -226,17 +367,34 @@ def router(ctx: AppContext) -> APIRouter:
     # ---------------------------------------------------------------- budget pool
 
     def budget_view(conn, automation_id: str) -> dict:
+        """The automation's pool and ledger (the answer of the budget routes).
+
+        Args:
+            conn: app DB connection.
+            automation_id: the automation's id.
+        """
         return {"pool": budget.get_pool(conn, automation_id), "entries": budget.entries(conn, automation_id)}
 
     @r.get("/v1/automations/{automation_id}/budget", tags=["automations"])
     def get_budget(automation_id: str, conn: Conn):
-        """The automation's money (cash, reserved, available, invested, P&L) and its ledger, newest first."""
+        """The automation's money (cash, reserved, available, invested, P&L) and its ledger, newest first.
+        \f
+        Args:
+            automation_id: the automation's id (path).
+            conn: app DB connection (injected).
+        """
         load(conn, automation_id)
         return budget_view(conn, automation_id)
 
     @r.post("/v1/automations/{automation_id}/budget/allocate", tags=["automations"])
     def allocate(automation_id: str, body: BudgetChangeIn, conn: Conn):
-        """Move money from the portfolio's unallocated cash into this automation's budget."""
+        """Move money from the portfolio's unallocated cash into this automation's budget.
+        \f
+        Args:
+            automation_id: the automation's id (path).
+            body: amount and an optional note.
+            conn: app DB connection (injected).
+        """
         a = load(conn, automation_id)
         if not a.get("portfolioId"):
             raise HTTPException(422, "set the automation's portfolioId first")
@@ -251,7 +409,13 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.post("/v1/automations/{automation_id}/budget/withdraw", tags=["automations"])
     def withdraw(automation_id: str, body: BudgetChangeIn, conn: Conn):
-        """Give available (not reserved, not invested) budget back to the portfolio."""
+        """Give available (not reserved, not invested) budget back to the portfolio.
+        \f
+        Args:
+            automation_id: the automation's id (path).
+            body: amount and an optional note.
+            conn: app DB connection (injected).
+        """
         a = load(conn, automation_id)
         try:
             budget.withdraw(conn, automation_id, body.amount, body.note)
@@ -266,14 +430,32 @@ def router(ctx: AppContext) -> APIRouter:
     @r.get("/v1/notifications", tags=["notifications"])
     def notifications(conn: Conn, unread_only: Annotated[bool, Query(alias="unreadOnly")] = False,
                       limit: Annotated[int, Query(ge=1, le=500)] = 50):
+        """Notifications from NOTIFY actions, newest first, with the unread count.
+        \f
+        Args:
+            conn: app DB connection (injected).
+            unread_only: only unread ones (query unreadOnly).
+            limit: how many to return, newest first (query).
+        """
         return {"unread": store.unread_count(conn), "notifications": store.list_notifications(conn, unread_only, limit)}
 
     @r.post("/v1/notifications/read-all", tags=["notifications"])
     def read_all(conn: Conn):
+        """Mark every notification read.
+        \f
+        Args:
+            conn: app DB connection (injected).
+        """
         return {"marked": store.mark_read(conn)}
 
     @r.post("/v1/notifications/{notification_id}/read", tags=["notifications"])
     def read_one(notification_id: str, conn: Conn):
+        """Mark one notification read.
+        \f
+        Args:
+            notification_id: the notification's id (path).
+            conn: app DB connection (injected).
+        """
         if not store.mark_read(conn, notification_id) and not conn.execute(
                 "SELECT 1 FROM notifications WHERE id = ?", (notification_id,)).fetchone():
             raise HTTPException(404, f"notification '{notification_id}' not found")

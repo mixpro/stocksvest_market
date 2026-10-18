@@ -10,6 +10,13 @@ from . import store
 
 
 def router(ctx: AppContext) -> APIRouter:
+    """The /v1/activity routes.
+
+    Args:
+        ctx: app context (DB, key check).
+
+    Used by: api.create_app.
+    """
     r = APIRouter(prefix="/v1/activity", tags=["activity"], dependencies=[Depends(ctx.require_key)])
     Conn = Annotated[sqlite3.Connection, Depends(ctx.conn)]
 
@@ -28,7 +35,22 @@ def router(ctx: AppContext) -> APIRouter:
         before_id: Annotated[int | None, Query(alias="beforeId", description="Paging: entries older than this id")] = None,
         limit: Annotated[int, Query(ge=1, le=1000)] = 100,
     ):
-        """Newest first. Page back with beforeId = the last id you received."""
+        """Newest first. Page back with beforeId = the last id you received.
+        \f
+        Args:
+            conn: app DB connection (injected).
+            entity_type: only this entity type, e.g. AUTOMATION (query entityType).
+            entity_id: entries about this id or mentioning it (query entityId).
+            related_id: entries mentioning this id (query relatedId).
+            action: only this action (query).
+            source: API, SCHEDULER, SYNC or SYSTEM (query).
+            outcome: OK or FAILED (query).
+            correlation_id: everything one request or run caused (query correlationId).
+            since: from this time, ISO (query).
+            until: up to this time, ISO (query).
+            before_id: paging: entries older than this id (query beforeId).
+            limit: how many, 1-1000 (query).
+        """
         entries = store.query(conn, entity_type=entity_type, entity_id=entity_id, related_id=related_id, action=action,
                               source=source, outcome=outcome, correlation=correlation_id, since=since, until=until,
                               before_id=before_id, limit=limit)
@@ -36,12 +58,22 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.get("/actions")
     def actions(conn: Conn):
-        """Every action name recorded so far, with counts."""
+        """Every action name recorded so far, with counts.
+        \f
+        Args:
+            conn: app DB connection (injected).
+        """
         rows = conn.execute("SELECT action, COUNT(*) AS n FROM audit_log GROUP BY action ORDER BY action")
         return {"actions": [{"action": a["action"], "count": a["n"]} for a in rows]}
 
     @r.get("/{entry_id}")
     def entry(entry_id: int, conn: Conn):
+        """One activity entry.
+        \f
+        Args:
+            entry_id: the entry's id (path).
+            conn: app DB connection (injected).
+        """
         row = conn.execute("SELECT * FROM audit_log WHERE id = ?", (entry_id,)).fetchone()
         if not row:
             raise HTTPException(404, f"activity entry {entry_id} not found")

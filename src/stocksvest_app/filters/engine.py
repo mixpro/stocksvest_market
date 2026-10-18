@@ -19,20 +19,37 @@ from .models import (
     ValueType,
 )
 
-ET = ZoneInfo("America/New_York")
+ET = ZoneInfo("America/New_York")  # Used by: Evaluator._last_close (today's date in New York)
 
 
 class EngineError(ValueError):
-    """A filter that cannot run as defined (missing reference, cycle, unsupported input)."""
+    """A filter that cannot run as defined (missing reference, cycle, unsupported input).
+
+    Used by: check_filter_refs / check_group_refs / Evaluator (raised); filters.routes (-> 422),
+    automations.runner (-> FAILED run).
+    """
 
 
 # ------------------------------------------------------------------ reference checks
 
 
 def find_cycle(conn: sqlite3.Connection, start: tuple[str, str], start_deps: list[tuple[str, str]]) -> bool:
-    """True if `start` (("F", id) or ("G", id)) can reach itself through `start_deps` and stored references."""
+    """True if `start` (("F", id) or ("G", id)) can reach itself through `start_deps` and stored references.
+
+    Args:
+        conn: app DB connection (stored filters and groups).
+        start: the node being saved: ("F", filter id) or ("G", group id).
+        start_deps: what it would reference after the save (instead of what is stored).
+
+    Used by: check_filter_refs, check_group_refs.
+    """
 
     def deps(node):
+        """What a node references: a filter's FILTER/FILTER_GROUP inputs, or a group's members.
+
+        Args:
+            node: ("F", id) or ("G", id).
+        """
         kind, nid = node
         if node == start:
             return start_deps
@@ -55,6 +72,18 @@ def find_cycle(conn: sqlite3.Connection, start: tuple[str, str], start_deps: lis
 
 
 def check_filter_refs(conn, f: FilterIn, filter_id: str | None) -> None:
+    """Refuse a filter whose inputs reference missing filters/groups or would create a cycle.
+
+    Args:
+        conn: app DB connection.
+        f: the filter being saved or previewed.
+        filter_id: its id when updating (cycles are only possible for existing filters); None for new/preview.
+
+    Raises:
+        EngineError: with a readable reason.
+
+    Used by: routes (create, update, preview).
+    """
     deps = []
     for inp in f.inputs:
         if inp.type == InputType.FILTER:
@@ -70,6 +99,18 @@ def check_filter_refs(conn, f: FilterIn, filter_id: str | None) -> None:
 
 
 def check_group_refs(conn, filter_ids: list[str], group_id: str | None) -> None:
+    """Refuse group members that don't exist, repeat, or would create a cycle.
+
+    Args:
+        conn: app DB connection.
+        filter_ids: the members being saved.
+        group_id: the group's id when updating; None for a new group.
+
+    Raises:
+        EngineError: with a readable reason.
+
+    Used by: routes (create, update group).
+    """
     for fid in filter_ids:
         if not store.get_filter(conn, fid):
             raise EngineError(f"filter '{fid}' does not exist")
@@ -83,9 +124,18 @@ def check_group_refs(conn, filter_ids: list[str], group_id: str | None) -> None:
 
 
 class Evaluator:
-    """One evaluation. Referenced filters are re-run live, but each at most once per evaluation."""
+    """One evaluation. Referenced filters are re-run live, but each at most once per evaluation.
+    Market snapshots are fetched once and reused by every action and the result rows.
+
+    Used by: filters.routes (preview, run, group run), automations.runner (run targets and planner prices).
+    """
 
     def __init__(self, conn: sqlite3.Connection, market: MarketData, now: datetime | None = None):
+        """Args:
+            conn: app DB connection (stored filters and groups).
+            market: market helpers.
+            now: evaluation time (tests pin it); default now.
+        """
         self.conn = conn
         self.market = market
         self.now = now or datetime.now(timezone.utc)
@@ -96,6 +146,15 @@ class Evaluator:
     # -- inputs
 
     def _input_symbols(self, inputs, path: tuple[str, ...]) -> set[str]:
+        """The union of a filter's inputs.
+
+        Args:
+            inputs: FilterInput list.
+            path: filter ids being evaluated above this one (cycle guard).
+
+        Raises:
+            EngineError: unavailable input type, missing reference or cycle.
+        """
         out: set[str] = set()
         for inp in inputs:
             if inp.type not in AVAILABLE_INPUTS:
@@ -109,6 +168,15 @@ class Evaluator:
         return out
 
     def filter_symbols(self, filter_id: str, path: tuple[str, ...] = ()) -> set[str]:
+        """A stored filter's result, evaluated live once per evaluation.
+
+        Args:
+            filter_id: the filter's id.
+            path: filter ids being evaluated above this one.
+
+        Raises:
+            EngineError: missing filter or cycle.
+        """
         if filter_id in path:
             raise EngineError("cycle between filters")
         if filter_id not in self._filter_results:
@@ -120,6 +188,15 @@ class Evaluator:
         return self._filter_results[filter_id]
 
     def group_symbols(self, group_id: str, path: tuple[str, ...] = ()) -> set[str]:
+        """A group's result: the union of its member filters.
+
+        Args:
+            group_id: the group's id.
+            path: filter ids being evaluated above this one.
+
+        Raises:
+            EngineError: missing group.
+        """
         group = store.get_group(self.conn, group_id)
         if not group:
             raise EngineError(f"filter group '{group_id}' does not exist")
@@ -131,13 +208,22 @@ class Evaluator:
     # -- actions
 
     def _snaps(self, tickers: set[str]) -> dict[str, dict]:
+        """Market snapshots for these tickers, fetching only those not seen yet in this evaluation.
+
+        Args:
+            tickers: tickers needed.
+        """
         missing = tickers - set(self._snapshots)
         if missing:
             self._snapshots.update(self.market.snapshots(missing))
         return {t: self._snapshots[t] for t in tickers if t in self._snapshots}
 
     def _last_close(self, snap: dict) -> float | None:
-        """Close of the last completed trading day: during a trading day the latest daily bar is still forming."""
+        """Close of the last completed trading day: during a trading day the latest daily bar is still forming.
+
+        Args:
+            snap: a market snapshot (dailyClose, dailyDate, previousClose).
+        """
         today = self.now.astimezone(ET).date().isoformat()
         if self._session_open is None:
             day = self.market.trading_day(today)
@@ -147,6 +233,15 @@ class Evaluator:
         return snap.get("dailyClose")
 
     def apply(self, action: FilterAction, symbols: set[str]) -> set[str]:
+        """Keep the symbols that pass one action.
+
+        Args:
+            action: SymbolTypeAction, SectorAction, SymbolPriceAction or PriceChangeAction.
+            symbols: the symbols still in the running.
+
+        Returns:
+            The subset that passes; symbols without the needed data are dropped.
+        """
         if not symbols:
             return symbols
         if isinstance(action, SymbolTypeAction):
@@ -171,6 +266,15 @@ class Evaluator:
     # -- entry points
 
     def evaluate(self, f: FilterIn, path: tuple[str, ...] = ()) -> dict:
+        """Run a filter: inputs (union), then each action in order.
+
+        Args:
+            f: the filter.
+            path: filter ids being evaluated above this one (callers pass (own id,) for stored filters).
+
+        Returns:
+            {"symbols": set of tickers, "steps": [{"step": "INPUTS" | action type, "count": n}, ...]}.
+        """
         symbols = self._input_symbols(f.inputs, path)
         steps = [{"step": "INPUTS", "count": len(symbols)}]
         for action in f.actions:
@@ -179,7 +283,14 @@ class Evaluator:
         return {"symbols": symbols, "steps": steps}
 
     def describe(self, symbols: set[str]) -> list[dict]:
-        """Result rows with the prices at run time (kept in the run history for later analysis)."""
+        """Result rows with the prices at run time (kept in the run history for later analysis).
+
+        Args:
+            symbols: the matched tickers.
+
+        Returns:
+            Sorted [{ticker, id, name, sector, price, priceTime, dailyChangePercent}].
+        """
         universe = self.market.universe()
         snaps = self._snaps(symbols)
         rows = []

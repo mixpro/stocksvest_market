@@ -7,7 +7,13 @@ from pathlib import Path
 
 
 def load_dotenv(path: Path = Path(".env")) -> None:
-    """Minimal .env loader; real environment variables win."""
+    """Minimal .env loader; real environment variables win.
+
+    Args:
+        path: the .env file; ignored when missing. Lines are KEY=VALUE; quotes around values are removed.
+
+    Used by: main.
+    """
     if not path.exists():
         return
     for line in path.read_text().splitlines():
@@ -18,6 +24,7 @@ def load_dotenv(path: Path = Path(".env")) -> None:
 
 
 def main() -> None:
+    """Command line entry point: `serve [--host H] [--port P]` runs the API, sample UI and scheduler."""
     load_dotenv()
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
     parser = argparse.ArgumentParser(prog="stocksvest_app")

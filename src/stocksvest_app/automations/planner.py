@@ -15,13 +15,32 @@ D0 = Decimal(0)
 
 @dataclass
 class Holding:
+    """The automation's own shares of one symbol: quantity and what they cost in total.
+
+    Used by: PlanContext.holdings, _rank_value, plan; runner.Trading.context (built).
+    """
     quantity: Decimal
     cost_basis: Decimal
 
 
 @dataclass
 class PlanContext:
-    """Everything the planner needs, gathered by the runner."""
+    """Everything the planner needs, gathered by the runner once per run (shared by all order actions of the run).
+
+    Attributes:
+        snapshots: ticker -> market snapshot (latestPrice, dailyChangePercent, dailyVolume).
+        holdings: ticker -> Holding (only the automation's own shares).
+        open_buys: tickers with an open buy order from this automation (for skipBuyIfHeld).
+        open_sells: ticker -> shares already being sold by this automation.
+        budget_available: budget available when the run starts (base for PERCENT_OF_BUDGET).
+        budget_equity: budget cash + invested (base for maxPositionPercent).
+        session: market session at run time (PRE_MARKET, REGULAR, AFTER_HOURS, CLOSED).
+        data_age_minutes: how old the market data is.
+        orders_planned: PLACE intents so far in this run (for maxOrdersPerRun).
+        budget_left: budget still unspent by planned buys (top rank first).
+
+    Used by: plan; runner.Trading.context (built).
+    """
 
     snapshots: dict[str, dict]  # ticker -> market snapshot (latestPrice, dailyChangePercent, dailyVolume)
     holdings: dict[str, Holding]  # the automation's own shares
@@ -35,18 +54,36 @@ class PlanContext:
     budget_left: Decimal = field(init=False)
 
     def __post_init__(self):
+        """Start the run with the whole available budget unspent."""
         self.budget_left = self.budget_available
 
 
 def _price_tick(price: Decimal) -> Decimal:
+    """Price precision: 0.0001 below $1, else 0.01.
+
+    Args:
+        price: a price.
+    """
     return Decimal("0.0001") if price < 1 else Decimal("0.01")
 
 
 def _round_price(price: Decimal) -> Decimal:
+    """Round a computed limit/stop price to a valid tick.
+
+    Args:
+        price: the raw price.
+    """
     return price.quantize(_price_tick(price))
 
 
 def _rank_value(key: RankingKey, ticker: str, ctx: PlanContext) -> Decimal | None:
+    """The value a symbol is ranked by (None = no data, ranked last).
+
+    Args:
+        key: the RankingKey.
+        ticker: the symbol.
+        ctx: snapshots and holdings.
+    """
     snap = ctx.snapshots.get(ticker, {})
     price = snap.get("latestPrice")
     if key == RankingKey.LAST_PRICE:
@@ -67,6 +104,15 @@ def _rank_value(key: RankingKey, ticker: str, ctx: PlanContext) -> Decimal | Non
 
 
 def _intent(ticker, side, rank, sizing, **kw) -> dict:
+    """A new intent dict (decision PLACE until a guard says otherwise).
+
+    Args:
+        ticker: the symbol.
+        side: BUY or SELL.
+        rank: 1-based rank in the selection.
+        sizing: the OrderSizing used.
+        kw: fields to override.
+    """
     out = {"ticker": ticker, "side": side, "rank": rank, "sizing": sizing.model_dump(mode="json"), "quantity": 0,
            "estimatedPrice": None, "estimatedCost": None, "limitPrice": None, "stopPrice": None,
            "decision": "PLACE", "skipReason": None, "detail": None, "orderId": None}
@@ -75,12 +121,33 @@ def _intent(ticker, side, rank, sizing, **kw) -> dict:
 
 
 def _skip(intent: dict, reason: str, detail: str | None = None) -> dict:
+    """Mark an intent SKIP with a reason.
+
+    Args:
+        intent: the intent.
+        reason: a SkipReason code, e.g. ALREADY_HELD.
+        detail: readable explanation.
+    """
     intent.update(decision="SKIP", skipReason=reason, detail=detail)
     return intent
 
 
 def plan(action: PlaceOrderAction, guards: OrderGuards, matched: list[str], ctx: PlanContext, broker) -> dict:
-    """Returns {"intents": [...], "notHeld": n}. Intents with decision PLACE are ready to submit."""
+    """Turn matched symbols into order intents.
+
+    Args:
+        action: the PLACE_ORDER action.
+        guards: the automation's OrderGuards.
+        matched: matched tickers from the run's filters.
+        ctx: PlanContext (mutated: orders_planned, budget_left).
+        broker: the portfolio's Broker (capability checks only; nothing is sent).
+
+    Returns:
+        {"intents": [{ticker, side, rank, sizing, quantity, estimatedPrice, estimatedCost, limitPrice, stopPrice,
+        decision (PLACE|SKIP), skipReason, detail, orderId}], "notHeld": matches a SELL can't use}.
+
+    Used by: runner._place_orders.
+    """
     # 1. Candidates: sells only from the automation's own shares.
     if action.side == "SELL":
         candidates = [t for t in matched if ctx.holdings.get(t) and ctx.holdings[t].quantity > 0]

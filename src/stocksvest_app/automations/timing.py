@@ -19,12 +19,13 @@ from .models import (
 )
 
 # Look at most this far ahead for the next fire time.
-HORIZON = timedelta(days=400)
-ET = ZoneInfo("America/New_York")
+HORIZON = timedelta(days=400)  # Used by: iter_fires
+ET = ZoneInfo("America/New_York")  # MARKET schedules. Used by: _raw_fires, runner, scheduler tests
 
 # (start, end) -> trading days, each {"date", "preMarketOpen", "regularOpen", "regularClose", "afterHoursClose"}
-CalendarFn = Callable[[date, date], list[dict]]
+CalendarFn = Callable[[date, date], list[dict]]  # usually MarketData.calendar_days. Used by: every function here
 
+# MarketAnchor -> the calendar day field holding that time. Used by: _raw_fires.
 ANCHOR_FIELD = {
     MarketAnchor.PRE_MARKET_OPEN: "preMarketOpen",
     MarketAnchor.REGULAR_OPEN: "regularOpen",
@@ -34,16 +35,37 @@ ANCHOR_FIELD = {
 
 
 def _days_from(d: date) -> Iterator[date]:
+    """Endless sequence of dates from `d` on.
+
+    Args:
+        d: first date.
+    """
     for i in count():
         yield d + timedelta(days=i)
 
 
 def _at(d: date, t, tz: ZoneInfo) -> datetime:
+    """A local date and time as an aware datetime.
+
+    Args:
+        d: the date.
+        t: a time (naive).
+        tz: the schedule's zone.
+    """
     return datetime.combine(d, t, tz)
 
 
 def _raw_fires(s: Schedule, after: datetime, created_at: datetime, calendar: CalendarFn) -> Iterator[datetime]:
-    """Candidate fire times, ascending, ignoring startAt / end / exceptions."""
+    """Candidate fire times, ascending, ignoring startAt / end / exceptions.
+
+    Args:
+        s: the schedule.
+        after: start looking from this time.
+        created_at: the automation's creation time (anchor for INTERVAL and WEEKLY without startAt).
+        calendar: trading days for MARKET schedules.
+
+    Used by: iter_fires.
+    """
     tz = ZoneInfo(s.timezone)
     first_day = after.astimezone(tz).date()
 
@@ -103,6 +125,14 @@ def _raw_fires(s: Schedule, after: datetime, created_at: datetime, calendar: Cal
 
 
 def _allowed(s: Schedule, t: datetime) -> bool:
+    """Whether a candidate passes the schedule's exceptions, and an INTERVAL schedule's days and window.
+
+    Args:
+        s: the schedule.
+        t: candidate time.
+
+    Used by: iter_fires.
+    """
     tz = ZoneInfo(s.timezone)
     local = t.astimezone(tz)
     if local.date() in s.exceptions:
@@ -116,8 +146,17 @@ def _allowed(s: Schedule, t: datetime) -> bool:
 
 
 def iter_fires(s: Schedule, after: datetime, created_at: datetime, calendar: CalendarFn) -> Iterator[datetime]:
-    """Fire times strictly after `after`, ascending. Count limits (end COUNT) are applied by the caller,
-    which knows how many times the schedule already fired."""
+    """Fire times strictly after `after`, ascending, within HORIZON. Count limits (end COUNT) are applied by the
+    caller, which knows how many times the schedule already fired.
+
+    Args:
+        s: the schedule.
+        after: exclusive lower bound.
+        created_at: the automation's creation time.
+        calendar: trading days (MARKET schedules).
+
+    Used by: next_fires, fires_between.
+    """
     horizon = after + HORIZON
     for t in _raw_fires(s, after, created_at, calendar):
         if t > horizon:
@@ -132,6 +171,18 @@ def iter_fires(s: Schedule, after: datetime, created_at: datetime, calendar: Cal
 
 def next_fires(s: Schedule, after: datetime, created_at: datetime, calendar: CalendarFn,
                limit: int = 1, fired_count: int = 0) -> list[datetime]:
+    """The next `limit` fire times after `after`, honouring an end COUNT.
+
+    Args:
+        s: the schedule.
+        after: exclusive lower bound.
+        created_at: the automation's creation time.
+        calendar: trading days.
+        limit: how many.
+        fired_count: how many times it already fired (for end COUNT).
+
+    Used by: scheduler._tick_schedule, routes (next-runs, schedule-preview, nextRunAt).
+    """
     if s.end.type == EndType.COUNT:
         limit = min(limit, max(0, s.end.count - fired_count))
     return list(islice(iter_fires(s, after, created_at, calendar), limit))
@@ -139,7 +190,18 @@ def next_fires(s: Schedule, after: datetime, created_at: datetime, calendar: Cal
 
 def fires_between(s: Schedule, after: datetime, until: datetime, created_at: datetime, calendar: CalendarFn,
                   cap: int = 500) -> list[datetime]:
-    """Fire times in (after, until], at most `cap` of them."""
+    """Fire times in (after, until], at most `cap` of them.
+
+    Args:
+        s: the schedule.
+        after: exclusive lower bound.
+        until: inclusive upper bound.
+        created_at: the automation's creation time.
+        calendar: trading days.
+        cap: maximum number returned.
+
+    Used by: scheduler._tick_schedule (times due since the last pass).
+    """
     out = []
     for t in iter_fires(s, after, created_at, calendar):
         if t > until or len(out) >= cap:
