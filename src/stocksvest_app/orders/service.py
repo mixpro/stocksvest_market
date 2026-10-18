@@ -16,7 +16,7 @@ from ..brokers.base import (
     BrokerOrder,
     BrokerOrderRequest,
 )
-from ..db import iso, new_id, now_iso
+from ..db import immediate, iso, new_id, now_iso
 from ..portfolios import store as pf
 from ..portfolios.store import D, D0
 from . import store
@@ -80,6 +80,29 @@ def open_sell_quantity(conn, portfolio_id: str, symbol: str, automation_id: str 
     return sum((D(r["quantity"]) - D(r["filled_quantity"]) for r in rows), D0)
 
 
+def _check_funds(conn, portfolio: dict, symbol: str, side: str, type: str, quantity: Decimal, limit_price, stop_price,
+                 estimated_price, automation_id: str | None) -> Decimal:
+    """Raise OrderRejected if the shares (sell) or money (buy) aren't there. Returns the money to reserve."""
+    if side == "SELL":
+        free = pf.held(conn, portfolio["id"], symbol, automation_id) - open_sell_quantity(conn, portfolio["id"], symbol,
+                                                                                        automation_id)
+        if quantity > free:
+            raise OrderRejected(f"only {free} {symbol} shares are available to sell"
+                                f"{' for this automation' if automation_id else ''}", "NOT_HELD")
+        return D0
+    price = cost_basis_price(type, limit_price, stop_price, estimated_price)
+    if price is None:
+        raise OrderRejected("no price to estimate the cost of this buy", "NO_PRICE")
+    amount = (quantity * price).quantize(Decimal("0.01"))
+    if automation_id:
+        if amount > budget.available(conn, automation_id):
+            raise OrderRejected(f"needs {amount}, budget has {budget.available(conn, automation_id):.2f}",
+                                "INSUFFICIENT_BUDGET")
+    elif amount > budget.unallocated_cash(conn, portfolio):
+        raise OrderRejected(f"needs {amount}; not enough unallocated cash", "INSUFFICIENT_BUDGET")
+    return amount
+
+
 def place_order(conn: sqlite3.Connection, broker: Broker, portfolio: dict, *, symbol: str, side: str, type: str,
                 quantity: Decimal, time_in_force: str, limit_price=None, stop_price=None, trail_percent=None,
                 extended_hours: bool = False, automation_id: str | None = None, run_id: str | None = None,
@@ -91,27 +114,10 @@ def place_order(conn: sqlite3.Connection, broker: Broker, portfolio: dict, *, sy
     if client_order_id and store.get_order_row(conn, client_order_id=client_order_id):
         return store.get_order(conn, store.get_order_row(conn, client_order_id=client_order_id)["id"])  # idempotent
 
-    reserve_amount = D0
-    if side == "SELL":
-        free = pf.held(conn, portfolio["id"], symbol, automation_id) - open_sell_quantity(conn, portfolio["id"], symbol,
-                                                                                        automation_id)
-        if quantity > free:
-            raise OrderRejected(f"only {free} {symbol} shares are available to sell"
-                                f"{' for this automation' if automation_id else ''}", "NOT_HELD")
-    else:
-        price = cost_basis_price(type, limit_price, stop_price, estimated_price)
-        if price is None:
-            raise OrderRejected("no price to estimate the cost of this buy", "NO_PRICE")
-        reserve_amount = (quantity * price).quantize(Decimal("0.01"))
-        if automation_id:
-            if reserve_amount > budget.available(conn, automation_id):
-                raise OrderRejected(f"needs {reserve_amount}, budget has {budget.available(conn, automation_id):.2f}",
-                                    "INSUFFICIENT_BUDGET")
-        elif reserve_amount > budget.unallocated_cash(conn, portfolio, open_manual_buys(conn, portfolio["id"])):
-            raise OrderRejected(f"needs {reserve_amount}; not enough unallocated cash", "INSUFFICIENT_BUDGET")
-
     client_order_id = client_order_id or new_id("sv")
-    with conn:
+    with immediate(conn):  # check what's available and reserve it under the write lock
+        reserve_amount = _check_funds(conn, portfolio, symbol, side, type, quantity, limit_price, stop_price,
+                                      estimated_price, automation_id)
         order_id = store.insert_order(
             conn, portfolio_id=portfolio["id"], broker_account_id=portfolio["brokerAccountId"], symbol=symbol,
             automation_id=automation_id, run_id=run_id, client_order_id=client_order_id, side=side, type=type,
@@ -257,9 +263,9 @@ def sync_account(conn, broker: Broker, account: dict) -> dict:
     fills_imported = external = 0
     mismatches = []
     for f in broker.list_fills(since):
-        if store.fill_exists(conn, f.broker_fill_id):
-            continue
-        with conn:
+        with immediate(conn):  # two syncs at once can't both apply the same fill
+            if store.fill_exists(conn, f.broker_fill_id):
+                continue
             row = store.get_order_row(conn, broker_order_id=f.broker_order_id)
             if row is None:
                 store.insert_external_fill(conn, account["id"], f)

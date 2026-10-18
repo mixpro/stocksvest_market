@@ -11,6 +11,7 @@ from ..automations import budget
 from ..automations import store as automations_store
 from ..brokers import store as brokers_store
 from ..brokers.base import BrokerError
+from ..db import immediate
 from ..deps import AppContext
 from ..market.client import MarketError
 from ..orders import service, store as orders_store
@@ -120,10 +121,11 @@ def router(ctx: AppContext) -> APIRouter:
             raise HTTPException(422, f"broker account '{body.brokerAccountId}' does not exist")
         run_sync(conn, account)  # fresh balances
         account = brokers_store.get_account(conn, account["id"])
-        free = unassigned_cash(conn, account)
-        if body.capital > free:
-            raise HTTPException(422, f"only {free:.2f} {account['baseCurrency']} of the account is unassigned")
-        p = store.create_portfolio(conn, body.name, body.description, account, body.capital)
+        with immediate(conn):  # check and create under the write lock
+            free = unassigned_cash(conn, account)
+            if body.capital > free:
+                raise HTTPException(422, f"only {free:.2f} {account['baseCurrency']} of the account is unassigned")
+            p = store.create_portfolio(conn, body.name, body.description, account, body.capital)
         return summary(conn, p)
 
     @r.get("/{portfolio_id}")
@@ -153,10 +155,10 @@ def router(ctx: AppContext) -> APIRouter:
         """Move money from the broker account's unassigned cash into the portfolio."""
         p = load(conn, portfolio_id)
         account = account_of(conn, p)
-        free = unassigned_cash(conn, account)
-        if body.amount > free:
-            raise HTTPException(422, f"only {free:.2f} of the account is unassigned")
-        with conn:
+        with immediate(conn):  # check and change under the write lock
+            free = unassigned_cash(conn, account)
+            if body.amount > free:
+                raise HTTPException(422, f"only {free:.2f} of the account is unassigned")
             store.change_cash(conn, portfolio_id, "ALLOCATE", body.amount, allocated=body.amount, note=body.note)
         return summary(conn, store.get_portfolio(conn, portfolio_id))
 
@@ -164,10 +166,10 @@ def router(ctx: AppContext) -> APIRouter:
     def withdraw(portfolio_id: str, body: CapitalChangeIn, conn: Conn):
         """Give unallocated portfolio cash (not in automation budgets, not held by open buys) back to the account."""
         p = load(conn, portfolio_id)
-        free = budget.unallocated_cash(conn, p, service.open_manual_buys(conn, portfolio_id))
-        if body.amount > free:
-            raise HTTPException(422, f"only {free:.2f} is unallocated in this portfolio")
-        with conn:
+        with immediate(conn):  # check and change under the write lock
+            free = budget.unallocated_cash(conn, p)
+            if body.amount > free:
+                raise HTTPException(422, f"only {free:.2f} is unallocated in this portfolio")
             store.change_cash(conn, portfolio_id, "WITHDRAW", -body.amount, allocated=-body.amount, note=body.note)
         return summary(conn, store.get_portfolio(conn, portfolio_id))
 

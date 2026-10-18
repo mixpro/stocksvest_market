@@ -63,6 +63,7 @@ def record(conn: sqlite3.Connection | None, action: str, entity_type: str | None
     try:
         if own:
             conn = connect(db_path)
+        inside = conn.in_transaction  # before our insert, which opens a transaction of its own
         conn.execute(
             "INSERT INTO audit_log(at, source, actor, action, entity_type, entity_id, related, outcome, error, details, "
             "method, path, status, duration_ms, correlation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -70,7 +71,9 @@ def record(conn: sqlite3.Connection | None, action: str, entity_type: str | None
              _dump({k: v for k, v in (related or {}).items() if v}), outcome, error, _dump(details), method, path,
              status, duration_ms, correlation or correlation_id.get()),
         )
-        conn.commit()
+        if not inside:
+            conn.commit()
+        # else: part of the caller's transaction (e.g. a locked money change); committed with it
     except Exception:  # pragma: no cover - logging must never fail the caller
         log.exception("could not write activity log entry %s", action)
     finally:

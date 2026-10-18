@@ -2,6 +2,7 @@
 
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,6 +28,21 @@ def connect(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
+
+
+@contextmanager
+def immediate(conn: sqlite3.Connection):
+    """A write transaction that takes the database's write lock before reading anything. Use it around
+    "check a balance, then change it" so two requests can't both pass the check (they queue instead)."""
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield conn
+    except BaseException:
+        conn.rollback()
+        raise
+    conn.commit()
 
 
 def init(conn: sqlite3.Connection) -> None:

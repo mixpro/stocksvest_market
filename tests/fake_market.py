@@ -56,34 +56,43 @@ class FakeMarket:
         return {"total": len(UNIVERSE), "symbols": list(UNIVERSE.values())}
 
     def symbol(self, symbol):
+        self._check()
         if symbol not in UNIVERSE:
             raise MarketError(404, f"unknown symbol '{symbol}'")
         return UNIVERSE[symbol]
 
     def sectors(self):
+        self._check()
         return {"sectors": [{"key": "TECHNOLOGY", "name": "Technology", "symbols": 2},
                             {"key": "ENERGY", "name": "Energy", "symbols": 0}], "unassigned": 0}
 
     def bars(self, symbol, timeframe=None, start=None, end=None, limit=None, session=None):
+        self._check()
         self.calls.append(("bars", symbol, timeframe, start, end, limit, session))
         return {"symbol": symbol, "timeframe": timeframe, "bars": []}
 
     def multi_bars(self, symbols, timeframe=None, start=None, end=None, limit=None, session=None):
+        self._check()
         self.calls.append(("multi_bars", symbols, timeframe, start, end, limit, session))
         return {"timeframe": timeframe, "bars": {s: [] for s in symbols}}
 
     def snapshots(self, symbols=None):
+        self._check()
         self.calls.append(("snapshots", symbols))
         return {"snapshots": {t: SNAPS[t] for t in (symbols or SNAPS)}}
 
     def price_change(self, period_amount, period_unit, symbols=None):
+        self._check()
         self.calls.append(("price_change", period_amount, period_unit, symbols))
         return {"periodAmount": period_amount, "periodUnit": period_unit,
                 "changes": {t: CHANGES[t] for t in (symbols or CHANGES)}}
 
     def calendar(self, start=None, end=None):
+        self._check()
         self.calls.append(("calendar", start, end))
-        d, last = date.fromisoformat(start), date.fromisoformat(end or start)
+        start = start or date.today().isoformat()  # like the real market API: today + 30 days
+        end = end or (date.fromisoformat(start) + timedelta(days=30)).isoformat()
+        d, last = date.fromisoformat(start), date.fromisoformat(end)
         days = []
         while d <= last:
             if d.weekday() < 5 and d not in HOLIDAYS:
@@ -92,4 +101,5 @@ class FakeMarket:
         return {"days": days}
 
     def status(self):
+        self._check()
         return {"symbols": len(UNIVERSE), "lastIncrementalAt": self.last_sync, "dataDelayMinutes": 16}

@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, TypeAdapter
 
-from ..db import new_id
+from ..db import immediate, new_id
 from ..deps import AppContext
 from ..filters import store as filters_store
 from ..market.client import MarketError
@@ -172,7 +172,7 @@ def router(ctx: AppContext) -> APIRouter:
         if pool and pool["cash"] and not return_budget:
             raise HTTPException(409, f"can't delete this automation: its budget still holds {pool['cash']:.2f}; "
                                      "withdraw it first or delete with returnBudget=true")
-        with conn:
+        with immediate(conn):
             if pool:
                 budget.close_pool(conn, automation_id, "returned to the portfolio: the automation was deleted")
         store.delete_automation(conn, automation_id)
@@ -200,7 +200,11 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.get("/v1/automations/{automation_id}/runs", tags=["automations"])
     def runs(automation_id: str, conn: Conn, limit: Annotated[int, Query(ge=1, le=500)] = 20):
-        return {"runs": runs_store.list_runs(conn, "AUTOMATION", automation_id, limit=limit)}
+        """Also works for deleted automations: their run history is kept."""
+        runs = runs_store.list_runs(conn, "AUTOMATION", automation_id, limit=limit)
+        if not runs and not store.get_automation(conn, automation_id):
+            raise HTTPException(404, f"automation '{automation_id}' not found")
+        return {"runs": runs}
 
     @r.get("/v1/automations/{automation_id}/next-runs", tags=["automations"])
     def next_runs(automation_id: str, conn: Conn, count: Annotated[int, Query(ge=1, le=50)] = 5):
@@ -213,8 +217,11 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.get("/v1/automations/{automation_id}/events", tags=["automations"])
     def events(automation_id: str, conn: Conn, limit: Annotated[int, Query(ge=1, le=500)] = 100):
-        """Change log: created, updated (with what changed), paused, resumed."""
-        return {"events": store.list_events(conn, automation_id, limit)}
+        """Change log: created, updated (with what changed), paused, resumed. Kept after deletion."""
+        events = store.list_events(conn, automation_id, limit)
+        if not events and not store.get_automation(conn, automation_id):
+            raise HTTPException(404, f"automation '{automation_id}' not found")
+        return {"events": events}
 
     # ---------------------------------------------------------------- budget pool
 
@@ -235,8 +242,7 @@ def router(ctx: AppContext) -> APIRouter:
             raise HTTPException(422, "set the automation's portfolioId first")
         portfolio = portfolios_store.get_portfolio(conn, a["portfolioId"])
         try:
-            budget.allocate(conn, automation_id, portfolio, body.amount, body.note,
-                            orders_service.open_manual_buys(conn, portfolio["id"]))
+            budget.allocate(conn, automation_id, portfolio, body.amount, body.note)
         except budget.BudgetError as e:
             raise HTTPException(422, str(e))
         with conn:

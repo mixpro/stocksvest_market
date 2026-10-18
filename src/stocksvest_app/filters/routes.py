@@ -145,7 +145,11 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.get("/v1/filters/{filter_id}/runs", tags=["filters"])
     def filter_runs(filter_id: str, conn: Conn, limit: Annotated[int, Query(ge=1, le=500)] = 20):
-        return {"runs": runs_store.list_runs(conn, "FILTER", filter_id, limit=limit)}
+        """Also works for deleted filters: their run history is kept."""
+        runs = runs_store.list_runs(conn, "FILTER", filter_id, limit=limit)
+        if not runs and not store.get_filter(conn, filter_id):
+            raise HTTPException(404, f"filter '{filter_id}' not found")
+        return {"runs": runs}
 
     # ---------------------------------------------------------------- groups
 
@@ -211,6 +215,10 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.get("/v1/filter-groups/{group_id}/runs", tags=["filter groups"])
     def group_runs(group_id: str, conn: Conn, limit: Annotated[int, Query(ge=1, le=500)] = 20):
-        return {"runs": runs_store.list_runs(conn, "FILTER_GROUP", group_id, limit=limit)}
+        """Also works for deleted groups: their run history is kept."""
+        runs = runs_store.list_runs(conn, "FILTER_GROUP", group_id, limit=limit)
+        if not runs and not store.get_group(conn, group_id):
+            raise HTTPException(404, f"filter group '{group_id}' not found")
+        return {"runs": runs}
 
     return r

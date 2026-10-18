@@ -94,15 +94,15 @@ def list_portfolios(conn, broker_account_id: str | None = None) -> list[dict]:
 
 
 def create_portfolio(conn, name: str, description: str, account: dict, capital: Decimal) -> dict:
+    """Call inside a transaction (the caller checks the account's unassigned cash under the same lock)."""
     pid, ts = new_id("pf"), now_iso()
-    with conn:
-        conn.execute(
-            "INSERT INTO portfolios(id, name, description, broker_account_id, currency, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (pid, name, description, account["id"], account["baseCurrency"], ts, ts),
-        )
-        if capital > 0:
-            change_cash(conn, pid, "ALLOCATE", capital, allocated=capital, note="initial capital")
+    conn.execute(
+        "INSERT INTO portfolios(id, name, description, broker_account_id, currency, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (pid, name, description, account["id"], account["baseCurrency"], ts, ts),
+    )
+    if capital > 0:
+        change_cash(conn, pid, "ALLOCATE", capital, allocated=capital, note="initial capital")
     return get_portfolio(conn, pid)
 
 

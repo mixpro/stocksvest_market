@@ -4,6 +4,7 @@ Clients only need an app key; the app calls the market API with its own key.
 """
 
 from collections.abc import Callable
+from datetime import date
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -25,6 +26,8 @@ def call(fn: Callable[[], dict]) -> dict:
         return fn()
     except MarketError as e:
         raise HTTPException(e.status, e.detail)
+    except Exception as e:  # an unexpected answer from the market API must not become a 500
+        raise HTTPException(502, f"unexpected response from the market API: {type(e).__name__}")
 
 
 def router(ctx: AppContext) -> APIRouter:
@@ -92,9 +95,9 @@ def router(ctx: AppContext) -> APIRouter:
         return call(lambda: api.price_change(period_amount, period_unit, _split(symbols)))
 
     @r.get("/calendar")
-    def calendar(start: str | None = None, end: str | None = None):
+    def calendar(start: date | None = None, end: date | None = None):
         """Trading days and session times (market `GET /v1/calendar`)."""
-        return call(lambda: api.calendar(start, end))
+        return call(lambda: api.calendar(start.isoformat() if start else None, end.isoformat() if end else None))
 
     @r.get("/status")
     def status():

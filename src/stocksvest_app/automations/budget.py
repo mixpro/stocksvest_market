@@ -10,7 +10,7 @@ Every change is a ledger entry with the balances after it, so the history reads 
 import sqlite3
 from decimal import Decimal
 
-from ..db import new_id, now_iso
+from ..db import immediate, new_id, now_iso
 from ..portfolios.store import D, D0, num
 
 SCHEMA = """
@@ -84,10 +84,15 @@ def ensure_pool(conn, automation_id: str, portfolio: dict) -> None:
                      (automation_id, portfolio["id"], portfolio["currency"], now_iso()))
 
 
-def unallocated_cash(conn, portfolio: dict, open_manual_buys: Decimal = D0) -> Decimal:
-    """Portfolio cash not given to any automation pool and not reserved by manual buy orders."""
+def unallocated_cash(conn, portfolio: dict, open_manual_buys: Decimal | None = None) -> Decimal:
+    """Portfolio cash not given to any automation pool and not reserved by manual buy orders.
+    Reads the current cash from the DB (not the possibly stale `portfolio` dict)."""
+    if open_manual_buys is None:
+        from ..orders.service import open_manual_buys as manual_buys
+        open_manual_buys = manual_buys(conn, portfolio["id"])
+    cash = conn.execute("SELECT cash FROM portfolios WHERE id = ?", (portfolio["id"],)).fetchone()
     pools = conn.execute("SELECT cash FROM budget_pools WHERE portfolio_id = ?", (portfolio["id"],)).fetchall()
-    return D(portfolio["cash"]) - sum((D(p["cash"]) for p in pools), D0) - open_manual_buys
+    return D(cash["cash"] if cash else 0) - sum((D(p["cash"]) for p in pools), D0) - open_manual_buys
 
 
 def _apply(conn, automation_id: str, type_: str, amount: Decimal, *, cash: Decimal = D0, reserved: Decimal = D0,
@@ -114,13 +119,12 @@ def _apply(conn, automation_id: str, type_: str, amount: Decimal, *, cash: Decim
     return get_pool(conn, automation_id)
 
 
-def allocate(conn, automation_id: str, portfolio: dict, amount: Decimal, note: str | None = None,
-             open_manual_buys: Decimal = D0) -> dict:
+def allocate(conn, automation_id: str, portfolio: dict, amount: Decimal, note: str | None = None) -> dict:
     if amount <= 0:
         raise BudgetError("amount must be positive")
-    with conn:
+    with immediate(conn):
         ensure_pool(conn, automation_id, portfolio)
-        free = unallocated_cash(conn, portfolio, open_manual_buys)
+        free = unallocated_cash(conn, portfolio)
         if amount > free:
             raise BudgetError(f"only {free:.2f} {portfolio['currency']} of the portfolio's cash is unallocated")
         return _apply(conn, automation_id, "ALLOCATE", amount, cash=amount, allocated=amount, note=note)
@@ -129,7 +133,7 @@ def allocate(conn, automation_id: str, portfolio: dict, amount: Decimal, note: s
 def withdraw(conn, automation_id: str, amount: Decimal, note: str | None = None) -> dict:
     if amount <= 0:
         raise BudgetError("amount must be positive")
-    with conn:
+    with immediate(conn):
         free = available(conn, automation_id)
         if amount > free:
             raise BudgetError(f"only {free:.2f} is available (the rest is reserved or invested)")
@@ -202,7 +206,7 @@ def repair_orphan_pools(conn) -> list[dict]:
         if D(r["reserved"]) or D(r["invested"]) or holdings_blocking_removal(conn, aid):
             out.append({"automationId": aid, "repaired": False})
             continue
-        with conn:
+        with immediate(conn):
             amount = close_pool(conn, aid, "returned to the portfolio: the automation was deleted")
         out.append({"automationId": aid, "repaired": True, "returned": float(amount)})
     return out
