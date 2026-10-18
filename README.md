@@ -94,6 +94,20 @@ Code layout (`src/stocksvest_app/`): one folder per feature, each with its own m
 | `api.py`, `deps.py`, `db.py`, `config.py` | App assembly, shared dependencies, DB connection and schema setup, settings |
 | `static/` | Sample web app: Filters, Automations and Portfolio pages (`common.js` holds shared helpers) |
 
+## Pulling the activity log
+
+`scripts/pull_logs.py` downloads the app's activity log (standard library only; reads the URL and key from `.env`):
+
+```bash
+python3 scripts/pull_logs.py --since 2h --outcome FAILED
+```
+
+- **Filter by:** `--action`, `--source`, `--entity-type`, `--id` (about or mentioning an ID), or `--correlation` (everything one request or run caused).
+- **Formats:** `--format table|json|jsonl|csv`, written to the screen or to `--out file`.
+- **More:** `--all` for every matching entry, and `--follow` to keep printing new ones.
+
+See `python3 scripts/pull_logs.py --help`.
+
 ## Viewing the data in Grafana
 
 `docker compose up -d` also starts Grafana on port 3000 (user `admin`, password `GRAFANA_ADMIN_PASSWORD` from `.env`).
