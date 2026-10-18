@@ -133,6 +133,8 @@ class AutomationScheduler:
                     sync_brokers(self.ctx, conn)  # before runs, so budgets and positions are current
                     self._last_broker_sync = now
                 tick(self.ctx, conn)
+                from ..performance import snapshots
+                snapshots.scheduled(self.ctx, conn, now)
                 self.last_error = None
             except Exception as e:
                 log.exception("scheduler tick failed")

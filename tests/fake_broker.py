@@ -88,3 +88,8 @@ class FakeBroker:
     def positions(self):
         return [BrokerPosition(symbol=s, quantity=q, average_cost=p, market_value=None)
                 for s, (q, p) in self.held.items() if q]
+
+    def equity_history(self, period, timeframe):
+        self.history_calls = getattr(self, "history_calls", 0) + 1
+        return [{"at": "2026-10-15T20:00:00Z", "equity": 99500.0, "profitLoss": -500.0},
+                {"at": "2026-10-16T20:00:00Z", "equity": 100000.0, "profitLoss": 500.0}]

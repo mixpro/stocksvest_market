@@ -124,3 +124,9 @@ class Broker(Protocol):
     def list_fills(self, since: datetime | None) -> list[BrokerFill]: ...
 
     def positions(self) -> list[BrokerPosition]: ...
+
+
+class SupportsEquityHistory(Protocol):
+    """Optional: brokers that can report the account's past equity."""
+
+    def equity_history(self, period: str, timeframe: str) -> list[dict]: ...

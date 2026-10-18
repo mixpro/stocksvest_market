@@ -20,6 +20,7 @@ from .filters import routes as filters_routes
 from .market import routes as market_routes
 from .market.client import MarketAPI, MarketClient
 from .orders import routes as orders_routes
+from .performance import routes as performance_routes
 from .portfolios import routes as portfolios_routes
 from .runs import routes as runs_routes
 
@@ -64,6 +65,7 @@ def create_app(settings: Settings | None = None, market_factory: Callable[[Setti
     app.include_router(brokers_routes.router(ctx))
     app.include_router(portfolios_routes.router(ctx))
     app.include_router(orders_routes.router(ctx))
+    app.include_router(performance_routes.router(ctx))
     app.include_router(market_routes.router(ctx))
     app.mount("/ui", StaticFiles(directory=STATIC_DIR, html=True), name="ui")
     return app

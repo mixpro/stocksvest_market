@@ -2,7 +2,7 @@
 
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import requests
@@ -168,6 +168,17 @@ class AlpacaBroker:
             if len(page) < params["page_size"]:
                 return fills
             params["page_token"] = page[-1]["id"]
+
+    def equity_history(self, period: str = "1M", timeframe: str = "1D") -> list[dict]:
+        """The whole account's equity over time: [{at, equity, profitLoss}]. period e.g. 1W, 1M, 3M, 1A;
+        timeframe 1Min, 5Min, 15Min, 1H or 1D."""
+        h = self._call("GET", "/v2/account/portfolio/history", params={"period": period, "timeframe": timeframe}) or {}
+        out = []
+        for ts, equity, pnl in zip(h.get("timestamp") or [], h.get("equity") or [], h.get("profit_loss") or []):
+            if equity is not None:
+                out.append({"at": datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            "equity": float(equity), "profitLoss": float(pnl) if pnl is not None else None})
+        return out
 
     def positions(self) -> list[BrokerPosition]:
         return [BrokerPosition(symbol=p["symbol"], quantity=_dec(p["qty"]), average_cost=_dec(p["avg_entry_price"]),

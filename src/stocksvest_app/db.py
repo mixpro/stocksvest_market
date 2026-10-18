@@ -35,11 +35,12 @@ def init(conn: sqlite3.Connection) -> None:
     from .brokers import store as brokers_store
     from .filters import store as filters_store
     from .orders import store as orders_store
+    from .performance import store as performance_store
     from .portfolios import store as portfolios_store
     from .runs import store as runs_store
 
     for schema in (filters_store.SCHEMA, runs_store.SCHEMA, automations_store.SCHEMA, brokers_store.SCHEMA,
-                   portfolios_store.SCHEMA, orders_store.SCHEMA, budget.SCHEMA):
+                   portfolios_store.SCHEMA, orders_store.SCHEMA, budget.SCHEMA, performance_store.SCHEMA):
         conn.executescript(schema)
     existing = {r[1] for r in conn.execute("PRAGMA table_info(broker_accounts)")}
     for name, kind in brokers_store.ADDED_COLUMNS.items():
