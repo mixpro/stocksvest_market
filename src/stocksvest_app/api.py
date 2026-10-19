@@ -30,6 +30,25 @@ from .portfolios import routes as portfolios_routes
 from .runs import routes as runs_routes
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+class UIFiles(StaticFiles):
+    """The sample UI's files, sent with "Cache-Control: no-cache": browsers keep their copy but check it is still
+    current on every load (a cheap 304 when unchanged), so a new version shows up without a hard refresh.
+
+    Used by: create_app (mounted at /ui).
+    """
+
+    def file_response(self, *args, **kwargs):
+        """The file response, with the no-cache header added.
+
+        Args:
+            args: passed to StaticFiles.file_response.
+            kwargs: passed to StaticFiles.file_response.
+        """
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 log = logging.getLogger(__name__)
 
 
@@ -97,5 +116,5 @@ def create_app(settings: Settings | None = None, market_factory: Callable[[Setti
     app.include_router(audit_routes.router(ctx))
     audit_middleware.install(app, settings.db_path)
     app.include_router(market_routes.router(ctx))
-    app.mount("/ui", StaticFiles(directory=STATIC_DIR, html=True), name="ui")
+    app.mount("/ui", UIFiles(directory=STATIC_DIR, html=True), name="ui")
     return app

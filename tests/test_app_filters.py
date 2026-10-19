@@ -47,7 +47,9 @@ def test_auth_and_ui(client):
     assert client.get("/v1/filters").status_code == 401
     assert client.get("/v1/filters", headers=KEY).json() == {"filters": []}
     assert client.get("/health").json() == {"ok": True}
-    assert client.get("/ui/").status_code == 200
+    ui = client.get("/ui/")
+    assert ui.status_code == 200 and ui.headers["cache-control"] == "no-cache"
+    assert client.get("/ui/app.js").headers["cache-control"] == "no-cache"
 
 
 def test_crud_and_validation(client):
