@@ -91,8 +91,8 @@ def test_scheduled_snapshots(app_and_client, client, broker, portfolio, automati
     ctx, conn = ctx_conn(app_and_client)
     buy_and_fill(client, broker, portfolio, automation["id"])
 
-    def at(h, m):  # Monday 19 Oct 2026, New York time
-        return datetime(2026, 10, 19, h, m, tzinfo=ET).astimezone(timezone.utc)
+    def at(h, m):  # Monday 12 Oct 2026, New York time (in the past: fills happen on the real clock)
+        return datetime(2026, 10, 12, h, m, tzinfo=ET).astimezone(timezone.utc)
 
     for t in (at(9, 0), at(9, 31), at(9, 40), at(9, 46), at(15, 59), at(16, 10)):
         snapshots.scheduled(ctx, conn, t)
@@ -102,9 +102,9 @@ def test_scheduled_snapshots(app_and_client, client, broker, portfolio, automati
     snapshots.scheduled(ctx, conn, at(16, 25))
     snapshots.scheduled(ctx, conn, at(17, 0))  # once per day
     closes = client.get(f"/v1/portfolios/{portfolio['id']}/history?kind=CLOSE", headers=KEY).json()["points"]
-    assert len(closes) == 1 and closes[0]["date"] == "2026-10-19"
+    assert len(closes) == 1 and closes[0]["date"] == "2026-10-12"
     perf = client.get(f"/v1/automations/{automation['id']}/performance", headers=KEY).json()["points"]
-    assert [(p["date"], p["equity"], p["fills"]) for p in perf] == [("2026-10-19", 1020.0, 0)]
+    assert [(p["date"], p["equity"], p["fills"]) for p in perf] == [("2026-10-12", 1020.0, 0)]
 
     snapshots.scheduled(ctx, conn, datetime(2026, 10, 24, 12, 0, tzinfo=ET))  # Saturday: nothing
     assert len(client.get(f"/v1/portfolios/{portfolio['id']}/history", headers=KEY).json()["points"]) == 4
