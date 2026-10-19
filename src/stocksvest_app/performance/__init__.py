@@ -1,1 +1,1 @@
-"""Performance history: portfolio and automation snapshots over time, and broker account equity history."""
+"""Performance history: portfolio and budget snapshots over time, and broker account equity history."""

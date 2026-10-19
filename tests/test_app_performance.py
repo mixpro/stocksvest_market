@@ -42,18 +42,14 @@ def portfolio(client):
 
 
 @pytest.fixture
-def automation(client, portfolio):
-    f = client.post("/v1/filters", headers=KEY, json={"name": "All", "inputs": [{"type": "UNIVERSE"}]}).json()
-    a = client.post("/v1/automations", headers=KEY, json={
-        "name": "Bot", "portfolioId": portfolio["id"], "runTargets": [{"type": "FILTER", "id": f["id"]}],
-        "schedules": [{"type": "DAILY", "atTimes": ["10:00"]}], "actions": [{"type": "NOTIFY", "title": "x"}]}).json()
-    client.post(f"/v1/automations/{a['id']}/budget/allocate", headers=KEY, json={"amount": 1000})
-    return a
+def budget(client, portfolio):
+    return client.post(f"/v1/portfolios/{portfolio['id']}/budgets", headers=KEY,
+                       json={"name": "Main", "amount": 1000}).json()
 
 
-def buy_and_fill(client, broker, portfolio, automation_id=None, qty=10, price=8):
+def buy_and_fill(client, broker, portfolio, budget_id=None, qty=10, price=8):
     o = client.post(f"/v1/portfolios/{portfolio['id']}/orders", headers=KEY, json={
-        "symbol": "AAA", "side": "BUY", "quantity": qty, "automationId": automation_id}).json()
+        "symbol": "AAA", "side": "BUY", "quantity": qty, "budgetId": budget_id}).json()
     broker.fill(o["brokerOrderId"], qty, price)
     client.post(f"/v1/portfolios/{portfolio['id']}/sync", headers=KEY)
 
@@ -66,30 +62,30 @@ def ctx_conn(app_and_client):
     return AppContext(settings, FakeMarket()), db.connect(settings.db_path)
 
 
-def test_portfolio_history_values(client, broker, portfolio, automation):
-    buy_and_fill(client, broker, portfolio, automation["id"])  # 10 AAA @ 8, now priced at 10
+def test_portfolio_history_values(client, broker, portfolio, budget):
+    buy_and_fill(client, broker, portfolio, budget["id"])  # 10 AAA @ 8, now priced at 10
     snap = client.post(f"/v1/portfolios/{portfolio['id']}/snapshot", headers=KEY).json()
     assert snap["kind"] == "MANUAL"
     assert (snap["cash"], snap["positionsValue"], snap["equity"]) == (4920.0, 100.0, 5020.0)
     assert (snap["invested"], snap["unrealizedPnL"], snap["allocated"]) == (80.0, 20.0, 5000.0)
-    assert snap["unallocated"] == 4000.0  # 4920 cash - 920 still in the automation's budget
+    assert snap["unallocated"] == 4000.0  # 4920 cash - 920 still in the budget
     hist = client.get(f"/v1/portfolios/{portfolio['id']}/history", headers=KEY).json()
     assert [p["kind"] for p in hist["points"]] == ["MANUAL"] and hist["current"]["equity"] == 5020.0
     assert client.get(f"/v1/portfolios/{portfolio['id']}/history?kind=CLOSE", headers=KEY).json()["points"] == []
 
 
-def test_automation_performance(client, broker, portfolio, automation):
-    buy_and_fill(client, broker, portfolio, automation["id"])
-    perf = client.get(f"/v1/automations/{automation['id']}/performance", headers=KEY).json()
+def test_budget_performance(client, broker, portfolio, budget):
+    buy_and_fill(client, broker, portfolio, budget["id"])
+    perf = client.get(f"/v1/budgets/{budget['id']}/performance", headers=KEY).json()
     cur = perf["current"]
     assert (cur["cash"], cur["invested"], cur["positionsValue"], cur["equity"]) == (920.0, 80.0, 100.0, 1020.0)
     assert cur["returnPercent"] == pytest.approx(2.0) and cur["openPositions"] == 1
     assert perf["points"] == []
 
 
-def test_scheduled_snapshots(app_and_client, client, broker, portfolio, automation):
+def test_scheduled_snapshots(app_and_client, client, broker, portfolio, budget):
     ctx, conn = ctx_conn(app_and_client)
-    buy_and_fill(client, broker, portfolio, automation["id"])
+    buy_and_fill(client, broker, portfolio, budget["id"])
 
     def at(h, m):  # Monday 12 Oct 2026, New York time (in the past: fills happen on the real clock)
         return datetime(2026, 10, 12, h, m, tzinfo=ET).astimezone(timezone.utc)
@@ -103,7 +99,7 @@ def test_scheduled_snapshots(app_and_client, client, broker, portfolio, automati
     snapshots.scheduled(ctx, conn, at(17, 0))  # once per day
     closes = client.get(f"/v1/portfolios/{portfolio['id']}/history?kind=CLOSE", headers=KEY).json()["points"]
     assert len(closes) == 1 and closes[0]["date"] == "2026-10-12"
-    perf = client.get(f"/v1/automations/{automation['id']}/performance", headers=KEY).json()["points"]
+    perf = client.get(f"/v1/budgets/{budget['id']}/performance", headers=KEY).json()["points"]
     assert [(p["date"], p["equity"], p["fills"]) for p in perf] == [("2026-10-12", 1020.0, 0)]
 
     snapshots.scheduled(ctx, conn, datetime(2026, 10, 24, 12, 0, tzinfo=ET))  # Saturday: nothing

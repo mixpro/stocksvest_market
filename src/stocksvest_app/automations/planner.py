@@ -15,7 +15,7 @@ D0 = Decimal(0)
 
 @dataclass
 class Holding:
-    """The automation's own shares of one symbol: quantity and what they cost in total.
+    """The budget's shares of one symbol (bought by any of its automations): quantity and what they cost in total.
 
     Used by: PlanContext.holdings, _rank_value, plan; runner.Trading.context (built).
     """
@@ -25,27 +25,28 @@ class Holding:
 
 @dataclass
 class PlanContext:
-    """Everything the planner needs, gathered by the runner once per run (shared by all order actions of the run).
+    """Everything the planner needs about one budget, gathered by the runner once per run (shared by all order
+    actions of the run).
 
     Attributes:
         snapshots: ticker -> market snapshot (latestPrice, dailyChangePercent, dailyVolume).
-        holdings: ticker -> Holding (only the automation's own shares).
-        open_buys: tickers with an open buy order from this automation (for skipBuyIfHeld).
-        open_sells: ticker -> shares already being sold by this automation.
+        holdings: ticker -> Holding (the budget's shares).
+        open_buys: tickers with an open buy order paid from the budget (for skipBuyIfHeld).
+        open_sells: ticker -> the budget's shares already being sold.
         budget_available: budget available when the run starts (base for PERCENT_OF_BUDGET).
         budget_equity: budget cash + invested (base for maxPositionPercent).
         session: market session at run time (PRE_MARKET, REGULAR, AFTER_HOURS, CLOSED).
         data_age_minutes: how old the market data is.
-        orders_planned: PLACE intents so far in this run (for maxOrdersPerRun).
+        orders_planned: PLACE intents for this budget so far in this run (for maxOrdersPerRun).
         budget_left: budget still unspent by planned buys (top rank first).
 
     Used by: plan; runner.Trading.context (built).
     """
 
     snapshots: dict[str, dict]  # ticker -> market snapshot (latestPrice, dailyChangePercent, dailyVolume)
-    holdings: dict[str, Holding]  # the automation's own shares
-    open_buys: set[str]  # tickers with an open buy order from this automation
-    open_sells: dict[str, Decimal]  # ticker -> shares already being sold by this automation
+    holdings: dict[str, Holding]  # the budget's shares
+    open_buys: set[str]  # tickers with an open buy order paid from the budget
+    open_sells: dict[str, Decimal]  # ticker -> the budget's shares already being sold
     budget_available: Decimal  # at the start of the run
     budget_equity: Decimal  # cash + invested (for maxPositionPercent)
     session: str | None
@@ -148,7 +149,7 @@ def plan(action: PlaceOrderAction, guards: OrderGuards, matched: list[str], ctx:
 
     Used by: runner._place_orders.
     """
-    # 1. Candidates: sells only from the automation's own shares.
+    # 1. Candidates: sells only from the budget's shares.
     if action.side == "SELL":
         candidates = [t for t in matched if ctx.holdings.get(t) and ctx.holdings[t].quantity > 0]
         not_held = len(matched) - len(candidates)
@@ -203,7 +204,7 @@ def plan(action: PlaceOrderAction, guards: OrderGuards, matched: list[str], ctx:
         # 5. Position guards (buys): never let one symbol grow past the caps; shrink the order to fit.
         if action.side == "BUY":
             if guards.skipBuyIfHeld and (held.quantity > 0 or ticker in ctx.open_buys):
-                _skip(intent, "ALREADY_HELD", "the automation already holds it or has a buy order open")
+                _skip(intent, "ALREADY_HELD", "the budget already holds it or has a buy order open")
                 continue
             caps = []
             if guards.maxPositionValue is not None:

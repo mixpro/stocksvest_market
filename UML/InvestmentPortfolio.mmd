@@ -14,6 +14,7 @@ classDiagram
       - cash: Decimal
       - currency: string
       - positions: List~Position~
+      - budgets: List~Budget~
       - orders: List~Order~
       + availableCash() Decimal
       + unallocatedCash() Decimal
@@ -39,6 +40,7 @@ classDiagram
       - amount: Decimal
       - cashAfter: Decimal
       - automationId: string?
+      - budgetId: string?
       - orderId: string?
       - fillId: string?
       - note: string?
@@ -79,6 +81,7 @@ classDiagram
     class PositionLot {
       - id: string
       - positionId: string
+      - budgetId: string?
       - automationId: string?
       - buyFillId: string
       - quantity: Decimal
@@ -105,6 +108,10 @@ classDiagram
       <<from Automations.mmd>>
     }
 
+    class Budget {
+      <<from Automations.mmd>>
+    }
+
     InvestmentPortfolio "1" *-- "*" Position : holds
     Position "1" *-- "*" PositionLot : bought in lots
     InvestmentPortfolio "*" --> "1" BrokerAccount : capital carved from
@@ -115,9 +122,11 @@ classDiagram
     InvestmentPortfolio "1" *-- "*" Order : places
     Order "1" *-- "*" Fill
     Fill ..> Position : updates quantity, averageCost, realizedPnL
-    Automation "*" --> "0..1" InvestmentPortfolio : trades in
+    InvestmentPortfolio "1" *-- "*" Budget : carved from its cash
+    Budget "*" -- "*" Automation : used by
+    Budget "1" o-- "*" PositionLot : owns
 
-    note for InvestmentPortfolio "A broker account holds several portfolios; each gets capital from the account's\nunassigned cash. cash = its own ledger (capital, fills, fees), not the broker's cash.\navailableCash() = cash minus open manual buys. unallocatedCash() = availableCash() minus automation budgets."
+    note for InvestmentPortfolio "A broker account holds several portfolios; each gets capital from the account's\nunassigned cash. cash = its own ledger (capital, fills, fees), not the broker's cash.\navailableCash() = cash minus open manual buys. unallocatedCash() = availableCash() minus its budgets' cash."
     note for PortfolioSnapshot "Every 15 min of the regular session (INTERVAL), after each close (CLOSE), or on request."
     note for Position "One position per (portfolioId, symbolId).\nMaintained from fills, not by replaying orders.\nquantity 0 = closed, kept for realizedPnL history.\nunrealizedPnL is calculated from the synced price, never stored."
-    note for PositionLot "Each buy fill opens a lot, tagged with the automation that bought it (null = manual).\nSells close lots FIFO within the same automation, so P&L and budgets are per automation."
+    note for PositionLot "Each buy fill opens a lot owned by the budget that paid (null = manual shares) and tagged\nwith the automation that bought it. Sells close the budget's lots FIFO, whoever bought them,\nso money and P&L are exact per budget."

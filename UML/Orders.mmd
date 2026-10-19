@@ -5,6 +5,7 @@ classDiagram
     - brokerAccountId: string
     - symbolId: string
     - automationId: string?
+    - budgetId: string?
     - automationRunId: string?
     - clientOrderId: string
     - brokerOrderId: string?
@@ -38,6 +39,7 @@ classDiagram
     - quantity: Decimal
     - price: Decimal
     - fee: Decimal
+    - realizedPnL: Decimal?
     - executedAt: datetime
   }
 

@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS orders (
     portfolio_id       TEXT NOT NULL REFERENCES portfolios(id),
     broker_account_id  TEXT NOT NULL,
     symbol             TEXT NOT NULL,
-    automation_id      TEXT,
+    automation_id      TEXT,                       -- the automation that placed it (NULL = manual)
     automation_run_id  TEXT,
     client_order_id    TEXT NOT NULL UNIQUE,
     broker_order_id    TEXT,
@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS orders (
     average_fill_price TEXT,
     estimated_price    TEXT,
     reserved           TEXT NOT NULL DEFAULT '0',   -- budget reserved for this buy, still unused
+    budget_id          TEXT,                        -- the budget paying / whose shares it sells (NULL = manual)
     created_at         TEXT NOT NULL,
     updated_at         TEXT NOT NULL,
     submitted_at       TEXT,
@@ -52,7 +53,8 @@ CREATE TABLE IF NOT EXISTS fills (
     price          TEXT NOT NULL,
     fee            TEXT NOT NULL DEFAULT '0',
     executed_at    TEXT NOT NULL,
-    created_at     TEXT NOT NULL
+    created_at     TEXT NOT NULL,
+    realized_pnl   TEXT                        -- sells: P&L of the lots it closed
 );
 CREATE INDEX IF NOT EXISTS fills_by_portfolio ON fills(portfolio_id, executed_at);
 
@@ -103,6 +105,7 @@ def order_json(r: sqlite3.Row) -> dict:
         "stopPrice": num(r["stop_price"]), "trailPercent": num(r["trail_percent"]),
         "extendedHours": bool(r["extended_hours"]), "status": r["status"], "rawBrokerStatus": r["raw_broker_status"],
         "rejectReason": r["reject_reason"], "averageFillPrice": num(avg), "estimatedPrice": num(est),
+        "budgetId": r["budget_id"],
         "slippage": num(Decimal(avg) - Decimal(est)) if avg and est else None,
         "createdAt": r["created_at"], "updatedAt": r["updated_at"], "submittedAt": r["submitted_at"],
         "filledAt": r["filled_at"], "cancelledAt": r["cancelled_at"],
@@ -136,7 +139,7 @@ def get_order_row(conn, **where) -> sqlite3.Row | None:
 
 
 def list_orders(conn, portfolio_id: str | None = None, automation_id: str | None = None, status: str | None = None,
-                open_only: bool = False, limit: int = 200) -> list[dict]:
+                open_only: bool = False, limit: int = 200, budget_id: str | None = None) -> list[dict]:
     """Orders, newest first.
 
     Args:
@@ -146,11 +149,13 @@ def list_orders(conn, portfolio_id: str | None = None, automation_id: str | None
         status: only this status.
         open_only: only PENDING, SUBMITTED or PARTIALLY_FILLED.
         limit: how many.
+        budget_id: only orders paid from / selling for this budget.
 
-    Used by: orders.service.sync_account, automations.runner.Trading.context, portfolios.routes.
+    Used by: orders.service.sync_account, automations.runner.Trading.context, portfolios.routes, budgets.routes.
     """
     where, args = [], []
-    for col, val in (("portfolio_id", portfolio_id), ("automation_id", automation_id), ("status", status)):
+    for col, val in (("portfolio_id", portfolio_id), ("automation_id", automation_id), ("status", status),
+                     ("budget_id", budget_id)):
         if val:
             where.append(f"{col} = ?")
             args.append(val)
@@ -166,7 +171,7 @@ def insert_order(conn, **f) -> str:
 
     Args:
         conn: app DB connection.
-        f: portfolio_id, broker_account_id, symbol, client_order_id, side, type, time_in_force, quantity; optional automation_id, run_id, limit_price, stop_price, trail_percent, extended_hours, estimated_price, reserved.
+        f: portfolio_id, broker_account_id, symbol, client_order_id, side, type, time_in_force, quantity; optional automation_id, run_id, budget_id, limit_price, stop_price, trail_percent, extended_hours, estimated_price, reserved.
 
     Returns:
         The new order id.
@@ -177,12 +182,12 @@ def insert_order(conn, **f) -> str:
     conn.execute(
         "INSERT INTO orders(id, portfolio_id, broker_account_id, symbol, automation_id, automation_run_id, "
         "client_order_id, side, type, time_in_force, quantity, limit_price, stop_price, trail_percent, "
-        "extended_hours, status, estimated_price, reserved, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?)",
+        "extended_hours, status, estimated_price, reserved, budget_id, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?)",
         (oid, f["portfolio_id"], f["broker_account_id"], f["symbol"], f.get("automation_id"), f.get("run_id"),
          f["client_order_id"], f["side"], f["type"], f["time_in_force"], str(f["quantity"]),
          _s(f.get("limit_price")), _s(f.get("stop_price")), _s(f.get("trail_percent")), int(f.get("extended_hours", False)),
-         _s(f.get("estimated_price")), str(f.get("reserved", 0)), ts, ts),
+         _s(f.get("estimated_price")), str(f.get("reserved", 0)), f.get("budget_id"), ts, ts),
     )
     return oid
 
@@ -272,6 +277,19 @@ def insert_fill(conn, order_id: str | None, portfolio_id: str, f) -> str:
     return fid
 
 
+def set_fill_pnl(conn, fill_id: str, pnl) -> None:
+    """Record the realized P&L of a sell fill (inside the caller's transaction).
+
+    Args:
+        conn: app DB connection.
+        fill_id: the fill's id.
+        pnl: P&L of the lots it closed.
+
+    Used by: orders.service.apply_fill.
+    """
+    conn.execute("UPDATE fills SET realized_pnl = ? WHERE id = ?", (str(pnl), fill_id))
+
+
 def last_fill_time(conn, account_id: str) -> str | None:
     """Time of the newest imported fill of a broker account (app or external), or None.
 
@@ -306,7 +324,7 @@ def list_fills(conn, portfolio_id: str, order_id: str | None = None, limit: int 
     rows = conn.execute(sql + " ORDER BY executed_at DESC LIMIT ?", args + [limit])
     return [{"id": r["id"], "orderId": r["order_id"], "brokerFillId": r["broker_fill_id"], "symbol": r["symbol"],
              "side": r["side"], "quantity": num(r["quantity"]), "price": num(r["price"]), "fee": num(r["fee"]),
-             "executedAt": r["executed_at"]} for r in rows]
+             "realizedPnL": num(r["realized_pnl"]), "executedAt": r["executed_at"]} for r in rows]
 
 
 def add_sync(conn, account_id: str, orders_updated: int, fills_imported: int, mismatches: list[dict],

@@ -35,24 +35,25 @@
         "multi": false
       },
       {
-        "name": "automation",
-        "label": "Automation",
+        "name": "budget",
+        "label": "Budget",
         "type": "query",
         "datasource": {
           "type": "frser-sqlite-datasource",
           "uid": "stocksvest-app"
         },
         "query": {
-          "rawQueryText": "SELECT a.name AS __text, a.id AS __value FROM automations a JOIN budget_pools b ON b.automation_id = a.id WHERE b.portfolio_id = '${portfolio}' ORDER BY a.name",
-          "queryText": "SELECT a.name AS __text, a.id AS __value FROM automations a JOIN budget_pools b ON b.automation_id = a.id WHERE b.portfolio_id = '${portfolio}' ORDER BY a.name",
+          "rawQueryText": "SELECT name AS __text, id AS __value FROM budgets WHERE portfolio_id = '${portfolio}' ORDER BY name",
+          "queryText": "SELECT name AS __text, id AS __value FROM budgets WHERE portfolio_id = '${portfolio}' ORDER BY name",
           "queryType": "table",
           "timeColumns": []
         },
-        "definition": "SELECT a.name AS __text, a.id AS __value FROM automations a JOIN budget_pools b ON b.automation_id = a.id WHERE b.portfolio_id = '${portfolio}' ORDER BY a.name",
+        "definition": "SELECT name AS __text, id AS __value FROM budgets WHERE portfolio_id = '${portfolio}' ORDER BY name",
         "refresh": 1,
         "sort": 1,
         "includeAll": false,
-        "multi": false
+        "multi": false,
+        "current": {}
       }
     ]
   },
@@ -446,7 +447,7 @@
     {
       "id": 9,
       "type": "timeseries",
-      "title": "Automation equity (${automation})",
+      "title": "Budget equity (${budget})",
       "datasource": {
         "type": "frser-sqlite-datasource",
         "uid": "stocksvest-app"
@@ -465,8 +466,8 @@
           },
           "refId": "A",
           "queryType": "table",
-          "rawQueryText": "SELECT at AS time, CAST(equity AS REAL) AS Equity, CAST(cash AS REAL) AS Cash, CAST(allocated AS REAL) AS Budget FROM automation_snapshots WHERE automation_id = '${automation}' AND at >= strftime('%Y-%m-%dT%H:%M:%SZ', ${__from:date:seconds}, 'unixepoch') AND at <= strftime('%Y-%m-%dT%H:%M:%SZ', ${__to:date:seconds}, 'unixepoch') ORDER BY at",
-          "queryText": "SELECT at AS time, CAST(equity AS REAL) AS Equity, CAST(cash AS REAL) AS Cash, CAST(allocated AS REAL) AS Budget FROM automation_snapshots WHERE automation_id = '${automation}' AND at >= strftime('%Y-%m-%dT%H:%M:%SZ', ${__from:date:seconds}, 'unixepoch') AND at <= strftime('%Y-%m-%dT%H:%M:%SZ', ${__to:date:seconds}, 'unixepoch') ORDER BY at",
+          "rawQueryText": "SELECT at AS time, CAST(equity AS REAL) AS Equity, CAST(cash AS REAL) AS Cash, CAST(allocated AS REAL) AS Allocated FROM budget_snapshots WHERE budget_id = '${budget}' AND at >= strftime('%Y-%m-%dT%H:%M:%SZ', ${__from:date:seconds}, 'unixepoch') AND at <= strftime('%Y-%m-%dT%H:%M:%SZ', ${__to:date:seconds}, 'unixepoch') ORDER BY at",
+          "queryText": "SELECT at AS time, CAST(equity AS REAL) AS Equity, CAST(cash AS REAL) AS Cash, CAST(allocated AS REAL) AS Allocated FROM budget_snapshots WHERE budget_id = '${budget}' AND at >= strftime('%Y-%m-%dT%H:%M:%SZ', ${__from:date:seconds}, 'unixepoch') AND at <= strftime('%Y-%m-%dT%H:%M:%SZ', ${__to:date:seconds}, 'unixepoch') ORDER BY at",
           "timeColumns": [
             "time"
           ]
@@ -498,7 +499,7 @@
     {
       "id": 10,
       "type": "table",
-      "title": "Automations: latest daily snapshot",
+      "title": "Budgets: latest daily snapshot",
       "datasource": {
         "type": "frser-sqlite-datasource",
         "uid": "stocksvest-app"
@@ -517,8 +518,8 @@
           },
           "refId": "A",
           "queryType": "table",
-          "rawQueryText": "SELECT a.name AS Automation, s.date AS Date, CAST(s.allocated AS REAL) AS Budget, CAST(s.equity AS REAL) AS Equity, ROUND(CAST(s.return_percent AS REAL), 2) AS \"Return %\", CAST(s.realized_pnl AS REAL) AS Realized, CAST(s.unrealized_pnl AS REAL) AS Unrealized, s.open_positions AS Positions, s.orders_placed AS \"Orders (day)\", s.fills AS \"Fills (day)\" FROM automation_snapshots s JOIN automations a ON a.id = s.automation_id WHERE s.date = (SELECT MAX(date) FROM automation_snapshots x WHERE x.automation_id = s.automation_id) AND s.portfolio_id = '${portfolio}' ORDER BY \"Return %\" DESC",
-          "queryText": "SELECT a.name AS Automation, s.date AS Date, CAST(s.allocated AS REAL) AS Budget, CAST(s.equity AS REAL) AS Equity, ROUND(CAST(s.return_percent AS REAL), 2) AS \"Return %\", CAST(s.realized_pnl AS REAL) AS Realized, CAST(s.unrealized_pnl AS REAL) AS Unrealized, s.open_positions AS Positions, s.orders_placed AS \"Orders (day)\", s.fills AS \"Fills (day)\" FROM automation_snapshots s JOIN automations a ON a.id = s.automation_id WHERE s.date = (SELECT MAX(date) FROM automation_snapshots x WHERE x.automation_id = s.automation_id) AND s.portfolio_id = '${portfolio}' ORDER BY \"Return %\" DESC",
+          "rawQueryText": "SELECT b.name AS Budget, s.date AS Date, CAST(s.allocated AS REAL) AS Allocated, CAST(s.equity AS REAL) AS Equity, ROUND(CAST(s.return_percent AS REAL), 2) AS \"Return %\", CAST(s.realized_pnl AS REAL) AS Realized, CAST(s.unrealized_pnl AS REAL) AS Unrealized, s.open_positions AS Positions, s.orders_placed AS \"Orders (day)\", s.fills AS \"Fills (day)\", (SELECT group_concat(a.name, ', ') FROM budget_automations m JOIN automations a ON a.id = m.automation_id WHERE m.budget_id = b.id) AS Automations FROM budget_snapshots s JOIN budgets b ON b.id = s.budget_id WHERE s.date = (SELECT MAX(date) FROM budget_snapshots x WHERE x.budget_id = s.budget_id) AND s.portfolio_id = '${portfolio}' ORDER BY \"Return %\" DESC",
+          "queryText": "SELECT b.name AS Budget, s.date AS Date, CAST(s.allocated AS REAL) AS Allocated, CAST(s.equity AS REAL) AS Equity, ROUND(CAST(s.return_percent AS REAL), 2) AS \"Return %\", CAST(s.realized_pnl AS REAL) AS Realized, CAST(s.unrealized_pnl AS REAL) AS Unrealized, s.open_positions AS Positions, s.orders_placed AS \"Orders (day)\", s.fills AS \"Fills (day)\", (SELECT group_concat(a.name, ', ') FROM budget_automations m JOIN automations a ON a.id = m.automation_id WHERE m.budget_id = b.id) AS Automations FROM budget_snapshots s JOIN budgets b ON b.id = s.budget_id WHERE s.date = (SELECT MAX(date) FROM budget_snapshots x WHERE x.budget_id = s.budget_id) AND s.portfolio_id = '${portfolio}' ORDER BY \"Return %\" DESC",
           "timeColumns": []
         }
       ],
@@ -548,8 +549,8 @@
           },
           "refId": "A",
           "queryType": "table",
-          "rawQueryText": "SELECT o.created_at AS Created, o.side AS Side, CAST(o.quantity AS REAL) AS Qty, o.symbol AS Symbol, o.type AS Type, o.status AS Status, CAST(o.average_fill_price AS REAL) AS \"Avg fill\", CAST(o.estimated_price AS REAL) AS Estimated, COALESCE(a.name, 'manual') AS Owner FROM orders o LEFT JOIN automations a ON a.id = o.automation_id WHERE o.portfolio_id = '${portfolio}' ORDER BY o.created_at DESC LIMIT 100",
-          "queryText": "SELECT o.created_at AS Created, o.side AS Side, CAST(o.quantity AS REAL) AS Qty, o.symbol AS Symbol, o.type AS Type, o.status AS Status, CAST(o.average_fill_price AS REAL) AS \"Avg fill\", CAST(o.estimated_price AS REAL) AS Estimated, COALESCE(a.name, 'manual') AS Owner FROM orders o LEFT JOIN automations a ON a.id = o.automation_id WHERE o.portfolio_id = '${portfolio}' ORDER BY o.created_at DESC LIMIT 100",
+          "rawQueryText": "SELECT o.created_at AS Created, o.side AS Side, CAST(o.quantity AS REAL) AS Qty, o.symbol AS Symbol, o.type AS Type, o.status AS Status, CAST(o.average_fill_price AS REAL) AS \"Avg fill\", CAST(o.estimated_price AS REAL) AS Estimated, COALESCE(b.name, '—') AS Budget, COALESCE(a.name, 'manual') AS \"Placed by\" FROM orders o LEFT JOIN automations a ON a.id = o.automation_id LEFT JOIN budgets b ON b.id = o.budget_id WHERE o.portfolio_id = '${portfolio}' ORDER BY o.created_at DESC LIMIT 100",
+          "queryText": "SELECT o.created_at AS Created, o.side AS Side, CAST(o.quantity AS REAL) AS Qty, o.symbol AS Symbol, o.type AS Type, o.status AS Status, CAST(o.average_fill_price AS REAL) AS \"Avg fill\", CAST(o.estimated_price AS REAL) AS Estimated, COALESCE(b.name, '—') AS Budget, COALESCE(a.name, 'manual') AS \"Placed by\" FROM orders o LEFT JOIN automations a ON a.id = o.automation_id LEFT JOIN budgets b ON b.id = o.budget_id WHERE o.portfolio_id = '${portfolio}' ORDER BY o.created_at DESC LIMIT 100",
           "timeColumns": []
         }
       ],

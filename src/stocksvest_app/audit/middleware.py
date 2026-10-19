@@ -19,9 +19,11 @@ MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
 ENTITIES = {
     "filters": "FILTER", "filter-groups": "FILTER_GROUP", "automations": "AUTOMATION", "portfolios": "PORTFOLIO",
     "broker-accounts": "BROKER_ACCOUNT", "orders": "ORDER", "notifications": "NOTIFICATION", "runs": "RUN",
+    "budgets": "BUDGET",
 }
 # Clearer names where the generic "<ENTITY>_<path words>" would be awkward. Used by: describe
 ACTIONS = {
+    ("POST", "/v1/portfolios/{portfolio_id}/budgets"): ("BUDGET_CREATE", "BUDGET"),
     ("POST", "/v1/portfolios/{portfolio_id}/orders"): ("ORDER_PLACE_MANUAL", "PORTFOLIO"),
     ("POST", "/v1/orders/{order_id}/cancel"): ("ORDER_CANCEL", "ORDER"),
     ("PUT", "/v1/automations/switch"): ("AUTOMATIONS_SWITCH_SET", None),
@@ -134,9 +136,11 @@ def install(app: FastAPI, db_path) -> None:
             answer = json.loads(content) if content else None
         except ValueError:
             answer = None
-        entity_id = next((v for k, v in params.items() if k.endswith("_id")), None)
+        entity_id = params.get(f"{(entity or '').lower()}_id")  # e.g. budget_id for BUDGET_* actions
         if entity_id is None and isinstance(answer, dict) and response.status_code < 300:
             entity_id = answer.get("id")
+        if entity_id is None:
+            entity_id = next((v for k, v in params.items() if k.endswith("_id")), None)
         error = None
         if response.status_code >= 400:
             detail = answer.get("detail") if isinstance(answer, dict) else None

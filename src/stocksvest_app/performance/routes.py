@@ -1,4 +1,4 @@
-"""History endpoints: portfolio snapshots, automation performance, broker account equity."""
+"""History endpoints: portfolio snapshots, budget performance, broker account equity."""
 
 import sqlite3
 import time
@@ -7,7 +7,6 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ..automations import store as automations_store
 from ..brokers import store as brokers_store
 from ..brokers.base import BrokerError
 from ..deps import AppContext
@@ -30,7 +29,7 @@ def _json(values: dict) -> dict:
 
 
 def router(ctx: AppContext) -> APIRouter:
-    """The history routes (/v1/portfolios/{id}/history and /snapshot, /v1/automations/{id}/performance, /v1/broker-accounts/{id}/equity-history).
+    """The history routes (/v1/portfolios/{id}/history and /snapshot, /v1/budgets/{id}/performance, /v1/broker-accounts/{id}/equity-history).
 
     Args:
         ctx: app context (DB, market helpers, broker factory, key check).
@@ -85,27 +84,27 @@ def router(ctx: AppContext) -> APIRouter:
         return {"at": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "kind": "MANUAL",
                 **_json(snapshots.snapshot_portfolio(ctx, conn, p, "MANUAL", now))}
 
-    @r.get("/v1/automations/{automation_id}/performance", tags=["history"])
-    def automation_performance(automation_id: str, conn: Conn, start: str | None = None, end: str | None = None):
-        """One point per trading day (after the close), plus `current` right now. returnPercent =
-        (equity - allocated) / allocated.
+    @r.get("/v1/budgets/{budget_id}/performance", tags=["history"])
+    def budget_performance(budget_id: str, conn: Conn, start: str | None = None, end: str | None = None):
+        """A budget's value: one point per trading day (after the close), plus `current` right now.
+        returnPercent = (equity - allocated) / allocated.
         \f
         Args:
-            automation_id: the automation's id (path).
+            budget_id: the budget's id (path).
             conn: app DB connection (injected).
             start: from this date (query, optional).
             end: up to this date (query, optional).
         """
-        if not automations_store.get_automation(conn, automation_id):
-            raise HTTPException(404, f"automation '{automation_id}' not found")
-        row = conn.execute("SELECT * FROM budget_pools WHERE automation_id = ?", (automation_id,)).fetchone()
+        row = conn.execute("SELECT * FROM budgets WHERE id = ?", (budget_id,)).fetchone()
+        if not row and not store.budget_points(conn, budget_id, None, None):
+            raise HTTPException(404, f"budget '{budget_id}' not found")
         now = datetime.now(timezone.utc)
         current = None
-        if row:
+        if row:  # a deleted budget keeps its history
             from .snapshots import ET
             current = {"at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                       **_json(snapshots.automation_values(ctx, conn, row, now.astimezone(ET).date().isoformat()))}
-        return {"points": store.automation_points(conn, automation_id, start, end), "current": current}
+                       **_json(snapshots.budget_values(ctx, conn, row, now.astimezone(ET).date().isoformat()))}
+        return {"points": store.budget_points(conn, budget_id, start, end), "current": current}
 
     @r.get("/v1/broker-accounts/{account_id}/equity-history", tags=["history"])
     def equity_history(account_id: str, conn: Conn,

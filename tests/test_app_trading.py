@@ -46,7 +46,7 @@ def portfolio(client):
 def automation(client, portfolio):
     f = client.post("/v1/filters", headers=KEY, json={"name": "All", "inputs": [{"type": "UNIVERSE"}]}).json()
     return client.post("/v1/automations", headers=KEY, json={
-        "name": "Bot", "portfolioId": portfolio["id"], "runTargets": [{"type": "FILTER", "id": f["id"]}],
+        "name": "Bot", "runTargets": [{"type": "FILTER", "id": f["id"]}],
         "schedules": [{"type": "DAILY", "atTimes": ["10:00"]}],
         "actions": [{"type": "NOTIFY", "title": "x"}]}).json()
 
@@ -60,9 +60,16 @@ def sync(client, portfolio):
     return client.post(f"/v1/portfolios/{portfolio['id']}/sync", headers=KEY).json()
 
 
-def ledger(client, automation):
+@pytest.fixture
+def budget(client, portfolio, automation):
+    """An empty budget of the portfolio, with the automation in it."""
+    return client.post(f"/v1/portfolios/{portfolio['id']}/budgets", headers=KEY,
+                       json={"name": "Main", "automationIds": [automation["id"]]}).json()
+
+
+def ledger(client, budget):
     return [(e["type"], e["amount"]) for e in reversed(client.get(
-        f"/v1/automations/{automation['id']}/budget", headers=KEY).json()["entries"])]
+        f"/v1/budgets/{budget['id']}/ledger", headers=KEY).json()["entries"])]
 
 
 # ------------------------------------------------------------------ broker accounts
@@ -219,55 +226,92 @@ def test_external_fills_are_recorded_once(client, portfolio, broker):
 # ------------------------------------------------------------------ budgets
 
 
-def test_budget_allocate_and_withdraw(client, portfolio, automation):
-    url = f"/v1/automations/{automation['id']}/budget"
+def test_budget_allocate_and_withdraw(client, portfolio, automation, budget):
+    url = f"/v1/budgets/{budget['id']}"
+    assert budget["cash"] == 0 and [x["id"] for x in budget["automations"]] == [automation["id"]]
     assert client.post(f"{url}/allocate", headers=KEY, json={"amount": 20000}).status_code == 422  # more than cash
-    pool = client.post(f"{url}/allocate", headers=KEY, json={"amount": 3000, "note": "start"}).json()["pool"]
-    assert pool["cash"] == 3000 and pool["available"] == 3000 and pool["allocated"] == 3000
+    b = client.post(f"{url}/allocate", headers=KEY, json={"amount": 3000, "note": "start"}).json()
+    assert b["cash"] == 3000 and b["available"] == 3000 and b["allocated"] == 3000
     pf = client.get(f"/v1/portfolios/{portfolio['id']}", headers=KEY).json()
     assert pf["unallocatedCash"] == 7000 and pf["cash"] == 10000  # budgets are part of the portfolio's cash
+    assert [x["name"] for x in pf["budgets"]] == ["Main"]
     assert "INSUFFICIENT_BUDGET" in buy(client, portfolio, quantity=750).text  # 7500 > 7000 unallocated
-    pool = client.post(f"{url}/withdraw", headers=KEY, json={"amount": 1000}).json()["pool"]
-    assert pool["cash"] == 2000 and pool["allocated"] == 2000
+    b = client.post(f"{url}/withdraw", headers=KEY, json={"amount": 1000}).json()
+    assert b["cash"] == 2000 and b["allocated"] == 2000
     assert client.post(f"{url}/withdraw", headers=KEY, json={"amount": 5000}).status_code == 422
+    assert ledger(client, budget) == [("ALLOCATE", 3000), ("WITHDRAW", -1000)]
     events = [e["type"] for e in client.get(f"/v1/automations/{automation['id']}/events", headers=KEY).json()["events"]]
-    assert events[:2] == ["BUDGET_WITHDRAWN", "BUDGET_ALLOCATED"]
+    assert events[0] == "BUDGET_ADDED"
 
 
-def test_automation_buy_and_sell_flow_through_the_ledger(client, portfolio, automation, broker):
-    aid = automation["id"]
-    client.post(f"/v1/automations/{aid}/budget/allocate", headers=KEY, json={"amount": 1000})
+def test_several_budgets_per_portfolio(client, portfolio, automation, budget):
+    base = f"/v1/portfolios/{portfolio['id']}/budgets"
+    growth = client.post(base, headers=KEY, json={"name": "Growth", "amount": 4000}).json()
+    assert growth["automations"] == [] and growth["cash"] == 4000
+    assert client.post(base, headers=KEY, json={"name": "Growth"}).status_code == 409  # names are unique
+    assert client.post(base, headers=KEY, json={"name": "X", "amount": 7000}).status_code == 422  # only 6000 left
+    assert client.post(base, headers=KEY, json={"name": "X", "automationIds": ["aut_missing"]}).status_code == 422
+    assert [b["name"] for b in client.get(base, headers=KEY).json()["budgets"]] == ["Growth", "Main"]
+    assert client.put(f"/v1/budgets/{growth['id']}", headers=KEY, json={"name": "Main"}).status_code == 409
+    assert client.put(f"/v1/budgets/{growth['id']}", headers=KEY, json={"name": "Long term"}).json()["name"] == "Long term"
 
-    order = buy(client, portfolio, quantity=50, automationId=aid).json()  # 50 * 10 * 1.01 = 505 reserved
-    pool = client.get(f"/v1/automations/{aid}/budget", headers=KEY).json()["pool"]
-    assert pool["reserved"] == 505 and pool["available"] == 495
-    assert "INSUFFICIENT_BUDGET" in buy(client, portfolio, quantity=50, automationId=aid).text
+    # The portfolio chooses its automations; one automation can be in several budgets.
+    added = client.post(f"/v1/budgets/{growth['id']}/automations", headers=KEY, json={"automationId": automation["id"]})
+    assert [a["id"] for a in added.json()["automations"]] == [automation["id"]]
+    got = client.get(f"/v1/automations/{automation['id']}", headers=KEY).json()["budgets"]
+    assert {b["name"] for b in got} == {"Main", "Long term"}
+    assert client.delete(f"/v1/budgets/{growth['id']}/automations/{automation['id']}", headers=KEY).json()["automations"] == []
+    assert client.delete(f"/v1/budgets/{growth['id']}/automations/{automation['id']}", headers=KEY).status_code == 404
+
+    # A portfolio with budgets can't be deleted; deleting a budget returns its cash.
+    assert "delete its budgets first" in client.delete(f"/v1/portfolios/{portfolio['id']}", headers=KEY).text
+    assert client.delete(f"/v1/budgets/{growth['id']}", headers=KEY).status_code == 204
+    pf = client.get(f"/v1/portfolios/{portfolio['id']}", headers=KEY).json()
+    assert pf["unallocatedCash"] == 10000 and [b["name"] for b in pf["budgets"]] == ["Main"]
+    assert ledger(client, growth)[-1] == ("WITHDRAW", -4000)  # the ledger outlives the budget
+
+
+def test_budget_buy_and_sell_flow_through_the_ledger(client, portfolio, automation, budget, broker):
+    bid = budget["id"]
+    client.post(f"/v1/budgets/{bid}/allocate", headers=KEY, json={"amount": 1000})
+
+    order = buy(client, portfolio, quantity=50, budgetId=bid).json()  # 50 * 10 * 1.01 = 505 reserved
+    assert order["budgetId"] == bid and order["automationId"] is None
+    b = client.get(f"/v1/budgets/{bid}", headers=KEY).json()
+    assert b["reserved"] == 505 and b["available"] == 495 and [o["id"] for o in b["openOrders"]] == [order["id"]]
+    assert "INSUFFICIENT_BUDGET" in buy(client, portfolio, quantity=50, budgetId=bid).text
+    assert "not a budget of this portfolio" in buy(client, portfolio, budgetId="bud_missing").text
 
     broker.fill(order["brokerOrderId"], 30, 10)  # partial
     sync(client, portfolio)
     broker.fill(order["brokerOrderId"], 20, "10.10")
     sync(client, portfolio)
-    pool = client.get(f"/v1/automations/{aid}/budget", headers=KEY).json()["pool"]
-    assert pool["cash"] == pytest.approx(1000 - 300 - 202)
-    assert pool["reserved"] == 0 and pool["invested"] == pytest.approx(502)
-    assert ledger(client, {"id": aid}) == [("ALLOCATE", 1000), ("RESERVE", 505), ("BUY_FILL", -300),
-                                           ("BUY_FILL", -202), ("RELEASE", -3)]
+    b = client.get(f"/v1/budgets/{bid}", headers=KEY).json()
+    assert b["cash"] == pytest.approx(1000 - 300 - 202)
+    assert b["reserved"] == 0 and b["invested"] == pytest.approx(502)
+    assert [(x["symbol"], x["quantity"]) for x in b["positions"]] == [("AAA", 50)]
+    assert ledger(client, budget) == [("ALLOCATE", 1000), ("RESERVE", 505), ("BUY_FILL", -300),
+                                      ("BUY_FILL", -202), ("RELEASE", -3)]
 
-    # Shares outside the automation (BBB is unassigned on the account) are not its to sell.
+    # Shares outside the budget (BBB is unassigned on the account) are not its to sell.
     assert "NOT_HELD" in client.post(f"/v1/portfolios/{portfolio['id']}/orders", headers=KEY, json={
-        "symbol": "BBB", "side": "SELL", "quantity": 1, "automationId": aid}).text
+        "symbol": "BBB", "side": "SELL", "quantity": 1, "budgetId": bid}).text
     sell = client.post(f"/v1/portfolios/{portfolio['id']}/orders", headers=KEY, json={
-        "symbol": "AAA", "side": "SELL", "quantity": 40, "automationId": aid}).json()
+        "symbol": "AAA", "side": "SELL", "quantity": 40, "budgetId": bid}).json()
     assert "NOT_HELD" in client.post(f"/v1/portfolios/{portfolio['id']}/orders", headers=KEY, json={
-        "symbol": "AAA", "side": "SELL", "quantity": 11, "automationId": aid}).text  # 40 already being sold
+        "symbol": "AAA", "side": "SELL", "quantity": 11, "budgetId": bid}).text  # 40 already being sold
+    assert "NOT_HELD" in client.post(f"/v1/portfolios/{portfolio['id']}/orders", headers=KEY, json={
+        "symbol": "AAA", "side": "SELL", "quantity": 1}).text  # manual shares: none
     broker.fill(sell["brokerOrderId"], 40, 11, fee="1")
     sync(client, portfolio)
-    pool = client.get(f"/v1/automations/{aid}/budget", headers=KEY).json()["pool"]
+    b = client.get(f"/v1/budgets/{bid}", headers=KEY).json()
     # Sold the 30 @10 lot and 10 of the 20 @10.10 lot at 11: P&L = 30*1 + 10*0.9 = 39
-    assert pool["realizedPnL"] == pytest.approx(39) and pool["fees"] == 1
-    assert pool["invested"] == pytest.approx(101) and pool["cash"] == pytest.approx(498 + 440 - 1)
+    assert b["realizedPnL"] == pytest.approx(39) and b["fees"] == 1
+    assert b["invested"] == pytest.approx(101) and b["cash"] == pytest.approx(498 + 440 - 1)
     lots = client.get(f"/v1/portfolios/{portfolio['id']}/lots", headers=KEY).json()["lots"]
-    assert [(l["symbol"], l["remainingQuantity"], l["automationId"]) for l in lots] == [("AAA", 10, aid)]
+    assert [(l["symbol"], l["remainingQuantity"], l["budgetId"]) for l in lots] == [("AAA", 10, bid)]
+    fills = client.get(f"/v1/portfolios/{portfolio['id']}/fills", headers=KEY).json()["fills"]
+    assert fills[0]["side"] == "SELL" and fills[0]["realizedPnL"] == pytest.approx(39)
     pf = client.get(f"/v1/portfolios/{portfolio['id']}", headers=KEY).json()
     assert pf["cash"] == pytest.approx(10000 - 502 + 440 - 1)  # portfolio cash follows every fill and fee
 
@@ -338,62 +382,41 @@ def test_alpaca_fills_pagination_and_live_refused(monkeypatch):
         make_broker({"environment": "PAPER", "provider": "ALPACA", "credentialsRef": "NOPE"})
 
 
-# ------------------------------------------------------------------ deleting automations that trade
+# ------------------------------------------------------------------ deleting budgets and automations
 
 
-def test_deleting_an_automation_with_a_budget_is_guarded(settings, client, portfolio, automation, broker):
-    aid = automation["id"]
-    client.post(f"/v1/automations/{aid}/budget/allocate", headers=KEY, json={"amount": 1000})
-
-    r = client.delete(f"/v1/automations/{aid}", headers=KEY)
-    assert r.status_code == 409 and "budget still holds 1000.00" in r.text
-
-    order = buy(client, portfolio, quantity=5, automationId=aid).json()  # open order
-    r = client.delete(f"/v1/automations/{aid}?returnBudget=true", headers=KEY)
+def test_deleting_a_budget_is_guarded(client, portfolio, automation, budget, broker):
+    bid = budget["id"]
+    client.post(f"/v1/budgets/{bid}/allocate", headers=KEY, json={"amount": 1000})
+    order = buy(client, portfolio, quantity=5, budgetId=bid).json()  # open order
+    r = client.delete(f"/v1/budgets/{bid}", headers=KEY)
     assert r.status_code == 409 and "open order" in r.text
     broker.fill(order["brokerOrderId"], 5, 10)
     sync(client, portfolio)
-    r = client.delete(f"/v1/automations/{aid}?returnBudget=true", headers=KEY)
+    r = client.delete(f"/v1/budgets/{bid}", headers=KEY)
     assert r.status_code == 409 and "holds shares (5 AAA)" in r.text
 
     sell = client.post(f"/v1/portfolios/{portfolio['id']}/orders", headers=KEY, json={
-        "symbol": "AAA", "side": "SELL", "quantity": 5, "automationId": aid}).json()
+        "symbol": "AAA", "side": "SELL", "quantity": 5, "budgetId": bid}).json()
     broker.fill(sell["brokerOrderId"], 5, 11)
     sync(client, portfolio)
-    assert client.delete(f"/v1/automations/{aid}?returnBudget=true", headers=KEY).status_code == 204
-
+    assert client.delete(f"/v1/budgets/{bid}", headers=KEY).status_code == 204
     pf = client.get(f"/v1/portfolios/{portfolio['id']}", headers=KEY).json()
     assert pf["budgets"] == [] and pf["unallocatedCash"] == pytest.approx(10005)  # 10000 + 5 profit
-    from stocksvest_app import db
-    from stocksvest_app.automations import budget
-    last = budget.entries(db.connect(settings.db_path), aid)[0]  # the ledger outlives the automation
-    assert last["type"] == "WITHDRAW" and last["amount"] == pytest.approx(-1005) and "deleted" in last["note"]
+    assert ledger(client, budget)[-1] == ("WITHDRAW", pytest.approx(-1005))
+    assert client.get(f"/v1/automations/{automation['id']}", headers=KEY).json()["budgets"] == []
+    events = [e["type"] for e in client.get(f"/v1/automations/{automation['id']}/events", headers=KEY).json()["events"]]
+    assert events[0] == "BUDGET_REMOVED"
 
 
-def test_orphan_budgets_are_returned_on_startup(settings, broker, client, portfolio, automation):
-    from stocksvest_app import db
-    from stocksvest_app.automations import budget
-    aid = automation["id"]
-    client.post(f"/v1/automations/{aid}/budget/allocate", headers=KEY, json={"amount": 1000})
-    conn = db.connect(settings.db_path)
-    with conn:  # what the unguarded delete used to do
-        conn.execute("DELETE FROM automations WHERE id = ?", (aid,))
-    assert budget.repair_orphan_pools(conn) == [{"automationId": aid, "repaired": True, "returned": 1000.0}]
-    assert budget.repair_orphan_pools(conn) == []
-    pf = client.get(f"/v1/portfolios/{portfolio['id']}", headers=KEY).json()
-    assert pf["unallocatedCash"] == 10000 and pf["budgets"] == []
-
-
-def test_moving_an_automation_to_another_portfolio_is_guarded(client, portfolio, automation):
-    aid = automation["id"]
-    acct = portfolio["brokerAccountId"]
-    client.post(f"/v1/portfolios/{portfolio['id']}/capital/withdraw", headers=KEY, json={"amount": 2000})
-    other = client.post("/v1/portfolios", headers=KEY, json={"name": "Other", "brokerAccountId": acct, "capital": 2000}).json()
-    client.post(f"/v1/automations/{aid}/budget/allocate", headers=KEY, json={"amount": 500})
-    body = {**{k: automation[k] for k in ("name", "runTargets", "schedules", "actions")}, "portfolioId": other["id"]}
-    r = client.put(f"/v1/automations/{aid}", headers=KEY, json=body)
-    assert r.status_code == 409 and "withdraw it first" in r.text
-    client.post(f"/v1/automations/{aid}/budget/withdraw", headers=KEY, json={"amount": 500})
-    assert client.put(f"/v1/automations/{aid}", headers=KEY, json=body).json()["portfolioId"] == other["id"]
-    client.post(f"/v1/automations/{aid}/budget/allocate", headers=KEY, json={"amount": 300})
-    assert client.get(f"/v1/automations/{aid}/budget", headers=KEY).json()["pool"]["portfolioId"] == other["id"]
+def test_deleting_an_automation_keeps_the_budget(client, portfolio, automation, budget, broker):
+    bid = budget["id"]
+    client.post(f"/v1/budgets/{bid}/allocate", headers=KEY, json={"amount": 1000})
+    order = buy(client, portfolio, quantity=5, budgetId=bid).json()
+    assert client.delete(f"/v1/automations/{automation['id']}", headers=KEY).status_code == 204
+    b = client.get(f"/v1/budgets/{bid}", headers=KEY).json()
+    assert b["automations"] == [] and b["cash"] == 1000 and b["reserved"] == pytest.approx(50.5)
+    broker.fill(order["brokerOrderId"], 5, 10)  # the open order still settles into the budget
+    sync(client, portfolio)
+    b = client.get(f"/v1/budgets/{bid}", headers=KEY).json()
+    assert b["invested"] == 50 and b["reserved"] == 0 and b["cash"] == 950

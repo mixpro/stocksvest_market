@@ -15,8 +15,8 @@ from .deps import AppContext
 from .audit import middleware as audit_middleware
 from .audit import routes as audit_routes
 from .audit import store as audit_store
-from .automations import budget
 from .automations import routes as automations_routes
+from .budgets import routes as budgets_routes
 from .automations.scheduler import AutomationScheduler
 from .brokers import routes as brokers_routes
 from .brokers.base import Broker
@@ -53,8 +53,7 @@ def create_app(settings: Settings | None = None, market_factory: Callable[[Setti
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        """Startup: create/upgrade the DB, log APP_STARTED, return budgets left by deleted automations, start the
-        scheduler. Shutdown: stop the scheduler.
+        """Startup: create/upgrade the DB, log APP_STARTED, start the scheduler. Shutdown: stop the scheduler.
 
         Args:
             app: the FastAPI app.
@@ -62,11 +61,6 @@ def create_app(settings: Settings | None = None, market_factory: Callable[[Setti
         conn = db.connect(settings.db_path)
         db.init(conn)
         audit_store.record(conn, "APP_STARTED", details={"version": app.version}, source="SYSTEM")
-        for repaired in budget.repair_orphan_pools(conn):
-            log.warning("budget of deleted automation %s: %s", repaired["automationId"], repaired)
-            audit_store.record(conn, "BUDGET_ORPHAN_RETURNED" if repaired["repaired"] else "BUDGET_ORPHAN_FOUND",
-                               "AUTOMATION", repaired["automationId"], details=repaired, source="SYSTEM",
-                               outcome="OK" if repaired["repaired"] else "FAILED")
         conn.close()
         if settings.run_scheduler:
             ctx.scheduler = AutomationScheduler(ctx)
@@ -97,6 +91,7 @@ def create_app(settings: Settings | None = None, market_factory: Callable[[Setti
     app.include_router(runs_routes.router(ctx))
     app.include_router(brokers_routes.router(ctx))
     app.include_router(portfolios_routes.router(ctx))
+    app.include_router(budgets_routes.router(ctx))
     app.include_router(orders_routes.router(ctx))
     app.include_router(performance_routes.router(ctx))
     app.include_router(audit_routes.router(ctx))

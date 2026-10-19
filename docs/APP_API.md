@@ -245,7 +245,7 @@ curl -X POST -H "X-API-Key: $APP_KEY" -H "Content-Type: application/json" \
 
 | Field | Values |
 |---|---|
-| `side` | `BUY`, or `SELL` (only the automation's own shares; no short selling) |
+| `side` | `BUY`, or `SELL` (only shares bought with the same budget, by any of its automations; no short selling) |
 | `orderType` | `MARKET`, `LIMIT`, `STOP`, `STOP_LIMIT`, `TRAILING_STOP` |
 | `limitOffsetPercent` / `stopOffsetPercent` | Price = latest price × (1 + offset%), e.g. `-0.5` = 0.5% below |
 | `trailPercent` | For `TRAILING_STOP` |
@@ -255,11 +255,15 @@ curl -X POST -H "X-API-Key: $APP_KEY" -H "Content-Type: application/json" \
 | `sizings` | One sizing for every symbol, or (`TOP_N`) one per rank. Buy: `QUANTITY`, `CASH_AMOUNT`, `PERCENT_OF_BUDGET`. Sell: `QUANTITY`, `PERCENT_OF_POSITION` |
 
 **Rules:**
-- An automation that places orders needs a `portfolioId` and a **budget**.
+- Order actions trade with the **budgets** the automation is in (see [Budgets](#budgets)). Portfolios choose their
+  automations; an automation in no budget runs its filters and other actions, and its order actions are `SKIPPED`.
+- An automation in several budgets (also of different portfolios) plans and places orders **separately for each
+  budget**, with that budget's money and shares. Filters run once per run.
 - `missedPolicy: RUN_ALL` isn't allowed for these automations.
 - Orders use whole shares.
 
-`orderGuards` on the automation (defaults shown):
+`orderGuards` on the automation (defaults shown). They apply to each budget separately: `maxOrdersPerRun` is per
+budget, and position caps and `skipBuyIfHeld` look at the budget's shares and open orders:
 
 ```json
 {"maxOrdersPerRun": 10, "maxPositionValue": null, "maxPositionPercent": null,
@@ -267,7 +271,8 @@ curl -X POST -H "X-API-Key: $APP_KEY" -H "Content-Type: application/json" \
 ```
 
 **How a run plans orders:**
-1. **Sync:** current fills and balances are imported from the broker first.
+1. **Sync:** current fills and balances are imported from each budget's broker account first. If a broker can't
+   be reached, that budget is reported as failed and the others still trade (the run is `PARTIAL`).
 2. **Rank and size:** symbols are ranked and sized.
 3. **Guards:** applied in rank order. Each symbol becomes an intent: `PLACE`, or `SKIP` with a reason:
 
@@ -275,7 +280,7 @@ curl -X POST -H "X-API-Key: $APP_KEY" -H "Content-Type: application/json" \
    |---|---|
    | `STALE_DATA` | Market data older than `maxDataAgeMinutes` |
    | `OUTSIDE_REGULAR_HOURS` | `regularHoursOnly` is on and the market isn't in its regular session |
-   | `ALREADY_HELD` | `skipBuyIfHeld` is on and the automation holds it or has a buy open |
+   | `ALREADY_HELD` | `skipBuyIfHeld` is on and the budget holds it or has a buy open (from any of its automations) |
    | `MAX_POSITION` | `maxPositionValue` or `maxPositionPercent` reached (a smaller order is placed when it fits) |
    | `INSUFFICIENT_BUDGET` | Not enough budget left; the top ranks are served first |
    | `MAX_ORDERS_REACHED` | `maxOrdersPerRun` reached |
@@ -283,34 +288,24 @@ curl -X POST -H "X-API-Key: $APP_KEY" -H "Content-Type: application/json" \
    | `ZERO_QUANTITY` | The sizing comes to less than one share |
    | `NOT_SUPPORTED_BY_BROKER` | The broker doesn't support this order type, time in force or extended hours |
 
-4. **Submit:** `PLACE` intents go to the broker with the client order ID `<runId>-<actionIndex>-<ticker>`, so a retry never creates a second order.
+4. **Submit:** `PLACE` intents go to the broker with the client order ID `<runId>-<actionIndex>-<budgetId>-<ticker>`,
+   so a retry never creates a second order.
 
-**What the run records:** `budgetBefore` / `budgetAfter`, every intent with its `orderId`, and the order totals in `metrics`.
+**What the run records:** `result.budgets` (each budget's money `before` and `after`, or its `error`), and per
+order action `budgets: [{budgetId, name, status, notHeld, intents}]`, every intent with its `orderId`, and the
+order totals in `metrics` (including `budgetCount`).
 
 **Preview** shows the same plan without placing anything.
 
-### Budget
+### What an automation did
 
-| Call | Notes |
-|---|---|
-| `GET /v1/automations/{id}/budget` | `pool` and `entries` (the ledger, newest first) |
-| `POST /v1/automations/{id}/budget/allocate` | `{"amount": 1000, "note": "…"}`, taken from the portfolio's unallocated cash |
-| `POST /v1/automations/{id}/budget/withdraw` | Only the available part (not reserved, not invested) |
+`GET /v1/automations/{id}/record`: per budget it traded with, and in total: `ordersPlaced`, `openOrders`,
+`buyFills` and `spent`, `sellFills` and `received`, `realizedPnL` of its sells, and `fees`. It counts only this
+automation's own orders, so it still works after it leaves a budget, the budget is deleted, or the automation is
+deleted. The budget's money and value over time are on the budget itself.
 
-**`pool` fields:**
-- **`cash`:** the automation's uninvested money, including the reserved part
-- **`reserved`:** set aside for open buy orders
-- **`available`:** `cash` − `reserved`; what new buys can use
-- **`invested`:** what its shares cost
-- **`realizedPnL`** and **`fees`**
-
-**Ledger entry types:**
-- `ALLOCATE`, `WITHDRAW`: you move money in or out
-- `RESERVE`: a buy order is placed
-- `RELEASE`: unused reservation returned when an order finishes or is cancelled
-- `BUY_FILL`, `SELL_FILL`, `FEE`: from broker fills
-
-Each entry has `cashAfter` and `reservedAfter`, and links to its order, fill and run. The ledger is kept permanently.
+The automation's `budgets` field lists the budgets it is in: `[{id, name, portfolioId}]`. Its change log
+(`/events`) records `BUDGET_ADDED` and `BUDGET_REMOVED`.
 
 ### Notifications
 
@@ -342,8 +337,9 @@ A broker account can hold **several portfolios**, each with its own capital:
 ```
 Alpaca paper account  $100,000
 ├─ Portfolio "Growth"      $40,000   ← capital
-│   ├─ Automation A budget   $10,000
-│   └─ Automation B budget    $5,000
+│   ├─ Budget "Momentum"     $10,000   ← used by "Buy gainers" and "Sell losers"
+│   ├─ Budget "Dips"          $5,000   ← used by "Buy dips"
+│   └─ unallocated           $25,000   ← manual orders
 ├─ Portfolio "Dividends"   $30,000
 └─ unassigned              $30,000
 ```
@@ -355,13 +351,13 @@ Alpaca paper account  $100,000
 | Call | Notes |
 |---|---|
 | `POST /v1/portfolios` | `{"name": "Growth", "brokerAccountId": "bka_…", "capital": 40000}`. `capital` comes from the account's unassigned cash |
-| `GET /v1/portfolios/{id}` | Capital (`allocated`), `cash`, `unallocatedCash` (not in automation budgets), `positionsValue`, `equity`, unrealized and realized P&L, positions by owner, budgets, the account's unassigned cash, last sync |
+| `GET /v1/portfolios/{id}` | Capital (`allocated`), `cash`, `unallocatedCash` (not in budgets), `positionsValue`, `equity`, unrealized and realized P&L, positions (per symbol, budget and buying automation), budgets, the account's unassigned cash, last sync |
 | `POST /v1/portfolios/{id}/capital/allocate` / `withdraw` | `{"amount": 5000}`: move money between the account's unassigned cash and the portfolio. A withdrawal can only take unallocated cash |
 | `GET /v1/portfolios/{id}/ledger` | Every change of the portfolio's cash, newest first |
-| `DELETE /v1/portfolios/{id}` | Only when empty: no shares, no open orders, no automations, and no filter with a `POSITION` action on it. Its cash goes back to the account |
+| `DELETE /v1/portfolios/{id}` | Only when empty: no shares, no open orders, no budgets, and no filter using it (input or `POSITION` action). Its cash goes back to the account |
 | `POST /v1/portfolios/{id}/sync` | Sync now. This also runs every minute in the background |
-| `GET /v1/portfolios/{id}/orders?status=&automationId=&openOnly=true` | Orders, newest first |
-| `GET /v1/portfolios/{id}/fills`, `/lots` | Fills, and position lots (who owns which shares) |
+| `GET /v1/portfolios/{id}/orders?status=&automationId=&budgetId=&openOnly=true` | Orders, newest first. Each has `budgetId` (who pays) and `automationId` (who placed it) |
+| `GET /v1/portfolios/{id}/fills`, `/lots` | Fills (sells with their `realizedPnL`), and position lots (`budgetId` owns them, `automationId` bought them) |
 | `POST /v1/portfolios/{id}/orders` | Manual order (see below) |
 | `GET /v1/orders/{id}` | One order with its fills |
 | `POST /v1/orders/{id}/cancel` | Cancel an open order |
@@ -373,12 +369,49 @@ Alpaca paper account  $100,000
 ```
 
 - Only **halal symbols** are accepted.
-- Without `automationId`, a buy uses unallocated cash and a sell uses manual shares.
-- With `automationId`, the order uses that automation's budget or shares.
+- Without `budgetId`, a buy uses unallocated cash and a sell uses manual shares.
+- With `budgetId` (a budget of this portfolio), a buy uses its money and a sell its shares.
 
 **Order records:** each order keeps `estimatedPrice` and `averageFillPrice`, so `slippage` shows the difference.
 
-**Who owns which shares:** shares are tracked in lots per owner (an automation, or manual). Sells close the owner's oldest lots first, so profit and budgets are exact per automation.
+**Who owns which shares:** shares are tracked in lots. A lot belongs to the budget that paid for it (or to the
+portfolio's manual shares) and remembers which automation bought it. Sells close the budget's oldest lots first,
+whoever bought them, so money and profit are exact per budget.
+
+### Budgets
+
+A portfolio can have **several budgets**. Each is a named pot of money carved out of the portfolio's cash.
+The portfolio chooses which automations use each budget, and one automation can be in several budgets (also of
+other portfolios). All automations in a budget **share** it: buys take its money, sells sell its shares and put
+the money back. For example, a "buy gainers" and a "sell losers" automation in the same budget trade one pot.
+
+| Call | Notes |
+|---|---|
+| `GET /v1/portfolios/{id}/budgets` | The portfolio's budgets with their automations |
+| `POST /v1/portfolios/{id}/budgets` | `{"name": "Momentum", "amount": 10000, "automationIds": ["aut_…"]}`. `amount` comes from unallocated cash; names are unique per portfolio (`409`) |
+| `GET /v1/budgets/{id}` | Money, automations, `positions` (with who bought them) and `openOrders` |
+| `PUT /v1/budgets/{id}` | `{"name": "…"}` |
+| `POST /v1/budgets/{id}/allocate` | `{"amount": 1000, "note": "…"}`, taken from the portfolio's unallocated cash |
+| `POST /v1/budgets/{id}/withdraw` | Only the available part (not reserved, not invested) |
+| `POST /v1/budgets/{id}/automations` | `{"automationId": "aut_…"}`: it trades with this budget from its next run |
+| `DELETE /v1/budgets/{id}/automations/{automationId}` | It stops trading with it. Shares it bought stay in the budget; its open orders settle normally |
+| `GET /v1/budgets/{id}/ledger` | Every change of its money, newest first, with the automation that caused it. Kept after deletion |
+| `DELETE /v1/budgets/{id}` | `409` while it holds shares or has open orders. Its cash goes back to the portfolio |
+
+**Budget fields:**
+- **`cash`:** uninvested money, including the reserved part
+- **`reserved`:** set aside for open buy orders
+- **`available`:** `cash` − `reserved`; what new buys can use
+- **`invested`:** what its shares cost
+- **`allocated`**, **`realizedPnL`** and **`fees`**
+
+**Ledger entry types:**
+- `ALLOCATE`, `WITHDRAW`: you move money in or out
+- `RESERVE`: a buy order is placed
+- `RELEASE`: unused reservation returned when an order finishes or is cancelled
+- `BUY_FILL`, `SELL_FILL`, `FEE`: from broker fills
+
+Each entry has `cashAfter` and `reservedAfter`, and links to its order, fill, run and automation.
 
 **Broker sync** (every minute, per broker account):
 - The app imports balances, fills (each one once) and order statuses from the broker.
@@ -391,7 +424,7 @@ Alpaca paper account  $100,000
 |---|---|
 | `GET /v1/portfolios/{id}/history?start=&end=&kind=` | Snapshots, oldest first, plus `current` (the same values right now). Each has `allocated`, `cash`, `unallocated`, `invested`, `positionsValue`, `equity`, `realizedPnL`, `unrealizedPnL` |
 | `POST /v1/portfolios/{id}/snapshot` | Record one now (`MANUAL`) |
-| `GET /v1/automations/{id}/performance?start=&end=` | One point per trading day plus `current`. Each has the budget, `positionsValue`, `equity`, P&L, `fees`, `returnPercent` = (equity − budget) / budget, `openPositions`, and that day's `ordersPlaced` and `fills` |
+| `GET /v1/budgets/{id}/performance?start=&end=` | One point per trading day plus `current`. Each has `allocated`, `cash`, `reserved`, `invested`, `positionsValue`, `equity`, P&L, `fees`, `returnPercent` = (equity − allocated) / allocated, `openPositions`, and that day's `ordersPlaced` and `fills` |
 
 **When portfolio snapshots are taken (`kind`):**
 - `INTERVAL`: every 15 minutes during the regular session
@@ -422,7 +455,7 @@ failures**:
 | `SCHEDULER` | `AUTOMATION_RUN`, `AUTOMATION_RUNS_MISSED`, `SCHEDULE_ERROR`, `SCHEDULER_ERROR` |
 | `SYNC` | `ORDER_SUBMITTED` / `ORDER_FILLED` / `ORDER_CANCELLED` / `ORDER_EXPIRED` / `ORDER_REJECTED` (status changes), `FILL_IMPORTED`, `EXTERNAL_FILL`, `BROKER_MISMATCH`, `BROKER_MISMATCH_RESOLVED`, `BROKER_SYNC_FAILED` |
 | `API` / `SCHEDULER` | `ORDER_PLACED`, `ORDER_REJECTED`, `ORDER_SUBMIT_UNCERTAIN` (the order an API call or automation run placed) |
-| `SYSTEM` | `APP_STARTED`, `DB_UPGRADE`, `BUDGET_ORPHAN_RETURNED` |
+| `SYSTEM` | `APP_STARTED`, `DB_UPGRADE` |
 
 **Linked entries:** entries caused by the same API request or scheduled run share a `correlationId`. Every
 response includes it in the `X-Correlation-Id` header.
@@ -501,16 +534,17 @@ page lets you:
 - click a symbol to see its candlestick chart (1 min to 1 month bars)
 
 The **Automations** page lets you build automations (filters, schedules, notify and place-order actions, order
-guards, portfolio and budget), preview them (including the order plan), see
+guards), preview them (including the order plan per budget), see
 upcoming run times, run now, pause or resume, see history and the change log, use the global switch, and read
 the inbox. The bell in the header shows unread notifications.
 
 The **Portfolio** page connects broker accounts, creates portfolios with their capital, and shows each
 portfolio's capital, cash, equity and a history chart. The chart has 1W to All ranges, with an optional "whole
-account" line from the broker. The page also shows positions by owner, automation budgets, the cash ledger,
-orders with slippage, and fills, and can place and cancel manual paper orders. Click a broker account to see its
-portfolios, unassigned cash and shares, and its equity history. The Automations page has a **Performance** button
-with an equity and return chart.
+account" line from the broker. The page also shows positions (budget and buyer), the cash ledger, orders with
+slippage, and fills, and can place and cancel manual paper orders. Under **Budgets** you create budgets, move money
+in and out, choose which automations use each one, and open its ledger. Click a broker account to see its
+portfolios, unassigned cash and shares, and its equity history. The Automations page shows the budgets an
+automation is in and has a **Record** button with what it did per budget.
 
 ## Python example
 

@@ -15,7 +15,8 @@ from ..deps import AppContext
 from ..orders import service as orders_service
 from ..orders import store as orders_store
 from ..portfolios import store as portfolios_store
-from . import budget, planner
+from . import planner
+from ..budgets import store as budget_store
 from .models import OrderGuards, PlaceOrderAction
 from ..filters import store as filters_store
 from ..filters.engine import EngineError, Evaluator
@@ -27,7 +28,8 @@ from .timing import ET
 
 log = logging.getLogger(__name__)
 
-# One run per automation at a time, and one order-placing run per portfolio at a time.
+# One run per automation at a time, and one order-placing run per portfolio at a time (a run takes the locks of
+# all its budgets' portfolios, in sorted order).
 # Used by: _lock_for, run_automation (tests hold a lock to simulate an overlapping run).
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
@@ -44,56 +46,64 @@ def _lock_for(key: str) -> threading.Lock:
 
 
 class Trading:
-    """Portfolio, broker and planning state for one run of an automation that places orders.
+    """Portfolio, broker and planning state of one budget during a run of an automation that places orders.
 
     Attributes:
-        portfolio: the automation's portfolio (refreshed after the broker sync).
+        budget_id: the budget the orders are paid from / sell for.
+        name: the budget's name.
+        portfolio: the budget's portfolio (refreshed after the broker sync).
         account: its broker account.
         broker: the Broker adapter (ctx.broker_factory).
-        guards: the automation's OrderGuards (defaults when missing).
+        guards: the automation's OrderGuards (defaults when missing), applied per budget.
         plan_ctx: PlanContext, built on first use and shared by every order action of the run.
 
     Used by: run_automation, _place_orders.
     """
 
-    def __init__(self, ctx: AppContext, conn, automation: dict, preview: bool):
-        """Load the portfolio and broker; for real runs, sync the broker account first so fills and balances are current.
+    def __init__(self, ctx: AppContext, conn, automation: dict, budget: dict, preview: bool, synced: set[str]):
+        """Load the portfolio and broker; for real runs, sync the broker account first (once per run) so fills and
+        balances are current.
 
         Args:
             ctx: app context.
             conn: app DB connection.
             automation: the automation dict.
+            budget: the budget dict (budgets.store.get_budget).
             preview: skip the broker sync (previews change nothing).
+            synced: broker account ids already synced in this run (updated).
 
         Raises:
             ValueError: the portfolio no longer exists.
             BrokerError: the broker can't be reached or synced.
         """
         self.conn, self.automation = conn, automation
-        self.portfolio = portfolios_store.get_portfolio(conn, automation["portfolioId"])
+        self.budget_id, self.name = budget["id"], budget["name"]
+        self.portfolio = portfolios_store.get_portfolio(conn, budget["portfolioId"])
         if not self.portfolio:
-            raise ValueError("the automation's portfolio no longer exists")
+            raise ValueError("the budget's portfolio no longer exists")
         self.account = brokers_store.get_account(conn, self.portfolio["brokerAccountId"])
         self.broker = ctx.broker_factory(self.account)
-        if not preview:  # current fills and balances before deciding anything
+        if not preview and self.account["id"] not in synced:  # current fills and balances before deciding anything
             orders_service.sync_account(conn, self.broker, self.account)
+            synced.add(self.account["id"])
             self.portfolio = portfolios_store.get_portfolio(conn, self.portfolio["id"])
         self.guards = OrderGuards.model_validate(automation.get("orderGuards") or {})
         self.plan_ctx: planner.PlanContext | None = None
 
-    def pool(self) -> dict | None:
-        """The automation's budget pool, or None."""
-        return budget.get_pool(self.conn, self.automation["id"])
+    def budget(self) -> dict | None:
+        """The budget now, or None if it was deleted meanwhile."""
+        return budget_store.get_budget(self.conn, self.budget_id)
 
     def budget_snapshot(self) -> dict | None:
-        """Budget figures for the run record (budgetBefore / budgetAfter), or None without a pool."""
-        p = self.pool()
-        if not p:
+        """Budget figures for the run record (before / after), or None if the budget is gone."""
+        b = self.budget()
+        if not b:
             return None
-        return {k: p[k] for k in ("cash", "reserved", "available", "invested", "realizedPnL", "fees", "allocated")}
+        return {k: b[k] for k in ("cash", "reserved", "available", "invested", "realizedPnL", "fees", "allocated")}
 
     def context(self, snapshots: dict, session, data_age) -> planner.PlanContext:
-        """The run's PlanContext, built once from the automation's holdings, open orders and budget.
+        """The budget's PlanContext, built once from the budget's shares, its open orders (from any of its
+        automations) and its money.
 
         Args:
             snapshots: market snapshots of the matched symbols.
@@ -101,21 +111,21 @@ class Trading:
             data_age: market data age in minutes.
         """
         if self.plan_ctx is None:
-            aid, pid = self.automation["id"], self.portfolio["id"]
+            bid, pid = self.budget_id, self.portfolio["id"]
             holdings = {p["symbol"]: planner.Holding(p["quantity"], p["costBasis"])
-                        for p in portfolios_store.positions(self.conn, pid, automation_id=aid)}
-            open_orders = orders_store.list_orders(self.conn, pid, automation_id=aid, open_only=True, limit=1000)
+                        for p in portfolios_store.positions(self.conn, pid, budget_id=bid)}
+            open_orders = orders_store.list_orders(self.conn, pid, budget_id=bid, open_only=True, limit=1000)
             open_sells: dict[str, Decimal] = {}
             for o in open_orders:
                 if o["side"] == "SELL":
                     open_sells[o["symbol"]] = open_sells.get(o["symbol"], Decimal(0)) + Decimal(
                         str(o["quantity"] - o["filledQuantity"]))
-            pool = self.pool()
+            b = self.budget()
             self.plan_ctx = planner.PlanContext(
                 snapshots=snapshots, holdings=holdings,
                 open_buys={o["symbol"] for o in open_orders if o["side"] == "BUY"}, open_sells=open_sells,
-                budget_available=Decimal(str(pool["available"])) if pool else Decimal(0),
-                budget_equity=Decimal(str(pool["cash"] + pool["invested"])) if pool else Decimal(0),
+                budget_available=Decimal(str(b["available"])) if b else Decimal(0),
+                budget_equity=Decimal(str(b["cash"] + b["invested"])) if b else Decimal(0),
                 session=session, data_age_minutes=data_age)
         return self.plan_ctx
 
@@ -217,6 +227,10 @@ def run_automation(ctx: AppContext, conn: sqlite3.Connection, automation: dict, 
     """Execute (or preview) one automation. A real run is stored in the run history and returned;
     a preview returns the same shape without storing anything or creating notifications.
 
+    Filters run once; each order action then plans and places orders separately for every budget the automation is
+    in (result["budgets"] has each budget's money before and after). A budget whose broker fails is reported and
+    skipped; the others still trade.
+
     Scheduled runs are skipped (stored as SKIPPED) when the global switch is off or the automation is paused;
     manual runs ignore both. A run already in progress for the automation gives SKIPPED / OVERLAP.
 
@@ -244,12 +258,13 @@ def run_automation(ctx: AppContext, conn: sqlite3.Connection, automation: dict, 
         "configVersion": automation["configVersion"],
         "skipReason": None,
         "market": None,
+        "budgets": [],
         "targets": [],
         "matched": [],
         "actions": [],
         "metrics": {},
     }
-    trading: Trading | None = None
+    tradings: list[tuple[dict, Trading | None]] = []  # (budget entry of the result, its Trading or None if it failed)
 
     def finish(status: str, error: str | None = None) -> dict:
         """Fill in the metrics and store (or, for previews, return) the run.
@@ -258,7 +273,7 @@ def run_automation(ctx: AppContext, conn: sqlite3.Connection, automation: dict, 
             status: SUCCEEDED, PARTIAL, FAILED or SKIPPED.
             error: failure message, if any.
         """
-        intents = [i for a in result["actions"] for i in a.get("intents", [])]
+        intents = [i for a in result["actions"] for b in a.get("budgets", []) for i in b.get("intents", [])]
         cost = lambda side, decision: sum(i["estimatedCost"] or 0 for i in intents  # noqa: E731
                                           if i["side"] == side and i["decision"] == decision)
         result["metrics"] = {
@@ -266,6 +281,7 @@ def run_automation(ctx: AppContext, conn: sqlite3.Connection, automation: dict, 
             "matchedCount": len(result["matched"]),
             "actionCount": len(result["actions"]),
             "failedCount": sum(a["status"] == "FAILED" for a in result["actions"]),
+            "budgetCount": len(result["budgets"]),
             "intentCount": len(intents),
             "placedCount": sum(i["decision"] == "PLACE" for i in intents),
             "skippedCount": sum(i["decision"] == "SKIP" for i in intents),
@@ -273,8 +289,9 @@ def run_automation(ctx: AppContext, conn: sqlite3.Connection, automation: dict, 
             "estimatedBuyCost": round(cost("BUY", "PLACE"), 2),
             "estimatedSellProceeds": round(cost("SELL", "PLACE"), 2),
         }
-        if trading:
-            result["budgetAfter"] = trading.budget_snapshot()
+        for entry, trading in tradings:
+            if trading:
+                entry["after"] = trading.budget_snapshot()
         if preview:
             return {"preview": True, "status": status, "error": error, "result": result}
         run = runs_store.add_run(conn, "AUTOMATION", automation["id"], automation, result["metrics"]["durationMs"],
@@ -300,19 +317,30 @@ def run_automation(ctx: AppContext, conn: sqlite3.Connection, automation: dict, 
         result["skipReason"] = "OVERLAP"
         return finish("SKIPPED")
     places_orders = any(a["type"] == "PLACE_ORDER" for a in automation["actions"])
-    portfolio_lock = _lock_for(f"portfolio:{automation.get('portfolioId')}") if places_orders else None
-    if portfolio_lock and not portfolio_lock.acquire(blocking=True, timeout=120):
-        lock.release()
-        result["skipReason"] = "OVERLAP"
-        return finish("SKIPPED")
+    budgets = budget_store.budgets_of(conn, automation["id"]) if places_orders and automation.get("id") else []
+    held_locks: list[threading.Lock] = []
     try:
-        if places_orders:
+        # One order-placing run per portfolio at a time; locks are taken in a fixed order so runs never deadlock.
+        for pid in sorted({b["portfolioId"] for b in budgets}):
+            portfolio_lock = _lock_for(f"portfolio:{pid}")
+            if not portfolio_lock.acquire(blocking=True, timeout=120):
+                result["skipReason"] = "OVERLAP"
+                return finish("SKIPPED")
+            held_locks.append(portfolio_lock)
+
+        synced: set[str] = set()
+        for b in budgets:
+            entry = {"budgetId": b["id"], "name": b["name"], "portfolioId": b["portfolioId"]}
             try:
-                trading = Trading(ctx, conn, automation, preview)
+                trading = Trading(ctx, conn, automation, b, preview, synced)
+                entry.update(brokerAccountId=trading.account["id"], environment=trading.account["environment"],
+                             before=trading.budget_snapshot())
             except (BrokerError, ValueError) as e:
-                return finish("FAILED", f"broker: {e}")
-            result.update(portfolioId=trading.portfolio["id"], brokerAccountId=trading.account["id"],
-                          environment=trading.account["environment"], budgetBefore=trading.budget_snapshot())
+                trading = None
+                entry["error"] = f"broker: {e}"
+            result["budgets"].append(entry)
+            tradings.append((entry, trading))
+
         result["market"] = market_context(ctx, now)
         try:
             result["targets"], symbols, ev = _run_targets(conn, ctx, automation)
@@ -338,7 +366,7 @@ def run_automation(ctx: AppContext, conn: sqlite3.Connection, automation: dict, 
                             n = store.add_notification(conn, automation["id"], None, title, message, shown)
                             entry["notificationId"] = n["id"]
                 elif action["type"] == "PLACE_ORDER":
-                    _place_orders(ctx, conn, automation, trading, PlaceOrderAction.model_validate(action), index,
+                    _place_orders(ctx, conn, automation, tradings, PlaceOrderAction.model_validate(action), index,
                                   tickers, ev, result["market"], entry, run_id, preview)
                 else:
                     raise ValueError(f"{action['type']} actions are not available yet")
@@ -354,62 +382,82 @@ def run_automation(ctx: AppContext, conn: sqlite3.Connection, automation: dict, 
             return finish("FAILED", "all actions failed")
         return finish("PARTIAL" if failed or partial else "SUCCEEDED")
     finally:
-        if portfolio_lock:
-            portfolio_lock.release()
+        for held in reversed(held_locks):
+            held.release()
         lock.release()
 
 
-def _place_orders(ctx, conn, automation, trading: Trading, action: PlaceOrderAction, index: int, tickers: list[str],
-                  ev, market: dict, entry: dict, run_id: str, preview: bool) -> None:
-    """Plan orders for the matched symbols and (unless previewing) submit the ones that pass every guard.
+def _place_orders(ctx, conn, automation, tradings: list[tuple[dict, "Trading | None"]], action: PlaceOrderAction,
+                  index: int, tickers: list[str], ev, market: dict, entry: dict, run_id: str, preview: bool) -> None:
+    """For every budget of the automation: plan orders for the matched symbols with that budget's money and shares,
+    and (unless previewing) submit the ones that pass every guard.
 
     Args:
         ctx: app context.
         conn: app DB connection.
         automation: the automation dict.
-        trading: the run's Trading state.
+        tradings: (result budget entry, Trading or None when its broker failed) per budget.
         action: the PLACE_ORDER action.
         index: the action's position (part of each client order id).
         tickers: matched tickers.
         ev: the Evaluator (its cached snapshots are reused).
         market: market_context result.
-        entry: the action's result entry (filled with intents, side, notHeld, status).
-        run_id: the run's id (client order ids are <runId>-<index>-<ticker>).
+        entry: the action's result entry: side, status, and per budget {budgetId, name, portfolioId, status, error,
+            notHeld, intents}.
+        run_id: the run's id (client order ids are <runId>-<index>-<budgetId>-<ticker>).
         preview: plan only.
-
-    Raises:
-        ValueError: the automation has no budget.
     """
-    if not trading.pool():
-        raise ValueError("this automation has no budget; allocate money to it first")
-    plan_ctx = trading.context(ev._snaps(set(tickers)), market.get("session"), market.get("dataAgeMinutes"))
-    out = planner.plan(action, trading.guards, tickers, plan_ctx, trading.broker)
     entry["side"] = action.side
-    entry["notHeld"] = out["notHeld"]
-    entry["intents"] = out["intents"]
-    if preview:
+    entry["budgets"] = []
+    if not tradings:
+        entry["status"] = "SKIPPED"
+        entry["detail"] = "the automation is not in any budget: add it to a budget on the portfolio page"
         return
-    for intent in out["intents"]:
-        if intent["decision"] != "PLACE":
+    snapshots = ev._snaps(set(tickers))
+    for budget_entry, trading in tradings:
+        sub = {"budgetId": budget_entry["budgetId"], "name": budget_entry["name"],
+               "portfolioId": budget_entry["portfolioId"], "status": "SUCCEEDED", "notHeld": 0, "intents": []}
+        entry["budgets"].append(sub)
+        if trading is None:
+            sub.update(status="FAILED", error=budget_entry.get("error"))
             continue
         try:
-            order = orders_service.place_order(
-                conn, trading.broker, trading.portfolio, symbol=intent["ticker"], side=action.side,
-                type=action.orderType, quantity=Decimal(str(intent["quantity"])), time_in_force=action.timeInForce,
-                limit_price=Decimal(str(intent["limitPrice"])) if intent["limitPrice"] is not None else None,
-                stop_price=Decimal(str(intent["stopPrice"])) if intent["stopPrice"] is not None else None,
-                trail_percent=action.trailPercent, extended_hours=action.extendedHours,
-                automation_id=automation["id"], run_id=run_id,
-                client_order_id=f"{run_id}-{index}-{intent['ticker']}",
-                estimated_price=Decimal(str(intent["estimatedPrice"])))
-        except orders_service.OrderRejected as e:
-            intent.update(decision="SKIP", skipReason=e.reason, detail=str(e))
+            plan_ctx = trading.context(snapshots, market.get("session"), market.get("dataAgeMinutes"))
+            out = planner.plan(action, trading.guards, tickers, plan_ctx, trading.broker)
+        except Exception as e:  # one budget failing does not stop the others
+            log.exception("automation %s: planning for budget %s failed", automation["id"], trading.budget_id)
+            sub.update(status="FAILED", error=str(e))
             continue
-        intent["orderId"] = order["id"]
-        intent["orderStatus"] = order["status"]
-        if order["status"] == "REJECTED":
-            intent.update(decision="FAILED", detail=order["rejectReason"])
-    failed = sum(i["decision"] == "FAILED" for i in out["intents"])
-    placed = sum(i["decision"] == "PLACE" for i in out["intents"])
-    if failed:
-        entry["status"] = "FAILED" if not placed else "PARTIAL"
+        sub["notHeld"], sub["intents"] = out["notHeld"], out["intents"]
+        if preview:
+            continue
+        for intent in out["intents"]:
+            if intent["decision"] != "PLACE":
+                continue
+            try:
+                order = orders_service.place_order(
+                    conn, trading.broker, trading.portfolio, symbol=intent["ticker"], side=action.side,
+                    type=action.orderType, quantity=Decimal(str(intent["quantity"])), time_in_force=action.timeInForce,
+                    limit_price=Decimal(str(intent["limitPrice"])) if intent["limitPrice"] is not None else None,
+                    stop_price=Decimal(str(intent["stopPrice"])) if intent["stopPrice"] is not None else None,
+                    trail_percent=action.trailPercent, extended_hours=action.extendedHours,
+                    automation_id=automation["id"], run_id=run_id, budget_id=trading.budget_id,
+                    client_order_id=f"{run_id}-{index}-{trading.budget_id}-{intent['ticker']}",
+                    estimated_price=Decimal(str(intent["estimatedPrice"])))
+            except orders_service.OrderRejected as e:
+                intent.update(decision="SKIP", skipReason=e.reason, detail=str(e))
+                continue
+            intent["orderId"] = order["id"]
+            intent["orderStatus"] = order["status"]
+            if order["status"] == "REJECTED":
+                intent.update(decision="FAILED", detail=order["rejectReason"])
+        failed = sum(i["decision"] == "FAILED" for i in out["intents"])
+        placed = sum(i["decision"] == "PLACE" for i in out["intents"])
+        if failed:
+            sub["status"] = "FAILED" if not placed else "PARTIAL"
+    statuses = [b["status"] for b in entry["budgets"]]
+    if all(st == "FAILED" for st in statuses):
+        entry["status"] = "FAILED"
+        entry["error"] = "; ".join(f"{b['name']}: {b.get('error') or 'orders failed'}" for b in entry["budgets"])
+    elif any(st != "SUCCEEDED" for st in statuses):
+        entry["status"] = "PARTIAL"

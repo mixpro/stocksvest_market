@@ -1,11 +1,11 @@
-"""Compute and record portfolio and automation snapshots, on a schedule or on request."""
+"""Compute and record portfolio and budget snapshots, on a schedule or on request."""
 
 import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from ..automations import budget
+from ..budgets import store as budget
 from ..db import iso
 from ..deps import AppContext
 from ..market.client import MarketError
@@ -15,7 +15,7 @@ from ..portfolios.store import D, D0
 from . import store
 
 log = logging.getLogger(__name__)
-ET = ZoneInfo("America/New_York")  # Used by: scheduled, snapshot_*, routes.automation_performance
+ET = ZoneInfo("America/New_York")  # Used by: scheduled, snapshot_*, routes.budget_performance
 INTERVAL = timedelta(minutes=15)  # INTERVAL snapshot spacing. Used by: scheduled
 # Prices are ~16 minutes delayed: wait this long after the close before the end-of-day snapshot. Used by: scheduled
 AFTER_CLOSE = timedelta(minutes=20)
@@ -29,7 +29,7 @@ def _prices(ctx: AppContext, symbols: set[str]) -> dict[str, Decimal]:
         conn: app DB connection.
         symbols: tickers.
 
-    Used by: portfolio_values, automation_values.
+    Used by: portfolio_values, budget_values.
     """
     try:
         snaps = ctx.market.snapshots(symbols)
@@ -46,7 +46,7 @@ def _value(lots_positions: list[dict], prices: dict[str, Decimal]) -> tuple[Deci
         lots_positions: positions (symbol, quantity, costBasis).
         prices: ticker -> price.
 
-    Used by: portfolio_values, automation_values.
+    Used by: portfolio_values, budget_values.
     """
     value = basis = D0
     for x in lots_positions:
@@ -80,36 +80,37 @@ def portfolio_values(ctx: AppContext, conn, portfolio: dict, prices: dict | None
             "realized_pnl": portfolios_store.realized_pnl(conn, portfolio["id"]), "unrealized_pnl": value - basis}
 
 
-def automation_values(ctx: AppContext, conn, pool_row, date: str, prices: dict | None = None) -> dict:
-    """An automation's values now, plus its orders and fills of one trading day.
+def budget_values(ctx: AppContext, conn, budget_row, date: str, prices: dict | None = None) -> dict:
+    """A budget's values now, plus the orders paid from it and their fills on one trading day.
 
     Args:
         ctx: app context (market API for prices).
         conn: app DB connection.
-        pool_row: its budget_pools row.
+        budget_row: its budgets row.
         date: New York trading date, YYYY-MM-DD.
         prices: prices to use (default: fetched).
 
     Returns:
         portfolio_id, allocated, cash, reserved, invested, positions_value, equity, realized_pnl, unrealized_pnl, fees, return_percent, open_positions, orders_placed, fills.
 
-    Used by: snapshot_automations, routes.automation_performance.
+    Used by: snapshot_budgets, routes.budget_performance.
     """
-    aid, pid = pool_row["automation_id"], pool_row["portfolio_id"]
-    positions = portfolios_store.positions(conn, pid, automation_id=aid)
+    bid, pid = budget_row["id"], budget_row["portfolio_id"]
+    positions = portfolios_store.positions(conn, pid, budget_id=bid)
     prices = prices if prices is not None else _prices(ctx, {x["symbol"] for x in positions})
     value, basis = _value(positions, prices)
-    cash, allocated = D(pool_row["cash"]), D(pool_row["allocated"])
+    cash, allocated = D(budget_row["cash"]), D(budget_row["allocated"])
     equity = cash + value
     day_start = datetime.fromisoformat(date).replace(tzinfo=ET)
     day = (iso(day_start), iso(day_start + timedelta(days=1)))
-    orders = conn.execute("SELECT COUNT(*) FROM orders WHERE automation_id = ? AND created_at >= ? AND created_at < ?",
-                          (aid, *day)).fetchone()[0]
-    fills = conn.execute("SELECT COUNT(*) FROM fills f JOIN orders o ON o.id = f.order_id WHERE o.automation_id = ? "
-                         "AND f.executed_at >= ? AND f.executed_at < ?", (aid, *day)).fetchone()[0]
-    return {"portfolio_id": pid, "allocated": allocated, "cash": cash, "reserved": D(pool_row["reserved"]),
-            "invested": D(pool_row["invested"]), "positions_value": value, "equity": equity,
-            "realized_pnl": D(pool_row["realized_pnl"]), "unrealized_pnl": value - basis, "fees": D(pool_row["fees"]),
+    orders = conn.execute("SELECT COUNT(*) FROM orders WHERE budget_id = ? AND created_at >= ? AND created_at < ?",
+                          (bid, *day)).fetchone()[0]
+    fills = conn.execute("SELECT COUNT(*) FROM fills f JOIN orders o ON o.id = f.order_id WHERE o.budget_id = ? "
+                         "AND f.executed_at >= ? AND f.executed_at < ?", (bid, *day)).fetchone()[0]
+    return {"portfolio_id": pid, "allocated": allocated, "cash": cash, "reserved": D(budget_row["reserved"]),
+            "invested": D(budget_row["invested"]), "positions_value": value, "equity": equity,
+            "realized_pnl": D(budget_row["realized_pnl"]), "unrealized_pnl": value - basis,
+            "fees": D(budget_row["fees"]),
             "return_percent": ((equity - allocated) / allocated * 100).quantize(Decimal("0.0001")) if allocated else None,
             "open_positions": len(positions), "orders_placed": orders, "fills": fills}
 
@@ -135,8 +136,8 @@ def snapshot_portfolio(ctx: AppContext, conn, portfolio: dict, kind: str, now: d
     return values
 
 
-def snapshot_automations(ctx: AppContext, conn, now: datetime) -> int:
-    """Store today's snapshot of every automation with a budget (replacing an earlier one of the day).
+def snapshot_budgets(ctx: AppContext, conn, now: datetime) -> int:
+    """Store today's snapshot of every budget (replacing an earlier one of the day).
 
     Args:
         ctx: app context (market API for prices).
@@ -149,16 +150,16 @@ def snapshot_automations(ctx: AppContext, conn, now: datetime) -> int:
     Used by: scheduled.
     """
     date = now.astimezone(ET).date().isoformat()
-    pools = conn.execute("SELECT * FROM budget_pools").fetchall()
+    budgets = conn.execute("SELECT * FROM budgets").fetchall()
     with conn:
-        for row in pools:
-            store.insert_automation(conn, row["automation_id"], date, iso(now), automation_values(ctx, conn, row, date))
-    return len(pools)
+        for row in budgets:
+            store.insert_budget(conn, row["id"], date, iso(now), budget_values(ctx, conn, row, date))
+    return len(budgets)
 
 
 def scheduled(ctx: AppContext, conn, now: datetime | None = None) -> None:
     """Called every scheduler tick: INTERVAL snapshots each 15 minutes of the regular session, then one CLOSE
-    snapshot per portfolio and one per automation after each trading day. Does nothing on closed days or when
+    snapshot per portfolio and one per budget after each trading day. Does nothing on closed days or when
     the market API is down.
 
     Args:
@@ -189,5 +190,5 @@ def scheduled(ctx: AppContext, conn, now: datetime | None = None) -> None:
             if not store.has_portfolio_snapshot(conn, p["id"], "CLOSE", date=today):
                 snapshot_portfolio(ctx, conn, p, "CLOSE", now)
                 taken = True
-        if taken or not conn.execute("SELECT 1 FROM automation_snapshots WHERE date = ? LIMIT 1", (today,)).fetchone():
-            snapshot_automations(ctx, conn, now)
+        if taken or not conn.execute("SELECT 1 FROM budget_snapshots WHERE date = ? LIMIT 1", (today,)).fetchone():
+            snapshot_budgets(ctx, conn, now)

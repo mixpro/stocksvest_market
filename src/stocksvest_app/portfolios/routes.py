@@ -7,8 +7,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from ..automations import budget
-from ..automations import store as automations_store
+from ..budgets import store as budget
 from ..brokers import store as brokers_store
 from ..brokers.base import BrokerError
 from ..db import immediate
@@ -76,7 +75,7 @@ class ManualOrderIn(BaseModel):
         stopPrice: for STOP / STOP_LIMIT.
         trailPercent: for TRAILING_STOP.
         extendedHours: allow filling outside regular hours (LIMIT + DAY).
-        automationId: trade on behalf of an automation: its budget / its shares.
+        budgetId: trade with a budget of this portfolio: a buy uses its money, a sell its shares.
 
     Used by: router.place_manual_order.
     """
@@ -89,7 +88,7 @@ class ManualOrderIn(BaseModel):
     stopPrice: Decimal | None = Field(default=None, gt=0)
     trailPercent: Decimal | None = Field(default=None, gt=0)
     extendedHours: bool = False
-    automationId: str | None = None  # trade on behalf of an automation: its budget / its shares
+    budgetId: str | None = None  # trade with a budget of this portfolio: its money / its shares
 
 
 def router(ctx: AppContext) -> APIRouter:
@@ -179,18 +178,18 @@ def router(ctx: AppContext) -> APIRouter:
             if value is not None:
                 value_total += value
                 unrealized += value - x["costBasis"]
-            positions.append({"symbol": x["symbol"], "automationId": x["automationId"], "quantity": num(x["quantity"]),
+            positions.append({"symbol": x["symbol"], "budgetId": x["budgetId"], "automationId": x["automationId"],
+                              "quantity": num(x["quantity"]),
                               "averageCost": num(x["averageCost"]), "costBasis": num(x["costBasis"]),
                               "price": price, "marketValue": num(value),
                               "unrealizedPnL": num(value - x["costBasis"]) if value is not None else None})
-        pools = [budget.pool_json(row) for row in
-                 conn.execute("SELECT * FROM budget_pools WHERE portfolio_id = ?", (p["id"],))]
         manual = service.open_manual_buys(conn, p["id"])
         account = account_of(conn, p)
         return {**p, "unallocatedCash": num(budget.unallocated_cash(conn, p, manual)), "openManualBuys": num(manual),
                 "positionsValue": num(value_total), "unrealizedPnL": num(unrealized),
                 "equity": num(Decimal(str(p["cash"])) + value_total),
-                "realizedPnL": num(store.realized_pnl(conn, p["id"])), "budgets": pools, "positions": positions,
+                "realizedPnL": num(store.realized_pnl(conn, p["id"])), "budgets": budget.list_budgets(conn, p["id"]),
+                "positions": positions,
                 "account": {"id": account["id"], "name": account["name"], "cash": account["cash"],
                             "unassignedCash": num(unassigned_cash(conn, account))},
                 "lastSync": orders_store.last_sync(conn, account["id"])}
@@ -249,7 +248,7 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.delete("/{portfolio_id}", status_code=204)
     def delete_portfolio(portfolio_id: str, conn: Conn):
-        """Only an empty portfolio: no shares, no open orders, no automations, no filter using it. Its cash goes back
+        """Only an empty portfolio: no shares, no open orders, no budgets, no filter using it. Its cash goes back
         to unassigned.
         \f
         Args:
@@ -261,9 +260,9 @@ def router(ctx: AppContext) -> APIRouter:
             raise HTTPException(409, "the portfolio still holds shares")
         if orders_store.list_orders(conn, portfolio_id, open_only=True, limit=1):
             raise HTTPException(409, "the portfolio has open orders")
-        users = [a["name"] for a in automations_store.list_automations(conn) if a.get("portfolioId") == portfolio_id]
-        if users:
-            raise HTTPException(409, f"used by automation: {', '.join(users)}")
+        budgets = budget.list_budgets(conn, portfolio_id)
+        if budgets:
+            raise HTTPException(409, f"delete its budgets first: {', '.join(b['name'] for b in budgets)}")
         users = filters_store.portfolio_users(conn, portfolio_id)
         if users:
             raise HTTPException(409, f"used by filter: {', '.join(users)}")
@@ -289,7 +288,7 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.post("/{portfolio_id}/capital/withdraw")
     def withdraw(portfolio_id: str, body: CapitalChangeIn, conn: Conn):
-        """Give unallocated portfolio cash (not in automation budgets, not held by open buys) back to the account.
+        """Give unallocated portfolio cash (not in budgets, not held by open buys) back to the account.
         \f
         Args:
             portfolio_id: the portfolio's id (path).
@@ -332,7 +331,8 @@ def router(ctx: AppContext) -> APIRouter:
     def orders(portfolio_id: str, conn: Conn, status: str | None = None,
                automation_id: Annotated[str | None, Query(alias="automationId")] = None,
                open_only: Annotated[bool, Query(alias="openOnly")] = False,
-               limit: Annotated[int, Query(ge=1, le=1000)] = 100):
+               limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+               budget_id: Annotated[str | None, Query(alias="budgetId")] = None):
         """The portfolio's orders, newest first.
         \f
         Args:
@@ -342,9 +342,11 @@ def router(ctx: AppContext) -> APIRouter:
             automation_id: only this automation's (query automationId).
             open_only: only open orders (query openOnly).
             limit: how many to return, newest first (query).
+            budget_id: only orders of this budget (query budgetId).
         """
         load(conn, portfolio_id)
-        return {"orders": orders_store.list_orders(conn, portfolio_id, automation_id, status, open_only, limit)}
+        return {"orders": orders_store.list_orders(conn, portfolio_id, automation_id, status, open_only, limit,
+                                                   budget_id=budget_id)}
 
     @r.get("/{portfolio_id}/fills")
     def fills(portfolio_id: str, conn: Conn, limit: Annotated[int, Query(ge=1, le=1000)] = 100):
@@ -373,8 +375,8 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.post("/{portfolio_id}/orders", status_code=201)
     def place_manual_order(portfolio_id: str, body: ManualOrderIn, conn: Conn):
-        """Place an order by hand (paper account). Only halal symbols. With automationId, a buy uses that
-        automation's budget and a sell uses its shares; without it, unallocated cash and manual shares.
+        """Place an order by hand (paper account). Only halal symbols. With budgetId, a buy uses that budget's
+        money and a sell its shares; without it, unallocated cash and manual shares.
         \f
         Args:
             portfolio_id: the portfolio's id (path).
@@ -389,15 +391,15 @@ def router(ctx: AppContext) -> APIRouter:
             snap = ctx.market.snapshots({symbol}).get(symbol, {})
         except MarketError as e:
             raise HTTPException(502, e.detail)
-        if body.automationId:
-            pool = budget.get_pool(conn, body.automationId)
-            if not pool or pool["portfolioId"] != portfolio_id:
-                raise HTTPException(422, "that automation has no budget in this portfolio")
+        if body.budgetId:
+            b = budget.get_budget(conn, body.budgetId)
+            if not b or b["portfolioId"] != portfolio_id:
+                raise HTTPException(422, f"budget '{body.budgetId}' is not a budget of this portfolio")
         try:
             return service.place_order(
                 conn, broker_for(conn, p), p, symbol=symbol, side=body.side, type=body.type, quantity=body.quantity,
                 time_in_force=body.timeInForce, limit_price=body.limitPrice, stop_price=body.stopPrice,
-                trail_percent=body.trailPercent, extended_hours=body.extendedHours, automation_id=body.automationId,
+                trail_percent=body.trailPercent, extended_hours=body.extendedHours, budget_id=body.budgetId,
                 estimated_price=Decimal(str(snap["latestPrice"])) if snap.get("latestPrice") is not None else None)
         except service.OrderRejected as e:
             raise HTTPException(422, f"{e.reason}: {e}")

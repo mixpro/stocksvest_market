@@ -271,8 +271,8 @@ function renderEditor() {
     el("h3", {}, "Schedules"),
     ...d.schedules.map(scheduleRow),
     el("button", { onclick: () => { d.schedules.push({ type: "DAILY", ...structuredClone(SCHEDULE_DEFAULTS.DAILY) }); rerender(); } }, "+ Add schedule"),
-    el("h3", {}, "Portfolio ", el("span", { class: "muted" }, "(needed to place orders)")),
-    select_([["", "— none —"], ...st.portfolios.map((p) => [p.id, p.name])], d.portfolioId || "", (v) => { d.portfolioId = v || null; rerender(); }),
+    el("h3", {}, "Budgets ", el("span", { class: "muted" }, "(where its orders take money and shares from)")),
+    budgetsLine(d),
     el("h3", {}, "Actions ", el("span", { class: "muted" }, "(in order)")),
     ...d.actions.map(actionRow),
     select_([["", "+ Add action…"], ["NOTIFY", "Notify"], ["PLACE_ORDER", "Place order"], ["ADD_TO_WATCHLIST", "Add to watchlist (phase 3)"]], "",
@@ -291,16 +291,26 @@ function renderEditor() {
       el("button", { onclick: togglePause, disabled: !saved }, paused ? "Resume" : "Pause"),
       el("button", { onclick: history, disabled: !saved }, "History"),
       el("button", { onclick: changes, disabled: !saved }, "Changes"),
-      el("button", { onclick: budgetView, disabled: !saved || !d.portfolioId }, "Budget"),
-      el("button", { onclick: performance, disabled: !saved || !d.portfolioId }, "Performance"),
+      el("button", { onclick: recordView, disabled: !saved }, "Record"),
       el("button", { class: "danger", onclick: remove, disabled: !saved }, "Delete")),
   );
+}
+
+function budgetsLine(d) {
+  const portfolioName = (id) => st.portfolios.find((p) => p.id === id)?.name || id;
+  const budgets = d.budgets || [];
+  const hint = el("a", { href: "portfolio.html" }, "Portfolio page");
+  if (!budgets.length) {
+    return el("p", { class: "muted" }, "Not in any budget: order actions are skipped. Add it to a budget on the ", hint, ".");
+  }
+  return el("p", {}, budgets.map((b) => `${b.name} (${portfolioName(b.portfolioId)})`).join(" · "),
+    el("span", { class: "muted" }, " · managed on the "), hint);
 }
 
 function body() {
   const d = st.draft;
   const trades = d.actions.some((a) => a.type === "PLACE_ORDER");
-  return { name: d.name, description: d.description, portfolioId: d.portfolioId || null,
+  return { name: d.name, description: d.description,
     orderGuards: trades ? d.orderGuards : null, runTargets: d.runTargets, schedules: d.schedules, actions: d.actions };
 }
 
@@ -335,10 +345,8 @@ const togglePause = () => guard(async () => {
 });
 
 const remove = () => guard(async () => {
-  const pool = st.draft.portfolioId ? (await api(`/v1/automations/${st.selectedId}/budget`)).pool : null;
-  const extra = pool?.cash ? ` Its remaining budget (${money(pool.cash)}) goes back to the portfolio.` : "";
-  if (!confirm(`Delete "${st.draft.name}"? Its run history and budget ledger are kept.${extra}`)) return;
-  await api(`/v1/automations/${st.selectedId}?returnBudget=true`, { method: "DELETE" });
+  if (!confirm(`Delete "${st.draft.name}"? It leaves its budgets; their money and shares stay. Its run history is kept.`)) return;
+  await api(`/v1/automations/${st.selectedId}`, { method: "DELETE" });
   st.selectedId = null; st.draft = null;
   setChildren($("#editor"), el("p", { class: "muted empty" }, "Deleted."));
   await loadAll();
@@ -363,57 +371,18 @@ const history = () => guard(async () => {
       el("td", { class: "num" }, r.durationMs))))));
 });
 
-const budgetView = () => guard(async () => {
-  const id = st.selectedId;
-  const { pool, entries } = await api(`/v1/automations/${id}/budget`);
-  const form = { amount: 1000, note: "" };
-  const move = (verb) => guard(async () => {
-    await api(`/v1/automations/${id}/budget/${verb}`, { method: "POST", body: { amount: form.amount, note: form.note || null } });
-    await budgetView();
-  });
+const recordView = () => guard(async () => {
+  const { total, budgets } = await api(`/v1/automations/${st.selectedId}/record`);
+  const cols = [["Budget", (x) => x.name || "(deleted)"], ["Orders", (x) => x.ordersPlaced], ["Open", (x) => x.openOrders],
+    ["Bought", (x) => `${x.buyFills} · ${money(x.spent)}`], ["Sold", (x) => `${x.sellFills} · ${money(x.received)}`],
+    ["Realized P&L", (x) => el("span", { class: tone(x.realizedPnL) }, signed(x.realizedPnL))], ["Fees", (x) => money(x.fees)]];
   showResults(
-    el("h2", {}, "Budget"),
-    pool ? el("dl", { class: "kv" },
-      el("dt", {}, "Allocated"), el("dd", {}, money(pool.allocated)),
-      el("dt", {}, "Cash"), el("dd", {}, `${money(pool.cash)} (available ${money(pool.available)}, reserved ${money(pool.reserved)})`),
-      el("dt", {}, "Invested"), el("dd", {}, money(pool.invested)),
-      el("dt", {}, "Realized P&L"), el("dd", { class: tone(pool.realizedPnL) }, signed(pool.realizedPnL)),
-      el("dt", {}, "Fees"), el("dd", {}, money(pool.fees))) : el("p", { class: "muted" }, "No budget yet."),
-    el("div", { class: "row" }, "amount", numInput(form, "amount", { style: "width:100px", min: 0, step: "0.01" }),
-      textInput(form, "note", { placeholder: "note (optional)", class: "grow" }),
-      el("button", { class: "primary", onclick: () => move("allocate") }, "Allocate"),
-      el("button", { onclick: () => move("withdraw"), disabled: !pool }, "Withdraw")),
-    el("h3", {}, "Ledger"),
-    entries.length ? el("table", {},
-      el("thead", {}, el("tr", {}, ...["Time", "Type", "Amount", "Cash after", "Reserved after", "Note"].map((h, i) => el("th", { class: i > 1 && i < 5 ? "num" : "" }, h)))),
-      el("tbody", {}, ...entries.map((e) => el("tr", { title: [e.orderId, e.runId].filter(Boolean).join(" · ") },
-        el("td", {}, when(e.createdAt)), el("td", {}, e.type.toLowerCase().replace("_", " ")),
-        el("td", { class: `num ${tone(e.amount)}` }, signed(e.amount)), el("td", { class: "num" }, money(e.cashAfter)),
-        el("td", { class: "num" }, money(e.reservedAfter)), el("td", {}, e.note || ""))))) : el("p", { class: "muted" }, "No entries yet."));
-});
-
-const performance = () => guard(async () => {
-  const { points, current } = await api(`/v1/automations/${st.selectedId}/performance`);
-  if (!current) {
-    showResults(el("h2", {}, "Performance"), el("p", { class: "muted" }, "No budget yet: allocate money to start tracking."));
-    return;
-  }
-  const all = [...points, current];
-  showResults(
-    el("h2", {}, "Performance"),
-    el("dl", { class: "kv" },
-      el("dt", {}, "Equity"), el("dd", {}, `${money(current.equity)} (cash ${money(current.cash)} + shares ${money(current.positionsValue)})`),
-      el("dt", {}, "Return"), el("dd", { class: tone(current.returnPercent) }, current.returnPercent === null ? "—" : `${signed(current.returnPercent)}% on ${money(current.allocated)}`),
-      el("dt", {}, "P&L"), el("dd", {}, "realized ", el("span", { class: tone(current.realizedPnL) }, signed(current.realizedPnL)),
-        " · unrealized ", el("span", { class: tone(current.unrealizedPnL) }, signed(current.unrealizedPnL))),
-      el("dt", {}, "Fees"), el("dd", {}, money(current.fees)),
-      el("dt", {}, "Open positions"), el("dd", {}, current.openPositions)),
-    el("div", { id: "perf-chart", class: "chart-box" }),
-    points.length ? null : el("p", { class: "muted" }, "Daily points are recorded after each market close."));
-  lineChart($("#perf-chart"), [
-    { name: "Equity", data: all.map((p) => ({ at: p.at, value: p.equity })) },
-    { name: "Return %", data: all.map((p) => ({ at: p.at, value: p.returnPercent })), scale: "left" },
-  ]);
+    el("h2", {}, "Record"),
+    el("p", { class: "muted" }, "What this automation did with each budget: its own orders and fills. Budget money and history are on the Portfolio page."),
+    budgets.length ? el("table", {},
+      el("thead", {}, el("tr", {}, ...cols.map(([h], i) => el("th", { class: i ? "num" : "" }, h)))),
+      el("tbody", {}, ...[...budgets, { ...total, name: "Total" }].map((x) => el("tr", {},
+        ...cols.map(([, f], i) => el("td", { class: i ? "num" : "" }, f(x))))))) : el("p", { class: "muted" }, "No orders yet."));
 });
 
 const changes = () => guard(async () => {
@@ -454,18 +423,21 @@ function showRun(run) {
         a.notificationId ? el("div", { class: "muted" }, "notification sent to inbox") : null,
         a.error ? el("div", { class: "down" }, a.error) : null);
     }),
-    ...(r.actions || []).filter((a) => a.intents).map((a) => el("div", {},
-      el("h3", {}, `${a.index + 1}. ${a.side === "SELL" ? "Sell" : "Buy"} orders`,
-        el("span", { class: "muted" }, ` · ${a.intents.filter((x) => x.decision === "PLACE").length} placed${a.notHeld ? ` · ${a.notHeld} matches not held` : ""}`)),
-      el("table", {},
+    ...(r.actions || []).filter((a) => a.detail).map((a) => el("p", { class: "muted" }, `${a.index + 1}. ${a.detail}`)),
+    ...(r.actions || []).flatMap((a) => (a.budgets || []).map((b) => el("div", {},
+      el("h3", {}, `${a.index + 1}. ${a.side === "SELL" ? "Sell" : "Buy"} orders · ${b.name}`,
+        el("span", { class: "muted" }, ` · ${b.intents.filter((x) => x.decision === "PLACE").length} placed${b.notHeld ? ` · ${b.notHeld} matches not held` : ""}`)),
+      b.error ? el("div", { class: "down" }, b.error) : null,
+      b.intents.length ? el("table", {},
         el("thead", {}, el("tr", {}, ...["#", "Symbol", "Qty", "Price", "Cost", "Decision", "Why"].map((h) => el("th", {}, h)))),
-        el("tbody", {}, ...a.intents.map((x) => el("tr", { title: x.orderId || "" },
+        el("tbody", {}, ...b.intents.map((x) => el("tr", { title: x.orderId || "" },
           el("td", {}, x.rank ?? ""), el("td", {}, el("b", {}, x.ticker)), el("td", { class: "num" }, fmt(x.quantity, 0)),
           el("td", { class: "num" }, money(x.limitPrice ?? x.estimatedPrice)), el("td", { class: "num" }, money(x.estimatedCost)),
           el("td", {}, el("span", { class: `badge ${x.decision === "PLACE" ? "SUCCEEDED" : x.decision === "FAILED" ? "FAILED" : "SKIPPED"}` },
             x.decision === "PLACE" && run.preview ? "would place" : x.orderStatus ? x.orderStatus.toLowerCase() : x.decision.toLowerCase())),
-          el("td", { class: "muted" }, [x.skipReason, x.detail].filter(Boolean).join(": ")))))))),
-    r.budgetBefore ? el("p", { class: "muted" }, `Budget available ${money(r.budgetBefore.available)} → ${money(r.budgetAfter?.available)}`) : null,
+          el("td", { class: "muted" }, [x.skipReason, x.detail].filter(Boolean).join(": ")))))) : null))),
+    ...(r.budgets || []).filter((b) => b.before).map((b) =>
+      el("p", { class: "muted" }, `${b.name}: available ${money(b.before.available)} → ${money(b.after?.available)}`)),
     (r.matched || []).length ? el("table", {},
       el("thead", {}, el("tr", {}, el("th", {}, "Ticker"), el("th", {}, "Name"), el("th", { class: "num" }, "Price"), el("th", { class: "num" }, "Day %"))),
       el("tbody", {}, ...r.matched.map((s) => el("tr", {}, el("td", {}, el("b", {}, s.ticker)), el("td", {}, (s.name || "").slice(0, 36)),

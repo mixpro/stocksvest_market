@@ -124,7 +124,7 @@ def _tick_schedule(ctx, conn, automation, s, created, calendar, now) -> list[dic
         try:
             run = run_automation(ctx, conn, automation, "SCHEDULE", scheduled_for=t, schedule_id=s.id, fire_id=fire_id)
             audit.record(conn, "AUTOMATION_RUN", "AUTOMATION", automation["id"],
-                         related={"runId": run["id"], "scheduleId": s.id, "portfolioId": automation.get("portfolioId")},
+                         related={"runId": run["id"], "scheduleId": s.id},
                          details={"scheduledFor": _iso(t), "status": run["status"],
                                   "skipReason": (run.get("result") or {}).get("skipReason"),
                                   "metrics": (run.get("result") or {}).get("metrics")},

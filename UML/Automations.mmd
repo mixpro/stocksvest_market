@@ -9,12 +9,12 @@ classDiagram
     - updatedAt: datetime
     - status: AutomationStatus
     - configVersion: int
-    - portfolioId: string?
     - runTargets: List~FilterRunTarget~
     - schedules: List~Schedule~
     - actions: List~AutomationAction~
     - orderGuards: OrderGuards?
-    - budget: BudgetPool?
+    + budgets() List~Budget~
+    + record() AutomationRecord
   }
 
   class AutomationStatus {
@@ -111,10 +111,12 @@ classDiagram
     - maxDataAgeMinutes: int
   }
 
-  %% ------------------------------------------------------------------ budget pool
+  %% ------------------------------------------------------------------ budgets (chosen by the portfolio)
 
-  class BudgetPool {
-    - automationId: string
+  class Budget {
+    - id: string
+    - portfolioId: string
+    - name: string
     - currency: string
     - allocated: Decimal
     - cash: Decimal
@@ -125,9 +127,28 @@ classDiagram
     + available() Decimal
   }
 
+  class BudgetAutomation {
+    - budgetId: string
+    - automationId: string
+    - addedAt: datetime
+  }
+
+  class AutomationRecord {
+    - budgetId: string
+    - ordersPlaced: int
+    - openOrders: int
+    - buyFills: int
+    - spent: Decimal
+    - sellFills: int
+    - received: Decimal
+    - realizedPnL: Decimal
+    - fees: Decimal
+  }
+
   class BudgetEntry {
     - id: string
-    - automationId: string
+    - budgetId: string
+    - automationId: string?
     - type: BudgetEntryType
     - amount: Decimal
     - cashAfter: Decimal
@@ -177,15 +198,12 @@ classDiagram
     - scheduleFireId: string?
     - configVersion: int
     - definition: json
-    - brokerAccountId: string?
-    - environment: BrokerEnvironment?
     - startedAt: datetime
     - finishedAt: datetime?
     - status: RunStatus
     - skipReason: RunSkipReason?
     - market: MarketContext
-    - budgetBefore: BudgetSnapshot?
-    - budgetAfter: BudgetSnapshot?
+    - budgets: List~RunBudget~
     - targets: List~TargetResult~
     - matched: List~MatchedSymbol~
     - actions: List~ActionResult~
@@ -230,6 +248,17 @@ classDiagram
     CLOSED
   }
 
+  class RunBudget {
+    - budgetId: string
+    - name: string
+    - portfolioId: string
+    - brokerAccountId: string?
+    - environment: BrokerEnvironment?
+    - before: BudgetSnapshot?
+    - after: BudgetSnapshot?
+    - error: string?
+  }
+
   class BudgetSnapshot {
     - cash: Decimal
     - reserved: Decimal
@@ -258,9 +287,19 @@ classDiagram
     - index: int
     - type: string
     - status: RunStatus
-    - intents: List~OrderIntent~
+    - budgets: List~ActionBudgetResult~
+    - detail: string?
     - notificationId: string?
     - addedSymbols: List~string~
+    - error: string?
+  }
+
+  class ActionBudgetResult {
+    - budgetId: string
+    - name: string
+    - status: RunStatus
+    - notHeld: int
+    - intents: List~OrderIntent~
     - error: string?
   }
 
@@ -326,13 +365,13 @@ classDiagram
     UPDATED
     PAUSED
     RESUMED
-    BUDGET_ALLOCATED
-    BUDGET_WITHDRAWN
+    BUDGET_ADDED
+    BUDGET_REMOVED
     DELETED
   }
 
   class PerformanceSnapshot {
-    - automationId: string
+    - budgetId: string
     - date: Date
     - cash: Decimal
     - reserved: Decimal
@@ -412,7 +451,11 @@ classDiagram
   %% ------------------------------------------------------------------ relations
 
   Automation --> AutomationStatus
-  Automation "*" --> "0..1" InvestmentPortfolio : trades in
+  InvestmentPortfolio "1" *-- "*" Budget : budgets
+  Budget "*" -- "*" Automation : used by (BudgetAutomation)
+  BudgetAutomation ..> Budget
+  BudgetAutomation ..> Automation
+  Automation "1" *-- "*" AutomationRecord : per budget
   Automation "1" *-- "1..*" FilterRunTarget : runs
   FilterRunTarget "1" --> "1" FilterRunTargetType
   FilterRunTarget ..> Filter : when type is FILTER
@@ -422,12 +465,12 @@ classDiagram
   Automation "1" *-- "*" ScheduleFire : fired
   Automation "1" *-- "*" AutomationAction : ordered
   Automation "1" *-- "0..1" OrderGuards
-  Automation "1" *-- "0..1" BudgetPool
-  BudgetPool "1" *-- "*" BudgetEntry : ledger
+  Budget "1" *-- "*" BudgetEntry : ledger
   BudgetEntry --> BudgetEntryType
   BudgetEntry ..> Order : orderId
   BudgetEntry ..> Fill : fillId
-  Automation "1" *-- "*" PositionLot : owns shares
+  Budget "1" *-- "*" PositionLot : owns shares
+  Automation ..> PositionLot : bought
   AutomationAction <|-- NotifyAction
   AutomationAction <|-- AddToWatchlistAction
   AutomationAction <|-- PlaceOrderAction
@@ -450,27 +493,30 @@ classDiagram
   AutomationRun --> BrokerEnvironment
   AutomationRun "1" *-- "1" MarketContext
   MarketContext --> MarketSession
-  AutomationRun "1" *-- "0..2" BudgetSnapshot : before / after
+  AutomationRun "1" *-- "*" RunBudget : one per budget
+  RunBudget "1" *-- "0..2" BudgetSnapshot : before / after
+  ActionResult "1" *-- "*" ActionBudgetResult : one per budget
   AutomationRun "1" *-- "*" TargetResult
   AutomationRun "1" *-- "*" MatchedSymbol
   AutomationRun "1" *-- "*" ActionResult
   AutomationRun "1" *-- "1" RunMetrics
-  ActionResult "1" *-- "*" OrderIntent
+  ActionBudgetResult "1" *-- "*" OrderIntent
   OrderIntent --> IntentDecision
   OrderIntent --> SkipReason
   OrderIntent ..> Order : orderId when placed
   Automation "1" *-- "*" AutomationEvent : audit trail
   AutomationEvent --> AutomationEventType
-  Automation "1" *-- "*" PerformanceSnapshot : daily
+  Budget "1" *-- "*" PerformanceSnapshot : daily
   AutomationSwitch ..> Automation : pauses all
 
   %% ------------------------------------------------------------------ rules
 
-  note for Automation "configVersion goes up on every change; each run stores the definition it used.\nportfolioId and budget are required when any action is a PlaceOrderAction.\nMissedPolicy.RUN_ALL is not allowed when any action is a PlaceOrderAction."
-  note for BudgetPool "The automation's own money, carved out of the portfolio's cash.\navailable() = cash - reserved. Sum of all pools in a portfolio <= portfolio cash.\nEvery change is a BudgetEntry; the pool is the sum of its ledger."
+  note for Automation "configVersion goes up on every change; each run stores the definition it used.\nOrder actions trade with every budget the automation is in (none: they are skipped).\nMissedPolicy.RUN_ALL is not allowed when any action is a PlaceOrderAction."
+  note for Budget "A named pot of the portfolio's cash, shared by its automations: buys take from it,\nsells of its shares put the money back. available() = cash - reserved.\nSum of a portfolio's budgets <= its cash. Every change is a BudgetEntry."
+  note for BudgetAutomation "Many-to-many, chosen from the portfolio side. One automation can be in budgets\nof several portfolios; each run plans and places orders per budget."
   note for BudgetEntry "ALLOCATE/WITHDRAW: you move money in/out. RESERVE: buy order placed.\nRELEASE: order cancelled/expired/partly filled. BUY_FILL / SELL_FILL / FEE: from broker fills.\namount is signed; cashAfter/reservedAfter make the history readable without replaying."
   note for ScheduleFire "UNIQUE (automationId, scheduleId, scheduledFor): a time fires once, even after a crash."
   note for AutomationRun "Stored in the shared runs table (kind AUTOMATION), kept 6 months.\nOrders, fills and the budget ledger are kept permanently."
-  note for OrderIntent "The plan for one symbol. SELL only from the automation's own lots.\nslippage = order averageFillPrice vs estimatedPrice."
-  note for PerformanceSnapshot "Written once a day after the close; the series behind gain analysis per automation.\nreturnPercent = (equity - allocated) / allocated."
+  note for OrderIntent "The plan for one symbol. SELL only from the budget's lots (bought by any of its automations).\nslippage = order averageFillPrice vs estimatedPrice."
+  note for PerformanceSnapshot "Written once a day after the close; the series behind gain analysis per budget.\nreturnPercent = (equity - allocated) / allocated."
   note for AutomationSwitch "One switch pauses every automation (runs are recorded as SKIPPED / SWITCH_OFF)."

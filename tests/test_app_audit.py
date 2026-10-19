@@ -49,7 +49,9 @@ def test_action_names():
     assert describe("PUT", "/v1/filters/{filter_id}") == ("FILTER_UPDATE", "FILTER")
     assert describe("DELETE", "/v1/filter-groups/{group_id}") == ("FILTER_GROUP_DELETE", "FILTER_GROUP")
     assert describe("POST", "/v1/automations/{automation_id}/pause") == ("AUTOMATION_PAUSE", "AUTOMATION")
-    assert describe("POST", "/v1/automations/{automation_id}/budget/allocate") == ("AUTOMATION_BUDGET_ALLOCATE", "AUTOMATION")
+    assert describe("POST", "/v1/budgets/{budget_id}/allocate") == ("BUDGET_ALLOCATE", "BUDGET")
+    assert describe("POST", "/v1/portfolios/{portfolio_id}/budgets") == ("BUDGET_CREATE", "BUDGET")
+    assert describe("DELETE", "/v1/budgets/{budget_id}/automations/{automation_id}") == ("BUDGET_AUTOMATIONS", "BUDGET")
     assert describe("POST", "/v1/portfolios/{portfolio_id}/capital/withdraw") == ("PORTFOLIO_CAPITAL_WITHDRAW", "PORTFOLIO")
     assert describe("POST", "/v1/portfolios/{portfolio_id}/orders") == ("ORDER_PLACE_MANUAL", "PORTFOLIO")
     assert describe("POST", "/v1/filters/preview") == ("FILTER_PREVIEW", "FILTER")
@@ -94,6 +96,16 @@ def test_related_ids_link_entries(client):
     about_account = [e["action"] for e in log(client, entityId=acct["id"])]
     assert about_account == ["PORTFOLIO_CREATE", "BROKER_ACCOUNT_CREATE"]  # the portfolio mentions the account
     assert [e["action"] for e in log(client, entityId=pf["id"])] == ["PORTFOLIO_CAPITAL_WITHDRAW", "PORTFOLIO_CREATE"]
+
+
+def test_budget_actions_name_the_budget(client):
+    acct = client.post("/v1/broker-accounts", headers=KEY, json={"name": "Paper", "provider": "ALPACA"}).json()
+    pf = client.post("/v1/portfolios", headers=KEY, json={"name": "P", "brokerAccountId": acct["id"], "capital": 1000}).json()
+    b = client.post(f"/v1/portfolios/{pf['id']}/budgets", headers=KEY, json={"name": "Main", "amount": 100}).json()
+    client.post(f"/v1/budgets/{b['id']}/withdraw", headers=KEY, json={"amount": 40})
+    entries = log(client, entityType="BUDGET")
+    assert [(e["action"], e["entityId"]) for e in entries] == [("BUDGET_WITHDRAW", b["id"]), ("BUDGET_CREATE", b["id"])]
+    assert entries[1]["related"]["portfolioId"] == pf["id"]
 
 
 def test_orders_and_broker_events_share_the_request(client, broker):

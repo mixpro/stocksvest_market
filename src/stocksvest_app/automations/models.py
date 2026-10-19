@@ -289,14 +289,14 @@ class SelectionMode(str, Enum):
 
 class RankingKey(str, Enum):
     """How TOP_N ranks the matches (descending by default). POSITION_VALUE and UNREALIZED_PNL_PERCENT use the
-    automation's own shares (unheld symbols rank last).
+    budget's shares (unheld symbols rank last).
 
     Used by: SymbolSelection.rankBy, planner._rank_value.
     """
     LAST_PRICE = "LAST_PRICE"
     DAILY_CHANGE_PERCENT = "DAILY_CHANGE_PERCENT"
     DAILY_VOLUME = "DAILY_VOLUME"
-    POSITION_VALUE = "POSITION_VALUE"  # value of the automation's own shares
+    POSITION_VALUE = "POSITION_VALUE"  # value of the budget's shares
     UNREALIZED_PNL_PERCENT = "UNREALIZED_PNL_PERCENT"
 
 
@@ -317,7 +317,7 @@ class SymbolSelection(BaseModel):
 
 class SizingMode(str, Enum):
     """How big each order is. Buys: QUANTITY (shares), CASH_AMOUNT (dollars), PERCENT_OF_BUDGET (of the budget
-    available when the run starts). Sells: QUANTITY, PERCENT_OF_POSITION (of the automation's own shares).
+    available when the run starts). Sells: QUANTITY, PERCENT_OF_POSITION (of the budget's shares).
     Quantities are rounded down to whole shares.
 
     Used by: OrderSizing.mode, BUY_SIZINGS / SELL_SIZINGS, planner.plan.
@@ -325,7 +325,7 @@ class SizingMode(str, Enum):
     QUANTITY = "QUANTITY"  # shares
     CASH_AMOUNT = "CASH_AMOUNT"  # buy: money per symbol
     PERCENT_OF_BUDGET = "PERCENT_OF_BUDGET"  # buy: % of the budget available when the run starts
-    PERCENT_OF_POSITION = "PERCENT_OF_POSITION"  # sell: % of the automation's shares of that symbol
+    PERCENT_OF_POSITION = "PERCENT_OF_POSITION"  # sell: % of the budget's shares of that symbol
 
 
 class OrderSizing(BaseModel):
@@ -351,7 +351,7 @@ class PlaceOrderAction(BaseModel):
     TOP_N: one sizing for all ranks, or N sizings where sizings[i] is for rank i+1.
 
     Attributes:
-        side: BUY, or SELL (only the automation's own shares).
+        side: BUY, or SELL (only shares bought with the same budget, by any of its automations).
         orderType: MARKET, LIMIT, STOP, STOP_LIMIT or TRAILING_STOP.
         timeInForce: DAY, GTC, OPG, CLS, IOC or FOK (checked against the broker's capabilities).
         limitOffsetPercent: limit price = latest price x (1 + offset%); required for LIMIT / STOP_LIMIT.
@@ -398,21 +398,22 @@ class PlaceOrderAction(BaseModel):
 
 
 class OrderGuards(BaseModel):
-    """Limits applied to every order an automation plans (defaults shown in the API docs).
+    """Limits applied to every order an automation plans (defaults shown in the API docs). They apply to each budget
+    the automation trades with separately.
 
     Attributes:
-        maxOrdersPerRun: orders across all order actions of one run.
-        maxPositionValue: cap per symbol on the automation's shares, in dollars (buys shrink to fit).
-        maxPositionPercent: same cap as a % of the automation's equity (budget cash + invested).
+        maxOrdersPerRun: orders per budget across all order actions of one run.
+        maxPositionValue: cap per symbol on the budget's shares, in dollars (buys shrink to fit).
+        maxPositionPercent: same cap as a % of the budget's equity (cash + invested).
         regularHoursOnly: place nothing outside the regular session.
-        skipBuyIfHeld: no buy when the automation holds the symbol or has a buy open.
+        skipBuyIfHeld: no buy when the budget holds the symbol or has a buy open (from any of its automations).
         maxDataAgeMinutes: place nothing when the market data is older than this.
 
     Used by: AutomationIn.orderGuards, runner.Trading, planner.plan.
     """
     maxOrdersPerRun: int | None = Field(default=10, ge=1)
-    maxPositionValue: Decimal | None = Field(default=None, gt=0)  # per symbol, the automation's shares
-    maxPositionPercent: Decimal | None = Field(default=None, gt=0, le=100)  # of the automation's equity
+    maxPositionValue: Decimal | None = Field(default=None, gt=0)  # per symbol, the budget's shares
+    maxPositionPercent: Decimal | None = Field(default=None, gt=0, le=100)  # of the budget's equity
     regularHoursOnly: bool = True
     skipBuyIfHeld: bool = True
     maxDataAgeMinutes: int = Field(default=30, ge=1)
@@ -423,12 +424,12 @@ Action = Annotated[Union[NotifyAction, PlaceOrderAction, LaterAction], Field(dis
 
 
 class AutomationIn(BaseModel):
-    """An automation as clients send it (create, update, preview).
+    """An automation as clients send it (create, update, preview). Which money it trades with is not part of it:
+    portfolios attach automations to their budgets (budgets.routes).
 
     Attributes:
         name: 1-100 characters.
         description: free text.
-        portfolioId: required when an action places orders.
         orderGuards: OrderGuards; defaults applied when an action places orders.
         runTargets: at least one RunTarget (union).
         schedules: at least one Schedule.
@@ -438,7 +439,6 @@ class AutomationIn(BaseModel):
     """
     name: str = Field(min_length=1, max_length=100)
     description: str = ""
-    portfolioId: str | None = None  # required for automations that place orders
     orderGuards: OrderGuards | None = None  # defaults apply when an automation places orders
     runTargets: list[RunTarget] = Field(min_length=1)
     schedules: list[Schedule] = Field(min_length=1)
@@ -446,23 +446,13 @@ class AutomationIn(BaseModel):
 
     @model_validator(mode="after")
     def check_trading(self):
-        """Order-placing automations need a portfolio, can't use RUN_ALL, and get default guards."""
+        """Order-placing automations can't use RUN_ALL, and get default guards."""
         if any(a.type == "PLACE_ORDER" for a in self.actions):
-            if not self.portfolioId:
-                raise ValueError("automations that place orders need a portfolioId")
             if any(s.missedPolicy == MissedPolicy.RUN_ALL for s in self.schedules):
                 raise ValueError("missedPolicy RUN_ALL is not allowed for automations that place orders")
             if self.orderGuards is None:
                 self.orderGuards = OrderGuards()
         return self
-
-
-class BudgetChangeIn(BaseModel):
-    """Body of budget allocate/withdraw: amount (> 0, cents) and an optional note for the ledger.
-    Used by: routes.allocate, routes.withdraw.
-    """
-    amount: Decimal = Field(gt=0, decimal_places=2)
-    note: str | None = None
 
 
 class SwitchIn(BaseModel):

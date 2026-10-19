@@ -71,9 +71,9 @@ class Env:
     def filter(self, name, inputs=None, actions=None):
         return self.post("/v1/filters", {"name": name, "inputs": inputs or [{"type": "UNIVERSE"}], "actions": actions or []})
 
-    def automation(self, name, targets, portfolio_id=None, schedules=None, actions=None):
+    def automation(self, name, targets, schedules=None, actions=None):
         return self.post("/v1/automations", {
-            "name": name, "portfolioId": portfolio_id, "runTargets": targets,
+            "name": name, "runTargets": targets,
             "schedules": schedules or [{"type": "DAILY", "atTimes": ["10:00"]}],
             "actions": actions or [{"type": "NOTIFY", "title": "{name}: {count}"}]})
 
@@ -169,14 +169,16 @@ def test_everything_survives_a_restart(env):
     f = env.filter("All")
     acct = env.post("/v1/broker-accounts", {"name": "Paper", "provider": "ALPACA"})
     pf = env.post("/v1/portfolios", {"name": "P", "brokerAccountId": acct["id"], "capital": 5000})
-    a = env.automation("Bot", [{"type": "FILTER", "id": f["id"]}], portfolio_id=pf["id"])
-    env.post(f"/v1/automations/{a['id']}/budget/allocate", {"amount": 1500})
+    a = env.automation("Bot", [{"type": "FILTER", "id": f["id"]}])
+    b = env.post(f"/v1/portfolios/{pf['id']}/budgets", {"name": "Main", "amount": 1500, "automationIds": [a["id"]]})
     env.post(f"/v1/automations/{a['id']}/run")
-    before = (env.get(f"/v1/portfolios/{pf['id']}"), env.get(f"/v1/automations/{a['id']}/budget"),
+    before = (env.get(f"/v1/portfolios/{pf['id']}"), env.get(f"/v1/budgets/{b['id']}"),
+              env.get(f"/v1/budgets/{b['id']}/ledger"), env.get(f"/v1/automations/{a['id']}"),
               env.get(f"/v1/automations/{a['id']}/runs"), env.get("/v1/notifications"))
 
     env.restart()
-    after = (env.get(f"/v1/portfolios/{pf['id']}"), env.get(f"/v1/automations/{a['id']}/budget"),
+    after = (env.get(f"/v1/portfolios/{pf['id']}"), env.get(f"/v1/budgets/{b['id']}"),
+             env.get(f"/v1/budgets/{b['id']}/ledger"), env.get(f"/v1/automations/{a['id']}"),
              env.get(f"/v1/automations/{a['id']}/runs"), env.get("/v1/notifications"))
     strip = lambda p: {k: v for k, v in p.items() if k != "lastSync"}  # noqa: E731
     assert strip(after[0]) == strip(before[0]) and after[1:] == before[1:]
@@ -214,7 +216,7 @@ def check_money_invariants(env, account_id):
     for p in account["portfolios"]:
         pf = env.get(f"/v1/portfolios/{p['id']}")
         budgets = sum(b["cash"] for b in pf["budgets"])
-        assert budgets <= pf["cash"] + 1e-6, "automation budgets exceed the portfolio's cash"
+        assert budgets <= pf["cash"] + 1e-6, "budgets exceed the portfolio's cash"
         assert pf["unallocatedCash"] == pytest.approx(pf["cash"] - budgets)
         ledger = env.get(f"/v1/portfolios/{p['id']}/ledger?limit=1000")["entries"]
         # The ledger replays to the current cash, entry by entry.
@@ -224,7 +226,7 @@ def check_money_invariants(env, account_id):
             assert float(running) == pytest.approx(e["cashAfter"])
         assert float(running) == pytest.approx(pf["cash"])
         for b in pf["budgets"]:
-            entries = env.get(f"/v1/automations/{b['automationId']}/budget")["entries"]
+            entries = env.get(f"/v1/budgets/{b['id']}/ledger?limit=1000")["entries"]
             total = sum(Decimal(str(e["amount"])) for e in entries if e["type"] not in ("RESERVE", "RELEASE"))
             assert float(total) == pytest.approx(b["cash"])
             assert b["available"] >= -1e-6
@@ -236,8 +238,8 @@ def test_random_capital_and_budget_operations_keep_the_books_straight(env):
     f = env.filter("All")
     portfolios = [env.post("/v1/portfolios", {"name": f"P{i}", "brokerAccountId": acct["id"], "capital": 20000})
                   for i in range(3)]
-    automations = [env.automation(f"A{i}", [{"type": "FILTER", "id": f["id"]}], portfolio_id=rng.choice(portfolios)["id"])
-                   for i in range(4)]
+    budgets = [env.post(f"/v1/portfolios/{rng.choice(portfolios)['id']}/budgets", {"name": f"B{i}"})
+               for i in range(4)]
     outcomes = {"ok": 0, "refused": 0}
     for step in range(150):
         op = rng.choice(["pf_allocate", "pf_withdraw", "budget_allocate", "budget_withdraw"])
@@ -246,8 +248,8 @@ def test_random_capital_and_budget_operations_keep_the_books_straight(env):
             target = rng.choice(portfolios)["id"]
             r = env.client.post(f"/v1/portfolios/{target}/capital/{op[3:]}", headers=KEY, json={"amount": amount})
         else:
-            target = rng.choice(automations)["id"]
-            r = env.client.post(f"/v1/automations/{target}/budget/{op[7:]}", headers=KEY, json={"amount": amount})
+            target = rng.choice(budgets)["id"]
+            r = env.client.post(f"/v1/budgets/{target}/{op[7:]}", headers=KEY, json={"amount": amount})
         assert r.status_code in (200, 422), (step, op, r.status_code, r.text)
         outcomes["ok" if r.status_code == 200 else "refused"] += 1
         if step % 25 == 0:
@@ -261,15 +263,14 @@ def test_concurrent_requests_cannot_overspend(env):
     acct = env.post("/v1/broker-accounts", {"name": "Paper", "provider": "ALPACA"})
     pf = env.post("/v1/portfolios", {"name": "P", "brokerAccountId": acct["id"], "capital": 10000})
     f = env.filter("All")
-    autos = [env.automation(f"A{i}", [{"type": "FILTER", "id": f["id"]}], portfolio_id=pf["id"]) for i in range(8)]
+    budgets = [env.post(f"/v1/portfolios/{pf['id']}/budgets", {"name": f"B{i}"}) for i in range(8)]
     results = []
 
     def grab(path, amount):
         c = TestClient(env.app, raise_server_exceptions=False)  # its own connection, same app
         results.append(c.post(path, headers=KEY, json={"amount": amount}).status_code)
 
-    threads = [threading.Thread(target=grab, args=(f"/v1/automations/{a['id']}/budget/allocate", 3000)) for a in autos]
-    threads += [threading.Thread(target=grab, args=("/v1/portfolios", 0)) for _ in range(0)]
+    threads = [threading.Thread(target=grab, args=(f"/v1/budgets/{b['id']}/allocate", 3000)) for b in budgets]
     threads += [threading.Thread(target=grab, args=(f"/v1/portfolios/{pf['id']}/capital/allocate", 40000))
                 for _ in range(6)]
     for t in threads:

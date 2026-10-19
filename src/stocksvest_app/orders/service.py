@@ -1,12 +1,12 @@
 """Placing and cancelling orders, and applying what the broker reports (order updates and fills)
-to orders, position lots and budget pools."""
+to orders, position lots, portfolio cash and budgets."""
 
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from ..audit import store as audit
-from ..automations import budget
+from ..budgets import store as budget
 from ..brokers.base import (
     FINAL_STATUSES,
     REJECTED,
@@ -105,15 +105,15 @@ def cost_basis_price(type: str, limit_price, stop_price, estimated_price) -> Dec
 
 
 def open_manual_buys(conn, portfolio_id: str) -> Decimal:
-    """Money tied up by open manual buy orders (automation buys are covered by their pools).
+    """Money tied up by open manual buy orders (buys paid from a budget are covered by its reservation).
 
     Args:
         conn: app DB connection.
         portfolio_id: the portfolio's id.
 
-    Used by: automations.budget.unallocated_cash, performance.snapshots.portfolio_values, portfolios.routes.summary.
+    Used by: budgets.store.unallocated_cash, performance.snapshots.portfolio_values, portfolios.routes.summary.
     """
-    rows = conn.execute("SELECT * FROM orders WHERE portfolio_id = ? AND automation_id IS NULL AND side = 'BUY' "
+    rows = conn.execute("SELECT * FROM orders WHERE portfolio_id = ? AND budget_id IS NULL AND side = 'BUY' "
                         "AND status IN ('PENDING', 'SUBMITTED', 'PARTIALLY_FILLED')", (portfolio_id,)).fetchall()
     total = D0
     for r in rows:
@@ -122,25 +122,25 @@ def open_manual_buys(conn, portfolio_id: str) -> Decimal:
     return total
 
 
-def open_sell_quantity(conn, portfolio_id: str, symbol: str, automation_id: str | None) -> Decimal:
+def open_sell_quantity(conn, portfolio_id: str, symbol: str, budget_id: str | None) -> Decimal:
     """Shares already being sold by open sell orders of one owner.
 
     Args:
         conn: app DB connection.
         portfolio_id: the portfolio's id.
         symbol: ticker.
-        automation_id: the owning automation; None = the portfolio's manual shares.
+        budget_id: the owning budget; None = the portfolio's manual shares.
 
     Used by: _check_funds.
     """
     rows = conn.execute("SELECT quantity, filled_quantity FROM orders WHERE portfolio_id = ? AND symbol = ? "
-                        "AND automation_id IS ? AND side = 'SELL' AND status IN ('PENDING', 'SUBMITTED', "
-                        "'PARTIALLY_FILLED')", (portfolio_id, symbol, automation_id)).fetchall()
+                        "AND budget_id IS ? AND side = 'SELL' AND status IN ('PENDING', 'SUBMITTED', "
+                        "'PARTIALLY_FILLED')", (portfolio_id, symbol, budget_id)).fetchall()
     return sum((D(r["quantity"]) - D(r["filled_quantity"]) for r in rows), D0)
 
 
 def _check_funds(conn, portfolio: dict, symbol: str, side: str, type: str, quantity: Decimal, limit_price, stop_price,
-                 estimated_price, automation_id: str | None) -> Decimal:
+                 estimated_price, budget_id: str | None) -> Decimal:
     """Raise OrderRejected if the shares (sell) or money (buy) aren't there. Call inside db.immediate().
 
     Args:
@@ -153,7 +153,7 @@ def _check_funds(conn, portfolio: dict, symbol: str, side: str, type: str, quant
         limit_price: limit price.
         stop_price: stop price.
         estimated_price: last price.
-        automation_id: the owning automation (its budget), or None (unallocated cash).
+        budget_id: the budget paying / whose shares are sold, or None (unallocated cash, manual shares).
 
     Returns:
         The money to reserve (0 for sells).
@@ -164,19 +164,19 @@ def _check_funds(conn, portfolio: dict, symbol: str, side: str, type: str, quant
     Used by: place_order.
     """
     if side == "SELL":
-        free = pf.held(conn, portfolio["id"], symbol, automation_id) - open_sell_quantity(conn, portfolio["id"], symbol,
-                                                                                        automation_id)
+        free = pf.held(conn, portfolio["id"], symbol, budget_id) - open_sell_quantity(conn, portfolio["id"], symbol,
+                                                                                    budget_id)
         if quantity > free:
             raise OrderRejected(f"only {free} {symbol} shares are available to sell"
-                                f"{' for this automation' if automation_id else ''}", "NOT_HELD")
+                                f"{' in this budget' if budget_id else ''}", "NOT_HELD")
         return D0
     price = cost_basis_price(type, limit_price, stop_price, estimated_price)
     if price is None:
         raise OrderRejected("no price to estimate the cost of this buy", "NO_PRICE")
     amount = (quantity * price).quantize(Decimal("0.01"))
-    if automation_id:
-        if amount > budget.available(conn, automation_id):
-            raise OrderRejected(f"needs {amount}, budget has {budget.available(conn, automation_id):.2f}",
+    if budget_id:
+        if amount > budget.available(conn, budget_id):
+            raise OrderRejected(f"needs {amount}, budget has {budget.available(conn, budget_id):.2f}",
                                 "INSUFFICIENT_BUDGET")
     elif amount > budget.unallocated_cash(conn, portfolio):
         raise OrderRejected(f"needs {amount}; not enough unallocated cash", "INSUFFICIENT_BUDGET")
@@ -186,7 +186,7 @@ def _check_funds(conn, portfolio: dict, symbol: str, side: str, type: str, quant
 def place_order(conn: sqlite3.Connection, broker: Broker, portfolio: dict, *, symbol: str, side: str, type: str,
                 quantity: Decimal, time_in_force: str, limit_price=None, stop_price=None, trail_percent=None,
                 extended_hours: bool = False, automation_id: str | None = None, run_id: str | None = None,
-                client_order_id: str | None = None, estimated_price=None) -> dict:
+                client_order_id: str | None = None, estimated_price=None, budget_id: str | None = None) -> dict:
     """Check, record, reserve budget, and send to the broker. Broker refusals are recorded as REJECTED
     orders; an unknown outcome leaves the order PENDING for the next sync. Every outcome goes to the activity log.
 
@@ -203,10 +203,11 @@ def place_order(conn: sqlite3.Connection, broker: Broker, portfolio: dict, *, sy
         stop_price: stop price.
         trail_percent: trail percent.
         extended_hours: extended hours.
-        automation_id: owning automation (its budget and shares), or None for a manual order.
+        automation_id: the automation placing it, or None for a manual order.
         run_id: the automation run that placed it.
         client_order_id: idempotency key; an existing order with it is returned unchanged. Default: a new id.
         estimated_price: last price, for the reservation and slippage.
+        budget_id: the budget paying for a buy / whose shares a sell sells; None = unallocated cash and manual shares.
 
     Returns:
         The order.
@@ -224,15 +225,15 @@ def place_order(conn: sqlite3.Connection, broker: Broker, portfolio: dict, *, sy
     client_order_id = client_order_id or new_id("sv")
     with immediate(conn):  # check what's available and reserve it under the write lock
         reserve_amount = _check_funds(conn, portfolio, symbol, side, type, quantity, limit_price, stop_price,
-                                      estimated_price, automation_id)
+                                      estimated_price, budget_id)
         order_id = store.insert_order(
             conn, portfolio_id=portfolio["id"], broker_account_id=portfolio["brokerAccountId"], symbol=symbol,
             automation_id=automation_id, run_id=run_id, client_order_id=client_order_id, side=side, type=type,
             time_in_force=time_in_force, quantity=quantity, limit_price=limit_price, stop_price=stop_price,
             trail_percent=trail_percent, extended_hours=extended_hours, estimated_price=estimated_price,
-            reserved=reserve_amount if automation_id else D0)
-        if automation_id and reserve_amount:
-            budget.reserve(conn, automation_id, reserve_amount, order_id, run_id)
+            reserved=reserve_amount if budget_id else D0, budget_id=budget_id)
+        if budget_id and reserve_amount:
+            budget.reserve(conn, budget_id, reserve_amount, order_id, run_id, automation_id)
 
     request = BrokerOrderRequest(client_order_id=client_order_id, symbol=symbol, side=side, type=type,
                                  quantity=quantity, time_in_force=time_in_force,
@@ -240,7 +241,7 @@ def place_order(conn: sqlite3.Connection, broker: Broker, portfolio: dict, *, sy
                                  stop_price=D(stop_price) if stop_price is not None else None,
                                  trail_percent=D(trail_percent) if trail_percent is not None else None,
                                  extended_hours=extended_hours)
-    related = {"portfolioId": portfolio["id"], "automationId": automation_id, "runId": run_id}
+    related = {"portfolioId": portfolio["id"], "budgetId": budget_id, "automationId": automation_id, "runId": run_id}
     details = {"symbol": symbol, "side": side, "type": type, "quantity": str(quantity), "timeInForce": time_in_force,
                "limitPrice": limit_price, "stopPrice": stop_price, "estimatedPrice": estimated_price,
                "reserved": str(reserve_amount), "clientOrderId": client_order_id}
@@ -282,7 +283,8 @@ def apply_order_update(conn, row: sqlite3.Row, bo: BrokerOrder, log: bool = True
                or bo.broker_order_id != row["broker_order_id"])
     if log and bo.status != row["status"]:
         audit.record(conn, f"ORDER_{bo.status}", "ORDER", row["id"], source="SYNC",
-                     related={"portfolioId": row["portfolio_id"], "automationId": row["automation_id"],
+                     related={"portfolioId": row["portfolio_id"], "budgetId": row["budget_id"],
+                              "automationId": row["automation_id"],
                               "runId": row["automation_run_id"]},
                      details={"from": row["status"], "to": bo.status, "rawStatus": bo.raw_status,
                               "filledQuantity": str(bo.filled_quantity), "averageFillPrice": bo.average_fill_price,
@@ -314,13 +316,13 @@ def finalize(conn, row: sqlite3.Row) -> None:
     else:
         store.update_order(conn, row["id"], cancelled_at=ts)
     left = D(row["reserved"])
-    if row["automation_id"] and left > 0:
-        budget.release(conn, row["automation_id"], left, row["id"], f"order {row['status'].lower()}")
+    if row["budget_id"] and left > 0:
+        budget.release(conn, row["budget_id"], left, row["id"], f"order {row['status'].lower()}", row["automation_id"])
         store.update_order(conn, row["id"], reserved=D0)
 
 
 def apply_fill(conn, row: sqlite3.Row, fill: BrokerFill) -> list[dict]:
-    """Record a fill of an app order and update lots, the portfolio's cash and the owning automation's budget.
+    """Record a fill of an app order and update lots, the portfolio's cash and the budget that paid / owns the shares.
 
     Args:
         conn: app DB connection.
@@ -332,41 +334,46 @@ def apply_fill(conn, row: sqlite3.Row, fill: BrokerFill) -> list[dict]:
 
     Used by: sync_account.
     """
-    portfolio_id, owner, order_id = row["portfolio_id"], row["automation_id"], row["id"]
+    portfolio_id, order_id = row["portfolio_id"], row["id"]
+    owner, buyer = row["budget_id"], row["automation_id"]  # the budget owns shares and money; buyer is shown only
     fill_id = store.insert_fill(conn, order_id, portfolio_id, fill)
     audit.record(conn, "FILL_IMPORTED", "ORDER", order_id, source="SYNC",
-                 related={"portfolioId": portfolio_id, "automationId": owner, "fillId": fill_id},
+                 related={"portfolioId": portfolio_id, "budgetId": owner, "automationId": buyer, "fillId": fill_id},
                  details={"symbol": fill.symbol, "side": fill.side, "quantity": str(fill.quantity),
                           "price": str(fill.price), "fee": str(fill.fee), "brokerFillId": fill.broker_fill_id})
     cost = fill.quantity * fill.price
     mismatches = []
+    tags = {"automation_id": buyer, "budget_id": owner, "order_id": order_id, "fill_id": fill_id}
     if fill.side == "BUY":
-        pf.change_cash(conn, portfolio_id, "BUY_FILL", -cost, automation_id=owner, order_id=order_id, fill_id=fill_id)
+        pf.change_cash(conn, portfolio_id, "BUY_FILL", -cost, **tags)
     else:
-        pf.change_cash(conn, portfolio_id, "SELL_FILL", cost, automation_id=owner, order_id=order_id, fill_id=fill_id)
+        pf.change_cash(conn, portfolio_id, "SELL_FILL", cost, **tags)
     if fill.fee:
-        pf.change_cash(conn, portfolio_id, "FEE", -fill.fee, automation_id=owner, order_id=order_id, fill_id=fill_id)
+        pf.change_cash(conn, portfolio_id, "FEE", -fill.fee, **tags)
     if fill.side == "BUY":
-        pf.open_lot(conn, portfolio_id, fill.symbol, owner, fill.quantity, fill.price, buy_fill_id=fill_id,
-                    opened_at=iso(fill.executed_at))
+        pf.open_lot(conn, portfolio_id, fill.symbol, buyer, fill.quantity, fill.price, buy_fill_id=fill_id,
+                    opened_at=iso(fill.executed_at), budget_id=owner)
         if owner:
             used = min(D(row["reserved"]), cost)
-            budget.buy_fill(conn, owner, cost, used, row["id"], fill_id)
+            budget.buy_fill(conn, owner, cost, used, row["id"], fill_id, buyer)
             store.update_order(conn, row["id"], reserved=D(row["reserved"]) - used)
     else:
         taken, basis, pnl = pf.close_lots_fifo(conn, portfolio_id, fill.symbol, owner, fill.quantity, fill.price)
         if owner:
-            budget.sell_fill(conn, owner, taken * fill.price, basis, pnl, row["id"], fill_id)
+            budget.sell_fill(conn, owner, taken * fill.price, basis, pnl, row["id"], fill_id, buyer)
         if taken < fill.quantity:
-            # Sold more than the owner held: take it from the portfolio's manual shares.
+            # Sold more than the budget held: take it from the portfolio's manual shares.
             extra = D0
             if owner:
-                extra, _, _ = pf.close_lots_fifo(conn, portfolio_id, fill.symbol, None, fill.quantity - taken, fill.price)
+                extra, _, extra_pnl = pf.close_lots_fifo(conn, portfolio_id, fill.symbol, None, fill.quantity - taken,
+                                                         fill.price)
+                pnl += extra_pnl
             if taken + extra < fill.quantity:
                 mismatches.append({"kind": "POSITION_QUANTITY", "symbol": fill.symbol,
                                    "detail": f"sell fill of {fill.quantity} but only {taken + extra} shares were held"})
+        store.set_fill_pnl(conn, fill_id, pnl)
     if owner and fill.fee:
-        budget.fee(conn, owner, fill.fee, row["id"], fill_id)
+        budget.fee(conn, owner, fill.fee, row["id"], fill_id, buyer)
     return mismatches
 
 

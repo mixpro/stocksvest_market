@@ -7,16 +7,15 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, TypeAdapter
 
-from ..db import immediate, new_id
+from ..db import new_id
 from ..deps import AppContext
 from ..filters import store as filters_store
 from ..market.client import MarketError
 from ..runs import store as runs_store
 from . import store
-from ..portfolios import store as portfolios_store
 from ..orders import service as orders_service
-from . import budget
-from .models import AutomationIn, BudgetChangeIn, Schedule, SwitchIn
+from ..budgets import store as budget_store
+from .models import AutomationIn, Schedule, SwitchIn
 from .runner import run_automation
 from .timing import next_fires
 
@@ -68,10 +67,8 @@ def router(ctx: AppContext) -> APIRouter:
             The automation as a JSON-ready dict.
 
         Raises:
-            HTTPException: 422 when the portfolio, a filter or a group doesn't exist.
+            HTTPException: 422 when a filter or a group doesn't exist.
         """
-        if body.portfolioId and not portfolios_store.get_portfolio(conn, body.portfolioId):
-            raise HTTPException(422, f"portfolio '{body.portfolioId}' does not exist")
         for t in body.runTargets:
             exists = filters_store.get_filter if t.type.value == "FILTER" else filters_store.get_group
             if not exists(conn, t.id):
@@ -120,7 +117,8 @@ def router(ctx: AppContext) -> APIRouter:
             a: the automation dict.
 
         Returns:
-            The automation plus nextRunAt (null when paused or nothing is coming) and lastRun.
+            The automation plus nextRunAt (null when paused or nothing is coming), lastRun and budgets (the budgets
+            it trades with: [{id, name, portfolioId}]).
         """
         next_at = None
         if a["status"] == "ACTIVE":
@@ -144,6 +142,8 @@ def router(ctx: AppContext) -> APIRouter:
             **a,
             "nextRunAt": next_at.astimezone(timezone.utc).isoformat() if next_at else None,
             "lastRun": {k: last[0][k] for k in ("id", "ranAt", "status", "error")} if last else None,
+            "budgets": [{"id": b["id"], "name": b["name"], "portfolioId": b["portfolioId"]}
+                        for b in budget_store.budgets_of(conn, a["id"])],
         }
 
     # ---------------------------------------------------------------- global switch
@@ -221,7 +221,7 @@ def router(ctx: AppContext) -> APIRouter:
             body: the automation.
             conn: app DB connection (injected).
         """
-        return store.create_automation(conn, prepare(conn, body))
+        return with_status(conn, store.create_automation(conn, prepare(conn, body)))
 
     @r.get("/v1/automations/{automation_id}", tags=["automations"])
     def get_automation(automation_id: str, conn: Conn):
@@ -235,48 +235,26 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.put("/v1/automations/{automation_id}", tags=["automations"])
     def update_automation(automation_id: str, body: AutomationIn, conn: Conn):
-        """Replace the definition. configVersion goes up and schedules restart from now. Moving it to another
-        portfolio is refused while its budget, shares or open orders are in the current one.
+        """Replace the definition. configVersion goes up and schedules restart from now. Its budgets stay.
         \f
         Args:
             automation_id: the automation's id (path).
             body: the new definition.
             conn: app DB connection (injected).
         """
-        current = load(conn, automation_id)
-        pool = budget.get_pool(conn, automation_id)
-        if pool and body.portfolioId != pool["portfolioId"]:
-            reasons = budget.holdings_blocking_removal(conn, automation_id)
-            if pool["cash"]:
-                reasons.append(f"its budget holds {pool['cash']:.2f}: withdraw it first")
-            if reasons:
-                raise HTTPException(409, "can't move this automation to another portfolio: " + "; ".join(reasons))
-            with conn:  # an empty budget simply moves along
-                budget.close_pool(conn, automation_id, f"moved from portfolio {current.get('portfolioId')}")
-        return store.update_automation(conn, automation_id, prepare(conn, body))
+        load(conn, automation_id)
+        return with_status(conn, store.update_automation(conn, automation_id, prepare(conn, body)))
 
     @r.delete("/v1/automations/{automation_id}", tags=["automations"], status_code=204)
-    def delete_automation(automation_id: str, conn: Conn,
-                          return_budget: Annotated[bool, Query(alias="returnBudget")] = False):
-        """Deletes the automation; its run history and budget ledger stay. Refused while it holds shares or has
-        open orders. Budget cash must go back to the portfolio first: withdraw it, or pass returnBudget=true.
+    def delete_automation(automation_id: str, conn: Conn):
+        """Deletes the automation and takes it out of its budgets. Money and shares stay in the budgets, and orders
+        it left open settle normally. Its run history and record are kept.
         \f
         Args:
             automation_id: the automation's id (path).
             conn: app DB connection (injected).
-            return_budget: return the budget's cash to the portfolio (query returnBudget).
         """
         load(conn, automation_id)
-        reasons = budget.holdings_blocking_removal(conn, automation_id)
-        if reasons:
-            raise HTTPException(409, "can't delete this automation: " + "; ".join(reasons))
-        pool = budget.get_pool(conn, automation_id)
-        if pool and pool["cash"] and not return_budget:
-            raise HTTPException(409, f"can't delete this automation: its budget still holds {pool['cash']:.2f}; "
-                                     "withdraw it first or delete with returnBudget=true")
-        with immediate(conn):
-            if pool:
-                budget.close_pool(conn, automation_id, "returned to the portfolio: the automation was deleted")
         store.delete_automation(conn, automation_id)
 
     @r.post("/v1/automations/{automation_id}/pause", tags=["automations"])
@@ -364,66 +342,21 @@ def router(ctx: AppContext) -> APIRouter:
             raise HTTPException(404, f"automation '{automation_id}' not found")
         return {"events": events}
 
-    # ---------------------------------------------------------------- budget pool
+    # ---------------------------------------------------------------- what it did with its budgets
 
-    def budget_view(conn, automation_id: str) -> dict:
-        """The automation's pool and ledger (the answer of the budget routes).
-
-        Args:
-            conn: app DB connection.
-            automation_id: the automation's id.
-        """
-        return {"pool": budget.get_pool(conn, automation_id), "entries": budget.entries(conn, automation_id)}
-
-    @r.get("/v1/automations/{automation_id}/budget", tags=["automations"])
-    def get_budget(automation_id: str, conn: Conn):
-        """The automation's money (cash, reserved, available, invested, P&L) and its ledger, newest first.
+    @r.get("/v1/automations/{automation_id}/record", tags=["automations"])
+    def record(automation_id: str, conn: Conn):
+        """What the automation did with each budget it traded with (orders, money spent and received, realized P&L
+        of its sells, fees) and the totals. Also works for deleted automations.
         \f
         Args:
             automation_id: the automation's id (path).
             conn: app DB connection (injected).
         """
-        load(conn, automation_id)
-        return budget_view(conn, automation_id)
-
-    @r.post("/v1/automations/{automation_id}/budget/allocate", tags=["automations"])
-    def allocate(automation_id: str, body: BudgetChangeIn, conn: Conn):
-        """Move money from the portfolio's unallocated cash into this automation's budget.
-        \f
-        Args:
-            automation_id: the automation's id (path).
-            body: amount and an optional note.
-            conn: app DB connection (injected).
-        """
-        a = load(conn, automation_id)
-        if not a.get("portfolioId"):
-            raise HTTPException(422, "set the automation's portfolioId first")
-        portfolio = portfolios_store.get_portfolio(conn, a["portfolioId"])
-        try:
-            budget.allocate(conn, automation_id, portfolio, body.amount, body.note)
-        except budget.BudgetError as e:
-            raise HTTPException(422, str(e))
-        with conn:
-            store.add_event(conn, automation_id, "BUDGET_ALLOCATED", a["configVersion"], {"amount": str(body.amount)})
-        return budget_view(conn, automation_id)
-
-    @r.post("/v1/automations/{automation_id}/budget/withdraw", tags=["automations"])
-    def withdraw(automation_id: str, body: BudgetChangeIn, conn: Conn):
-        """Give available (not reserved, not invested) budget back to the portfolio.
-        \f
-        Args:
-            automation_id: the automation's id (path).
-            body: amount and an optional note.
-            conn: app DB connection (injected).
-        """
-        a = load(conn, automation_id)
-        try:
-            budget.withdraw(conn, automation_id, body.amount, body.note)
-        except budget.BudgetError as e:
-            raise HTTPException(422, str(e))
-        with conn:
-            store.add_event(conn, automation_id, "BUDGET_WITHDRAWN", a["configVersion"], {"amount": str(body.amount)})
-        return budget_view(conn, automation_id)
+        out = budget_store.record(conn, automation_id)
+        if not out["budgets"] and not store.get_automation(conn, automation_id):
+            raise HTTPException(404, f"automation '{automation_id}' not found")
+        return out
 
     # ---------------------------------------------------------------- notifications
 

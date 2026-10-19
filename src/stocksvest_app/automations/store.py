@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS schedule_fires (
 CREATE TABLE IF NOT EXISTS automation_events (
     id             TEXT PRIMARY KEY,
     automation_id  TEXT NOT NULL,
-    type           TEXT NOT NULL,              -- CREATED | UPDATED | PAUSED | RESUMED | DELETED
+    type           TEXT NOT NULL,              -- CREATED UPDATED PAUSED RESUMED DELETED BUDGET_ADDED BUDGET_REMOVED
     config_version INTEGER NOT NULL,
     changes        TEXT NOT NULL,              -- JSON
     created_at     TEXT NOT NULL
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS app_settings (
 
 def automation_json(r: sqlite3.Row) -> dict:
     """An automations row -> API shape: id, name, description, status, configVersion, the definition fields
-    (portfolioId, orderGuards, runTargets, schedules, actions), createdAt, updatedAt.
+    (orderGuards, runTargets, schedules, actions), createdAt, updatedAt.
 
     Args:
         r: row from the automations table.
@@ -83,7 +83,6 @@ def automation_json(r: sqlite3.Row) -> dict:
         "description": r["description"],
         "status": r["status"],
         "configVersion": r["config_version"],
-        "portfolioId": None,
         "orderGuards": None,
         **json.loads(r["definition"]),
         "createdAt": r["created_at"],
@@ -98,7 +97,7 @@ def get_automation(conn, automation_id: str) -> dict | None:
         conn: app DB connection.
         automation_id: the automation's id.
 
-    Used by: routes, scheduler (via list_automations), budget/portfolio routes.
+    Used by: routes, budgets.routes.
     """
     r = conn.execute("SELECT * FROM automations WHERE id = ?", (automation_id,)).fetchone()
     return automation_json(r) if r else None
@@ -121,14 +120,14 @@ def list_automations(conn, status: str | None = None) -> list[dict]:
 
 
 def _definition(data: dict) -> str:
-    """The stored JSON definition (portfolioId, orderGuards, runTargets, schedules, actions) of a validated body.
+    """The stored JSON definition (orderGuards, runTargets, schedules, actions) of a validated body.
 
     Args:
         data: AutomationIn as dict.
 
     Used by: create_automation, update_automation.
     """
-    return json.dumps({k: data.get(k) for k in ("portfolioId", "orderGuards", "runTargets", "schedules", "actions")})
+    return json.dumps({k: data.get(k) for k in ("orderGuards", "runTargets", "schedules", "actions")})
 
 
 def create_automation(conn, data: dict) -> dict:
@@ -197,7 +196,8 @@ def set_status(conn, automation_id: str, status: str) -> dict:
 
 
 def delete_automation(conn, automation_id: str) -> None:
-    """Delete an automation (its runs, events and budget ledger stay); records a DELETED event.
+    """Delete an automation and take it out of its budgets (its runs, events and the budgets' ledgers stay);
+    records a DELETED event.
 
     Args:
         conn: app DB connection.
@@ -207,6 +207,7 @@ def delete_automation(conn, automation_id: str) -> None:
     """
     a = get_automation(conn, automation_id)
     with conn:
+        conn.execute("DELETE FROM budget_automations WHERE automation_id = ?", (automation_id,))
         conn.execute("DELETE FROM automations WHERE id = ?", (automation_id,))
         add_event(conn, automation_id, "DELETED", a["configVersion"], {"name": a["name"]})
 
@@ -236,9 +237,9 @@ def add_event(conn, automation_id: str, type_: str, config_version: int, changes
         automation_id: the automation's id.
         type_: CREATED, UPDATED, PAUSED, RESUMED, DELETED, BUDGET_ALLOCATED or BUDGET_WITHDRAWN.
         config_version: the version after the change.
-        changes: what changed ({field: {from, to}} for UPDATED, amount for budget events).
+        changes: what changed ({field: {from, to}} for UPDATED, the budget for budget events).
 
-    Used by: create/update/set_status/delete_automation, routes (budget allocate/withdraw).
+    Used by: create/update/set_status/delete_automation, budgets.routes (added to / removed from a budget).
     """
     conn.execute(
         "INSERT INTO automation_events(id, automation_id, type, config_version, changes, created_at) "

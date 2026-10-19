@@ -22,9 +22,9 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshots (
 );
 CREATE INDEX IF NOT EXISTS portfolio_snapshots_by_kind ON portfolio_snapshots(portfolio_id, kind, date);
 
--- An automation's money and shares at the end of each trading day.
-CREATE TABLE IF NOT EXISTS automation_snapshots (
-    automation_id   TEXT NOT NULL,
+-- A budget's money and shares at the end of each trading day.
+CREATE TABLE IF NOT EXISTS budget_snapshots (
+    budget_id       TEXT NOT NULL,
     date            TEXT NOT NULL,
     at              TEXT NOT NULL,
     portfolio_id    TEXT NOT NULL,
@@ -41,14 +41,14 @@ CREATE TABLE IF NOT EXISTS automation_snapshots (
     open_positions  INTEGER NOT NULL,
     orders_placed   INTEGER NOT NULL,
     fills           INTEGER NOT NULL,
-    PRIMARY KEY (automation_id, date)
+    PRIMARY KEY (budget_id, date)
 );
 """
 
 # Money columns of each table (stored as decimal text). Used by: insert_*, *_points
 PORTFOLIO_FIELDS = ("allocated", "cash", "unallocated", "invested", "positions_value", "equity", "realized_pnl",
                     "unrealized_pnl")
-AUTOMATION_FIELDS = ("allocated", "cash", "reserved", "invested", "positions_value", "equity", "realized_pnl",
+BUDGET_FIELDS = ("allocated", "cash", "reserved", "invested", "positions_value", "equity", "realized_pnl",
                      "unrealized_pnl", "fees")
 
 
@@ -84,23 +84,23 @@ def insert_portfolio(conn, portfolio_id: str, at: str, date: str, kind: str, val
     )
 
 
-def insert_automation(conn, automation_id: str, date: str, at: str, values: dict) -> None:
-    """Store (or replace) an automation's snapshot of a day (inside the caller's transaction).
+def insert_budget(conn, budget_id: str, date: str, at: str, values: dict) -> None:
+    """Store (or replace) a budget's snapshot of a day (inside the caller's transaction).
 
     Args:
         conn: app DB connection.
-        automation_id: the automation's id.
+        budget_id: the budget's id.
         date: New York trading date.
         at: snapshot time, ISO.
-        values: snapshots.automation_values result.
+        values: snapshots.budget_values result.
 
-    Used by: snapshots.snapshot_automations.
+    Used by: snapshots.snapshot_budgets.
     """
     conn.execute(
-        f"INSERT OR REPLACE INTO automation_snapshots(automation_id, date, at, portfolio_id, "
-        f"{', '.join(AUTOMATION_FIELDS)}, return_percent, open_positions, orders_placed, fills) "
-        f"VALUES (?, ?, ?, ?, {', '.join('?' * len(AUTOMATION_FIELDS))}, ?, ?, ?, ?)",
-        (automation_id, date, at, values["portfolio_id"], *(str(values[f]) for f in AUTOMATION_FIELDS),
+        f"INSERT OR REPLACE INTO budget_snapshots(budget_id, date, at, portfolio_id, "
+        f"{', '.join(BUDGET_FIELDS)}, return_percent, open_positions, orders_placed, fills) "
+        f"VALUES (?, ?, ?, ?, {', '.join('?' * len(BUDGET_FIELDS))}, ?, ?, ?, ?)",
+        (budget_id, date, at, values["portfolio_id"], *(str(values[f]) for f in BUDGET_FIELDS),
          str(values["return_percent"]) if values["return_percent"] is not None else None,
          values["open_positions"], values["orders_placed"], values["fills"]),
     )
@@ -113,7 +113,7 @@ def _row_json(r: sqlite3.Row, fields) -> dict:
         r: the row.
         fields: money columns to include.
 
-    Used by: portfolio_points, automation_points.
+    Used by: portfolio_points, budget_points.
     """
     out = {"at": r["at"], "date": r["date"]}
     for f in fields:
@@ -141,25 +141,25 @@ def portfolio_points(conn, portfolio_id: str, start: str | None, end: str | None
     return [{**_row_json(r, PORTFOLIO_FIELDS), "kind": r["kind"]} for r in conn.execute(sql + " ORDER BY at", args)]
 
 
-def automation_points(conn, automation_id: str, start: str | None, end: str | None) -> list[dict]:
-    """An automation's daily snapshots, oldest first.
+def budget_points(conn, budget_id: str, start: str | None, end: str | None) -> list[dict]:
+    """A budget's daily snapshots, oldest first.
 
     Args:
         conn: app DB connection.
-        automation_id: the automation's id.
+        budget_id: the budget's id.
         start: from this date (first 10 chars used).
         end: up to this date.
 
-    Used by: routes.automation_performance.
+    Used by: routes.budget_performance.
     """
-    sql, args = "SELECT * FROM automation_snapshots WHERE automation_id = ?", [automation_id]
+    sql, args = "SELECT * FROM budget_snapshots WHERE budget_id = ?", [budget_id]
     for cond, val in (("date >= ?", start), ("date <= ?", end)):
         if val:
             sql += f" AND {cond}"
             args.append(val[:10])
     out = []
     for r in conn.execute(sql + " ORDER BY date", args):
-        out.append({**_row_json(r, AUTOMATION_FIELDS),
+        out.append({**_row_json(r, BUDGET_FIELDS),
                     "returnPercent": float(r["return_percent"]) if r["return_percent"] is not None else None,
                     "openPositions": r["open_positions"], "ordersPlaced": r["orders_placed"], "fills": r["fills"]})
     return out
