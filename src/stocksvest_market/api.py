@@ -8,7 +8,7 @@ import tempfile
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from enum import Enum
 from typing import Annotated
 
@@ -54,8 +54,11 @@ class Session(str, Enum):
 
 
 class PeriodUnit(str, Enum):
-    """Unit of the look-back in GET /v1/price-change. MINUTES uses minute bars (limited to the minute history window),
-    HOURS hourly bars, the rest daily bars. Months are 30.4375 days, years 365.25 days (see _period).
+    """Unit of the look-back in GET /v1/price-change.
+
+    MINUTES / HOURS count market time only (the extended session, 04:00-20:00 New York on trading days), using
+    minute / hourly bars. DAYS counts trading days (weekends and holidays skipped). WEEKS / MONTHS / YEARS are
+    calendar periods (months 30.4375 days, years 365.25 days, see _period) on daily bars.
 
     Used by: price_change, _period. The app's filter action PRICE_CHANGE (TimePeriodUnit) sends these values.
     """
@@ -140,7 +143,8 @@ def _symbol_json(r: sqlite3.Row) -> dict:
 
 
 def _period(amount: int, unit: PeriodUnit) -> timedelta:
-    """A look-back period as a timedelta.
+    """A look-back period as a timedelta (for DAYS this is only used for the MINUTES limit check; DAYS are counted
+    in trading days by _trading_days_back).
 
     Args:
         amount: how many units (>= 1).
@@ -154,6 +158,50 @@ def _period(amount: int, unit: PeriodUnit) -> timedelta:
     if unit == PeriodUnit.HOURS:
         return timedelta(hours=amount)
     return timedelta(days=amount * days[unit.value])
+
+
+def _trading_days_back(days_desc: list[str], last_date: str, amount: int) -> str | None:
+    """The trading day whose close starts a look-back of `amount` trading days ending on `last_date`.
+
+    The window counts the latest trading day on or before last_date as day 1. Example: on Monday, 1 day starts from
+    Friday's close (Monday's move) and 2 days from Thursday's close (Friday + Monday).
+
+    Args:
+        days_desc: trading days ("YYYY-MM-DD"), newest first.
+        last_date: New York date of the latest price.
+        amount: trading days to look back (>= 1).
+
+    Returns:
+        The start day, or None when the calendar doesn't reach that far back.
+
+    Used by: create_app.price_change (DAYS).
+    """
+    prior = [d for d in days_desc if d <= last_date]
+    return prior[amount] if len(prior) > amount else None
+
+
+def _market_time_back(sessions_desc: list[tuple[datetime, datetime]], end: datetime, span: timedelta) -> datetime | None:
+    """Go back `span` of market time from `end`, skipping the hours the market is closed (nights, weekends, holidays).
+
+    Args:
+        sessions_desc: (extended session open, extended session close) of trading days, newest first.
+        end: the time of the latest price.
+        span: market time to go back.
+
+    Returns:
+        The start time, or None when the calendar doesn't reach that far back.
+
+    Used by: create_app.price_change (MINUTES, HOURS).
+    """
+    left = span
+    for open_, close in sessions_desc:
+        if open_ >= end:
+            continue
+        available = min(close, end) - open_
+        if left <= available:
+            return min(close, end) - left
+        left -= available
+    return None
 
 
 def create_app(settings: Settings | None = None, client_factory: Callable[[Settings], AlpacaClient] = AlpacaClient):
@@ -536,6 +584,10 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
     ):
         """Price change over a period, from the latest price back periodAmount × periodUnit.
         Matches PriceChangeAction in FiltersPage.mmd (compare `changePercent` or `change`).
+
+        Only time the market is open counts: DAYS are trading days (on Monday, 2 DAYS compares with Thursday's
+        close), MINUTES / HOURS are market time within the extended session (04:00-20:00 New York).
+        WEEKS / MONTHS / YEARS are calendar periods. `fromTime` is the bar the change starts from.
         \f
         Args:
             conn: market DB connection (one per request, injected).
@@ -547,10 +599,39 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
         table = {"MINUTES": "bars_1min", "HOURS": "bars_1hour"}.get(period_unit.value, "bars_1day")
         if table == "bars_1min" and span > timedelta(days=settings.minute_history_days):
             raise HTTPException(400, f"MINUTES periods are limited to {settings.minute_history_days} days of minute data")
+        unit = period_unit.value
+        calendar = conn.execute("SELECT date, session_open, session_close FROM calendar ORDER BY date DESC").fetchall()
+        starts: dict[int, int | None] = {}  # latest price time -> look-back start (same for most symbols)
+
+        def start_of(last_ts: int) -> int | None:
+            """Unix time the look-back starts from (None when the calendar is too short), cached per time.
+
+            Args:
+                last_ts: unix time of the symbol's latest price.
+            """
+            if last_ts not in starts:
+                end = datetime.fromtimestamp(last_ts, timezone.utc)
+                if unit == "DAYS":
+                    day = _trading_days_back([c["date"] for c in calendar], end.astimezone(sync.ET).date().isoformat(),
+                                             period_amount)
+                    # Daily bars start at midnight New York, so the start day's bar is at or before this time.
+                    t = datetime.combine(date.fromisoformat(day), time(), sync.ET) if day else None
+                elif unit in ("MINUTES", "HOURS"):
+                    sessions = [(datetime.fromisoformat(c["session_open"]), datetime.fromisoformat(c["session_close"]))
+                                for c in calendar]
+                    t = _market_time_back(sessions, end, span)
+                else:
+                    t = end - span
+                starts[last_ts] = int(t.timestamp()) if t else None
+            return starts[last_ts]
+
         out = {}
         for r in symbol_rows(conn, symbols):
             last = latest_price(conn, r["id"])
-            base = latest(conn, table, r["id"], last["ts"] - int(span.total_seconds())) if last else None
+            start = start_of(last["ts"]) if last else None
+            base = latest(conn, table, r["id"], start) if start is not None else None
+            if base is None and start is not None and table == "bars_1min":
+                base = latest(conn, "bars_1hour", r["id"], start)  # older than the minute history kept
             change = last["c"] - base["c"] if last and base else None
             out[r["ticker"]] = {
                 "fromTime": _iso(base["ts"]) if base else None,

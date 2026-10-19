@@ -49,7 +49,9 @@ inputs (union) ──► action 1 ──► action 2 ──► … ──► mat
    - **`priceReference`:**
      - `LATEST_BAR`: newest price (~16 min delayed)
      - `LAST_CLOSE`: close of the last *completed* trading day
-   - **`periodUnit`:** `MINUTES` (max 7 days), `HOURS`, `DAYS`, `WEEKS`, `MONTHS`, `YEARS`
+   - **`periodUnit`:** `MINUTES` (max 7 days), `HOURS`, `DAYS`, `WEEKS`, `MONTHS`, `YEARS`. Only time the market is
+     open counts: `DAYS` are trading days (on Monday, 2 days = Friday + Monday, compared with Thursday's close),
+     `MINUTES` / `HOURS` are market time (04:00–20:00 New York). `WEEKS`, `MONTHS` and `YEARS` are calendar periods.
    - **`valueType`:** `PERCENT` (e.g. `3` = 3%) or `ABSOLUTE` (dollars)
    - **`condition`:**
      - `LESS_THAN`: x < value

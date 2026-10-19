@@ -76,7 +76,8 @@ class ValueType(str, Enum):
 
 class TimePeriodUnit(str, Enum):
     """Unit of the PRICE_CHANGE look-back; sent unchanged to the market's GET /v1/price-change (its PeriodUnit).
-    MINUTES is limited to MAX_MINUTE_LOOKBACK.
+    MINUTES is limited to MAX_MINUTE_LOOKBACK. Only market time counts: DAYS are trading days, MINUTES / HOURS
+    market hours (04:00-20:00 New York); WEEKS / MONTHS / YEARS are calendar periods.
 
     Used by: PriceChangeAction.periodUnit, routes.filter_actions.
     """

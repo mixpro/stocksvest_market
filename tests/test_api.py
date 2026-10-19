@@ -5,7 +5,8 @@ from fastapi.testclient import TestClient
 
 from conftest import FakeAlpaca, make_bar, make_halal_db, universe
 from stocksvest_market import db, symbols
-from stocksvest_market.api import create_app
+from stocksvest_market.api import _market_time_back, _trading_days_back, create_app
+from stocksvest_market.sync import ET
 
 READ = {"X-API-Key": "reader-key"}
 ADMIN = {"X-API-Key": "admin-key"}
@@ -104,13 +105,61 @@ def test_snapshots(client):
     assert set(everyone) == {"S0001", "S0002"} and everyone["S0002"]["latestPrice"] is None
 
 
-def test_price_change(client):
-    body = client.get("/v1/price-change?symbols=S0001&periodAmount=3&periodUnit=DAYS", headers=READ).json()
-    change = body["changes"]["S0001"]
-    assert change["fromTime"] == "2026-10-09T04:00:00Z"
-    assert change["toPrice"] == 13 and change["change"] == 3
+def add_calendar(conn, *days):
+    conn.executemany("INSERT OR IGNORE INTO calendar VALUES (?, ?, ?, ?, ?)", [
+        (d, f"{d}T04:00:00-04:00", f"{d}T09:30:00-04:00", f"{d}T16:00:00-04:00", f"{d}T20:00:00-04:00") for d in days])
+    conn.commit()
+
+
+def change_of(client, amount, unit):
+    url = f"/v1/price-change?symbols=S0001&periodAmount={amount}&periodUnit={unit}"
+    return client.get(url, headers=READ).json()["changes"]["S0001"]
+
+
+def test_price_change(client, seeded):
+    add_calendar(seeded, "2026-10-09", "2026-10-12")  # Fri, (weekend), Mon, Tue
+    # Latest price: Tue Oct 13 10:00 New York (13). 1 day = Tuesday's move, from Monday's close.
+    one = change_of(client, 1, "DAYS")
+    assert (one["fromTime"], one["fromPrice"], one["toPrice"], one["change"]) == ("2026-10-12T04:00:00Z", 11, 13, 2)
+    # 2 trading days = Monday + Tuesday, from Friday's close: the weekend doesn't count.
+    two = change_of(client, 2, "DAYS")
+    assert (two["fromTime"], two["change"]) == ("2026-10-09T04:00:00Z", 3)
+    assert change_of(client, 3, "DAYS")["change"] is None  # the calendar doesn't reach that far back
     minutes = client.get("/v1/price-change?periodAmount=20000&periodUnit=MINUTES", headers=READ)
     assert minutes.status_code == 400
+
+
+def test_price_change_skips_closed_hours(client, seeded):
+    add_calendar(seeded, "2026-10-09", "2026-10-12")
+    # A Friday 19:30 New York minute bar. The latest price is Tue 10:00.
+    seeded.execute("INSERT INTO bars_1min VALUES ('id-S0001', ?, 7, 7, 7, 7, 5, 1, 7)", (ts(2026, 10, 9, 23, 30),))
+    seeded.commit()
+    assert change_of(client, 120, "MINUTES")["fromTime"] == "2026-10-13T12:00:00Z"  # Tue 08:00 pre-market bar
+    # 6h (Tue 04:00-10:00) + 16h (all of Monday's session) + 30 min reaches Friday 19:30, not Sunday.
+    out = change_of(client, 22 * 60 + 30, "MINUTES")
+    assert (out["fromTime"], out["fromPrice"], out["change"]) == ("2026-10-09T23:30:00Z", 7, 6)
+
+
+def test_trading_days_back():
+    days = ["2026-11-30", "2026-11-27", "2026-11-25", "2026-11-24"]  # Thanksgiving (26th) and the weekend closed
+    assert _trading_days_back(days, "2026-11-30", 1) == "2026-11-27"  # Monday: from Friday's close
+    assert _trading_days_back(days, "2026-11-30", 2) == "2026-11-25"  # Fri + Mon, from Wednesday's close
+    assert _trading_days_back(days, "2026-11-29", 1) == "2026-11-25"  # on Sunday, Friday is day 1
+    assert _trading_days_back(days, "2026-11-30", 4) is None
+
+
+def test_market_time_back():
+    def session(d):
+        return (datetime.fromisoformat(f"{d}T04:00").replace(tzinfo=ET), datetime.fromisoformat(f"{d}T20:00").replace(tzinfo=ET))
+
+    sessions = [session("2026-10-12"), session("2026-10-09")]  # Mon, Fri
+    monday_6am = datetime(2026, 10, 12, 6, tzinfo=ET)
+    assert _market_time_back(sessions, monday_6am, timedelta(hours=1)) == datetime(2026, 10, 12, 5, tzinfo=ET)
+    # 3 hours from Monday 06:00: 2 on Monday, the 3rd is Friday 19:00-20:00.
+    assert _market_time_back(sessions, monday_6am, timedelta(hours=3)) == datetime(2026, 10, 9, 19, tzinfo=ET)
+    sunday = datetime(2026, 10, 11, 12, tzinfo=ET)  # closed: counts from Friday's session end
+    assert _market_time_back(sessions, sunday, timedelta(hours=2)) == datetime(2026, 10, 9, 18, tzinfo=ET)
+    assert _market_time_back(sessions, monday_6am, timedelta(hours=40)) is None
 
 
 def test_calendar(client):

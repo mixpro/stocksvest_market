@@ -218,7 +218,16 @@ Leave out `symbols` to get every symbol.
 }
 ```
 
-`fromPrice` is the last close at or before *latest time − period*. Values are `null` when there is not enough history.
+The period counts only time the market is open:
+
+| `periodUnit` | Counts | Example |
+|---|---|---|
+| `DAYS` | Trading days (weekends and holidays skipped). The day of the latest price is day 1 | On Monday, `1` = Monday's move (from Friday's close), `2` = from Thursday's close |
+| `MINUTES`, `HOURS` | Market time in the extended session (04:00–20:00 New York) | Monday 06:00, `3` hours = from Friday 19:00 |
+| `WEEKS`, `MONTHS`, `YEARS` | Calendar time (a month is 30.4375 days, a year 365.25) | `1` week on Monday = from the Monday before |
+
+`fromPrice` is the last price at or before the start of the period (`fromTime` is that bar). Values are `null` when
+there is not enough history or trading calendar.
 
 ---
 
