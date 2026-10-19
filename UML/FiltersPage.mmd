@@ -136,6 +136,10 @@ classDiagram
     - maxValue: Decimal?
   }
 
+  class PositionAction {
+    - portfolioIds: List~string~
+  }
+
   FilterGroup "1" o-- "*" Filter
   Filter "1" *-- "*" InputTypeIdentifier
   Filter "1" --> "*" Run : history (kind FILTER)
@@ -150,6 +154,7 @@ classDiagram
   FilterAction <|-- SectorAction
   FilterAction <|-- SymbolPriceAction
   FilterAction <|-- PriceChangeAction
+  FilterAction <|-- PositionAction
   SymbolTypeAction --> AssetType
   SymbolPriceAction --> PriceReference
   SymbolPriceAction --> ComparisonCondition
@@ -160,6 +165,7 @@ classDiagram
   note for Filter "inputs are UNIONED.\nUNIVERSE has no id; every other InputType requires one.\nFILTER / FILTER_GROUP inputs must not form a cycle (validated on save).\nactions run in order; filterFunction is pure.\nFILTER / FILTER_GROUP inputs are re-run live; a group's result is the union of its filters."
   note for ComparisonCondition "LESS_THAN / MORE_THAN are strict. BETWEEN requires maxValue; bounds are inclusive."
   note for PriceChangeAction "MINUTES lookback is limited to the 7 days of minute bars kept."
+  note for PositionAction "Keeps symbols with an open position (manual or automation shares) in any selected portfolio."
   note for SectorAction "sectorIds are keys from market GET /v1/sectors (SEC SIC codes mapped to sectors)."
   note for Run "One row per execution of any app action (filters now, automations later).\nKept 6 months (RUN_RETENTION_DAYS) for analysis of gains.\ndefinition = config at run time; result includes prices at run time."
   note for AssetType "Only types in the halal universe (ETFs, preferred, warrants, units, rights are excluded)."

@@ -5,12 +5,14 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from ..market.data import MarketData
+from ..portfolios import store as portfolios_store
 from . import store
 from .models import (
     AVAILABLE_INPUTS,
     FilterAction,
     FilterIn,
     InputType,
+    PositionAction,
     PriceChangeAction,
     PriceReference,
     SectorAction,
@@ -72,7 +74,8 @@ def find_cycle(conn: sqlite3.Connection, start: tuple[str, str], start_deps: lis
 
 
 def check_filter_refs(conn, f: FilterIn, filter_id: str | None) -> None:
-    """Refuse a filter whose inputs reference missing filters/groups or would create a cycle.
+    """Refuse a filter whose inputs reference missing filters/groups or would create a cycle, or whose
+    POSITION actions name missing portfolios.
 
     Args:
         conn: app DB connection.
@@ -96,6 +99,11 @@ def check_filter_refs(conn, f: FilterIn, filter_id: str | None) -> None:
             deps.append(("G", inp.id))
     if filter_id and find_cycle(conn, ("F", filter_id), deps):
         raise EngineError("inputs would create a cycle (this filter would end up using itself)")
+    for action in f.actions:
+        if isinstance(action, PositionAction):
+            for pid in action.portfolioIds:
+                if not portfolios_store.get_portfolio(conn, pid):
+                    raise EngineError(f"portfolio '{pid}' does not exist")
 
 
 def check_group_refs(conn, filter_ids: list[str], group_id: str | None) -> None:
@@ -232,11 +240,29 @@ class Evaluator:
             return snap.get("previousClose")
         return snap.get("dailyClose")
 
+    def _held(self, portfolio_ids: list[str]) -> set[str]:
+        """Symbols with an open position (any owner) in any of the portfolios.
+
+        Args:
+            portfolio_ids: the portfolios.
+
+        Raises:
+            EngineError: a portfolio no longer exists.
+
+        Used by: apply (POSITION).
+        """
+        out: set[str] = set()
+        for pid in portfolio_ids:
+            if not portfolios_store.get_portfolio(self.conn, pid):
+                raise EngineError(f"portfolio '{pid}' does not exist")
+            out |= {p["symbol"] for p in portfolios_store.positions(self.conn, pid) if p["quantity"] > 0}
+        return out
+
     def apply(self, action: FilterAction, symbols: set[str]) -> set[str]:
         """Keep the symbols that pass one action.
 
         Args:
-            action: SymbolTypeAction, SectorAction, SymbolPriceAction or PriceChangeAction.
+            action: SymbolTypeAction, SectorAction, SymbolPriceAction, PriceChangeAction or PositionAction.
             symbols: the symbols still in the running.
 
         Returns:
@@ -261,6 +287,8 @@ class Evaluator:
             changes = self.market.price_changes(symbols, action.periodAmount, action.periodUnit.value)
             field = "changePercent" if action.valueType == ValueType.PERCENT else "change"
             return {t for t, c in changes.items() if action.matches(c.get(field))}
+        if isinstance(action, PositionAction):
+            return symbols & self._held(action.portfolioIds)
         raise EngineError(f"unknown action {action}")
 
     # -- entry points

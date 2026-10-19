@@ -43,6 +43,7 @@ inputs (union) ──► action 1 ──► action 2 ──► … ──► mat
    | `SECTOR` | `sectorIds`: keys from market `GET /v1/sectors` | the sector is in the list |
    | `SYMBOL_PRICE` | `priceReference`, `condition`, `value`, `maxValue` | the price matches |
    | `PRICE_CHANGE` | `periodAmount`, `periodUnit`, `valueType`, `condition`, `value`, `maxValue` | the change over the period matches |
+   | `POSITION` | `portfolioIds`: one or more portfolio ids | the symbol is held in at least one of the portfolios (manual or automation shares) |
 
    - **`priceReference`:**
      - `LATEST_BAR`: newest price (~16 min delayed)
@@ -54,6 +55,10 @@ inputs (union) ──► action 1 ──► action 2 ──► … ──► mat
      - `MORE_THAN`: x > value
      - `BETWEEN`: value ≤ x ≤ maxValue. `maxValue` is required, and only allowed with `BETWEEN`.
    - A symbol with no data for the comparison is dropped.
+   - **`POSITION`:** the positions of several portfolios are combined as a union. Unknown portfolio ids are refused
+     (`422`). Because actions only narrow what the inputs give, a held symbol that has left the halal universe
+     doesn't appear with a `UNIVERSE` input. Example, "tech stocks I hold in either portfolio":
+     `[{"type": "POSITION", "portfolioIds": ["pf_a", "pf_b"]}, {"type": "SECTOR", "sectorIds": ["TECHNOLOGY"]}]`
 
 `GET /v1/filter-actions` returns all of this as data (fields, options, required rules), so a client can build its editor from it.
 
@@ -350,7 +355,7 @@ Alpaca paper account  $100,000
 | `GET /v1/portfolios/{id}` | Capital (`allocated`), `cash`, `unallocatedCash` (not in automation budgets), `positionsValue`, `equity`, unrealized and realized P&L, positions by owner, budgets, the account's unassigned cash, last sync |
 | `POST /v1/portfolios/{id}/capital/allocate` / `withdraw` | `{"amount": 5000}`: move money between the account's unassigned cash and the portfolio. A withdrawal can only take unallocated cash |
 | `GET /v1/portfolios/{id}/ledger` | Every change of the portfolio's cash, newest first |
-| `DELETE /v1/portfolios/{id}` | Only when empty: no shares, no open orders, no automations. Its cash goes back to the account |
+| `DELETE /v1/portfolios/{id}` | Only when empty: no shares, no open orders, no automations, and no filter with a `POSITION` action on it. Its cash goes back to the account |
 | `POST /v1/portfolios/{id}/sync` | Sync now. This also runs every minute in the background |
 | `GET /v1/portfolios/{id}/orders?status=&automationId=&openOnly=true` | Orders, newest first |
 | `GET /v1/portfolios/{id}/fills`, `/lots` | Fills, and position lots (who owns which shares) |

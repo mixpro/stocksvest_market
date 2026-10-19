@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from ..automations import store as automations_store
 from ..deps import AppContext
 from ..market.client import MarketError
+from ..portfolios import store as portfolios_store
 from ..runs import store as runs_store
 from ..runs.routes import record
 from . import store
@@ -71,15 +72,20 @@ def router(ctx: AppContext) -> APIRouter:
     # ---------------------------------------------------------------- editor metadata
 
     @r.get("/v1/filter-actions", tags=["filters"])
-    def filter_actions():
+    def filter_actions(conn: Conn):
         """Everything a client needs to build the filter editor: input types and action fields.
         \f
         Sector options come from the market API (empty, and SECTOR marked unavailable, when it is down).
+        Portfolio options are the app's portfolios (POSITION is unavailable until one exists).
+
+        Args:
+            conn: app DB connection (injected).
         """
         try:
             sectors = ctx.market.sector_options()
         except MarketError:
             sectors = []
+        portfolios = [{"value": p["id"], "label": p["name"]} for p in portfolios_store.list_portfolios(conn)]
         condition = {"name": "condition", "kind": "select", "options": _values(Condition), "required": True}
         value = {"name": "value", "kind": "number", "required": True}
         max_value = {"name": "maxValue", "kind": "number", "requiredWhen": {"condition": "BETWEEN"}}
@@ -101,6 +107,8 @@ def router(ctx: AppContext) -> APIRouter:
                     {"name": "periodUnit", "kind": "select", "options": _values(TimePeriodUnit), "required": True},
                     {"name": "valueType", "kind": "select", "options": _values(ValueType), "required": True},
                     condition, value, max_value]},
+                {"type": "POSITION", "label": "In portfolio positions", "available": bool(portfolios), "fields": [
+                    {"name": "portfolioIds", "kind": "multiselect", "options": portfolios, "required": True}]},
             ],
         }
 

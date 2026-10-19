@@ -12,6 +12,7 @@ from ..automations import store as automations_store
 from ..brokers import store as brokers_store
 from ..brokers.base import BrokerError
 from ..db import immediate
+from ..filters import store as filters_store
 from ..deps import AppContext
 from ..market.client import MarketError
 from ..orders import service, store as orders_store
@@ -248,7 +249,8 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.delete("/{portfolio_id}", status_code=204)
     def delete_portfolio(portfolio_id: str, conn: Conn):
-        """Only an empty portfolio: no shares, no open orders, no automations. Its cash goes back to unassigned.
+        """Only an empty portfolio: no shares, no open orders, no automations, no filter using it. Its cash goes back
+        to unassigned.
         \f
         Args:
             portfolio_id: the portfolio's id (path).
@@ -262,6 +264,9 @@ def router(ctx: AppContext) -> APIRouter:
         users = [a["name"] for a in automations_store.list_automations(conn) if a.get("portfolioId") == portfolio_id]
         if users:
             raise HTTPException(409, f"used by automation: {', '.join(users)}")
+        users = filters_store.portfolio_users(conn, portfolio_id)
+        if users:
+            raise HTTPException(409, f"used by filter: {', '.join(users)}")
         store.delete_portfolio(conn, p["id"])
 
     @r.post("/{portfolio_id}/capital/allocate")

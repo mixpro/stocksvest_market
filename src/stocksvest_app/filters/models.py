@@ -184,9 +184,31 @@ class PriceChangeAction(Comparison):
         return self
 
 
+class PositionAction(BaseModel):
+    """Keep symbols held (open position, any owner: manual or automation) in at least one of the portfolios.
+
+    Attributes:
+        portfolioIds: one or more portfolios (union of their positions); each at most once.
+
+    Used by: FilterAction, engine.Evaluator.apply, engine.check_filter_refs (portfolios must exist),
+    filters.store.portfolio_users (portfolio delete guard).
+    """
+
+    type: Literal["POSITION"]
+    portfolioIds: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def check_unique(self):
+        """Each portfolio at most once."""
+        if len(set(self.portfolioIds)) != len(self.portfolioIds):
+            raise ValueError("a portfolio is listed twice")
+        return self
+
+
 # Any filter action; the "type" field picks the model. Used by: FilterIn.actions, engine.Evaluator.apply.
 FilterAction = Annotated[
-    Union[SymbolTypeAction, SectorAction, SymbolPriceAction, PriceChangeAction], Field(discriminator="type")
+    Union[SymbolTypeAction, SectorAction, SymbolPriceAction, PriceChangeAction, PositionAction],
+    Field(discriminator="type"),
 ]
 
 
