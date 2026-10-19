@@ -117,10 +117,12 @@ function inputRow(inp, i) {
     el("option", { value: t.type, selected: t.type === inp.type, disabled: !t.available }, t.available ? t.type : `${t.type} (soon)`)));
 
   let idSelect = null;
-  if (inp.type === "FILTER" || inp.type === "FILTER_GROUP") {
+  if (inp.type === "FILTER" || inp.type === "FILTER_GROUP" || inp.type === "INVESTMENT_PORTFOLIO") {
+    const portfolios = (state.meta.inputTypes.find((t) => t.type === "INVESTMENT_PORTFOLIO")?.options || [])
+      .map((o) => ({ id: o.value, name: o.label }));
     const options = inp.type === "FILTER"
       ? state.filters.filter((f) => f.id !== state.selected.id)
-      : state.groups;
+      : inp.type === "FILTER_GROUP" ? state.groups : portfolios;
     idSelect = el("select", { class: "grow", onchange: (e) => (inp.id = e.target.value) },
       el("option", { value: "" }, "— choose —"),
       ...options.map((o) => el("option", { value: o.id, selected: o.id === inp.id }, o.name)));

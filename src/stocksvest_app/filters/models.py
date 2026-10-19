@@ -12,7 +12,8 @@ class InputType(str, Enum):
     """Where a filter's starting symbols come from (all inputs are combined as a union).
 
     UNIVERSE: every halal symbol. FILTER / FILTER_GROUP: the live result of another filter or group (needs `id`).
-    INVESTMENT_PORTFOLIO, WATCHLIST, WATCHLIST_GROUP: from the design, not available yet (refused at run time).
+    INVESTMENT_PORTFOLIO: the symbols held in a portfolio (any owner), including ones no longer halal (needs `id`).
+    WATCHLIST, WATCHLIST_GROUP: from the design, not available yet (refused at run time).
 
     Used by: FilterInput.type, engine.Evaluator._input_symbols, engine.check_filter_refs, routes.filter_actions.
     """
@@ -25,9 +26,9 @@ class InputType(str, Enum):
     WATCHLIST_GROUP = "WATCHLIST_GROUP"
 
 
-# Input types that exist in the app today; the rest arrive with watchlists and portfolios.
+# Input types that exist in the app today; the rest arrive with watchlists.
 # Used by: engine.Evaluator._input_symbols (refuses others), routes.filter_actions ("available" flag).
-AVAILABLE_INPUTS = {InputType.UNIVERSE, InputType.FILTER, InputType.FILTER_GROUP}
+AVAILABLE_INPUTS = {InputType.UNIVERSE, InputType.FILTER, InputType.FILTER_GROUP, InputType.INVESTMENT_PORTFOLIO}
 
 
 class AssetType(str, Enum):
@@ -89,7 +90,8 @@ class TimePeriodUnit(str, Enum):
 
 
 class FilterInput(BaseModel):
-    """One input of a filter: {"type": "UNIVERSE"} or {"type": "FILTER" | "FILTER_GROUP", "id": "..."}.
+    """One input of a filter: {"type": "UNIVERSE"} or {"type": "FILTER" | "FILTER_GROUP" | "INVESTMENT_PORTFOLIO",
+    "id": "..."}.
 
     Used by: FilterIn.inputs; engine (evaluation and reference/cycle checks).
     """

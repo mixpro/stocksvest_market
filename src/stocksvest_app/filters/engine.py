@@ -74,7 +74,7 @@ def find_cycle(conn: sqlite3.Connection, start: tuple[str, str], start_deps: lis
 
 
 def check_filter_refs(conn, f: FilterIn, filter_id: str | None) -> None:
-    """Refuse a filter whose inputs reference missing filters/groups or would create a cycle, or whose
+    """Refuse a filter whose inputs reference missing filters/groups/portfolios or would create a cycle, or whose
     POSITION actions name missing portfolios.
 
     Args:
@@ -97,6 +97,8 @@ def check_filter_refs(conn, f: FilterIn, filter_id: str | None) -> None:
             if not store.get_group(conn, inp.id):
                 raise EngineError(f"input filter group '{inp.id}' does not exist")
             deps.append(("G", inp.id))
+        elif inp.type == InputType.INVESTMENT_PORTFOLIO and not portfolios_store.get_portfolio(conn, inp.id):
+            raise EngineError(f"input portfolio '{inp.id}' does not exist")
     if filter_id and find_cycle(conn, ("F", filter_id), deps):
         raise EngineError("inputs would create a cycle (this filter would end up using itself)")
     for action in f.actions:
@@ -171,6 +173,8 @@ class Evaluator:
                 out |= set(self.market.universe())
             elif inp.type == InputType.FILTER:
                 out |= self.filter_symbols(inp.id, path)
+            elif inp.type == InputType.INVESTMENT_PORTFOLIO:
+                out |= self._held([inp.id])
             else:
                 out |= self.group_symbols(inp.id, path)
         return out
@@ -249,7 +253,7 @@ class Evaluator:
         Raises:
             EngineError: a portfolio no longer exists.
 
-        Used by: apply (POSITION).
+        Used by: apply (POSITION), _input_symbols (INVESTMENT_PORTFOLIO).
         """
         out: set[str] = set()
         for pid in portfolio_ids:

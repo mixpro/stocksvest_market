@@ -52,7 +52,8 @@ class MarketData:
         return sorted(tickers) if len(tickers) <= MAX_SYMBOLS_PER_CALL else None  # None = all symbols
 
     def snapshots(self, tickers: set[str]) -> dict[str, dict]:
-        """Market snapshots (latest price, daily change, ...) for these tickers only.
+        """Market snapshots (latest price, daily change, ...) for these tickers only. Tickers outside the halal
+        universe (e.g. a holding that is no longer halal) are not asked for: the market answers 404 for them.
 
         Args:
             tickers: tickers wanted; empty = no call.
@@ -60,13 +61,14 @@ class MarketData:
         Used by: filters.engine (SYMBOL_PRICE, result rows), automations planner context, portfolios.routes
         (position values), performance.snapshots.
         """
+        tickers = tickers & self.universe().keys() if tickers else tickers
         if not tickers:
             return {}
         data = self.api.snapshots(self._symbols_arg(tickers))["snapshots"]
         return {t: v for t, v in data.items() if t in tickers}
 
     def price_changes(self, tickers: set[str], amount: int, unit: str) -> dict[str, dict]:
-        """Price changes over a period for these tickers only.
+        """Price changes over a period for these tickers only (halal universe only, as in snapshots).
 
         Args:
             tickers: tickers wanted; empty = no call.
@@ -75,6 +77,7 @@ class MarketData:
 
         Used by: filters.engine (PRICE_CHANGE action).
         """
+        tickers = tickers & self.universe().keys() if tickers else tickers
         if not tickers:
             return {}
         data = self.api.price_change(amount, unit, self._symbols_arg(tickers))["changes"]

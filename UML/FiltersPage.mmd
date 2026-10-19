@@ -162,7 +162,7 @@ classDiagram
   PriceChangeAction --> TimePeriodUnit
   PriceChangeAction --> ValueType
 
-  note for Filter "inputs are UNIONED.\nUNIVERSE has no id; every other InputType requires one.\nFILTER / FILTER_GROUP inputs must not form a cycle (validated on save).\nactions run in order; filterFunction is pure.\nFILTER / FILTER_GROUP inputs are re-run live; a group's result is the union of its filters."
+  note for Filter "inputs are UNIONED.\nUNIVERSE has no id; every other InputType requires one.\nFILTER / FILTER_GROUP inputs must not form a cycle (validated on save).\nactions run in order; filterFunction is pure.\nFILTER / FILTER_GROUP inputs are re-run live; a group's result is the union of its filters.\nINVESTMENT_PORTFOLIO = symbols held in that portfolio (also ones no longer halal)."
   note for ComparisonCondition "LESS_THAN / MORE_THAN are strict. BETWEEN requires maxValue; bounds are inclusive."
   note for PriceChangeAction "MINUTES lookback is limited to the 7 days of minute bars kept."
   note for PositionAction "Keeps symbols with an open position (manual or automation shares) in any selected portfolio."

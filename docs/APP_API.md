@@ -33,7 +33,8 @@ inputs (union) ──► action 1 ──► action 2 ──► … ──► mat
    | `{"type": "UNIVERSE"}` | All halal symbols |
    | `{"type": "FILTER", "id": "flt_…"}` | The result of another filter, re-run live |
    | `{"type": "FILTER_GROUP", "id": "grp_…"}` | The union of a group's filters |
-   | `WATCHLIST`, `WATCHLIST_GROUP`, `INVESTMENT_PORTFOLIO` | Not available yet (`422`) |
+   | `{"type": "INVESTMENT_PORTFOLIO", "id": "pf_…"}` | Symbols held in a portfolio (bought by hand or by automations). Holdings that are no longer halal are included; they have no price, so price, sector and type actions drop them |
+   | `WATCHLIST`, `WATCHLIST_GROUP` | Not available yet (`422`) |
 
 2. **Actions** run top to bottom, and each one keeps only the symbols that match:
 

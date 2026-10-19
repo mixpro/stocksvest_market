@@ -145,7 +145,7 @@ def filter_users(conn, filter_id: str) -> list[str]:
 
 
 def portfolio_users(conn, portfolio_id: str) -> list[str]:
-    """Names of filters with a POSITION action on this portfolio.
+    """Names of filters with this portfolio as an input or in a POSITION action.
 
     Args:
         conn: app DB connection.
@@ -154,7 +154,8 @@ def portfolio_users(conn, portfolio_id: str) -> list[str]:
     Used by: portfolios.routes.delete_portfolio (409 when not empty).
     """
     return [f["name"] for f in list_filters(conn)
-            if any(a.get("type") == "POSITION" and portfolio_id in a.get("portfolioIds", []) for a in f["actions"])]
+            if any(i["type"] == "INVESTMENT_PORTFOLIO" and i.get("id") == portfolio_id for i in f["inputs"])
+            or any(a.get("type") == "POSITION" and portfolio_id in a.get("portfolioIds", []) for a in f["actions"])]
 
 
 # ------------------------------------------------------------------ groups

@@ -118,3 +118,57 @@ def test_saved_filter_run(client, portfolios):
     run = client.post(f"/v1/filters/{f['id']}/run", headers=KEY).json()
     assert {s["ticker"] for s in run["result"]["symbols"]} == {"AAA", "BBB"}
 
+
+# ------------------------------------------------------------------ INVESTMENT_PORTFOLIO input
+
+
+def from_inputs(client, inputs, actions=()):
+    r = client.post("/v1/filters/preview", headers=KEY, json={"name": "F", "inputs": inputs, "actions": list(actions)})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_portfolio_input(client, portfolios):
+    a, b = portfolios
+    out = from_inputs(client, [{"type": "INVESTMENT_PORTFOLIO", "id": a["id"]}])
+    assert tickers(out) == {"AAA", "BBB"} and out["steps"] == [{"step": "INPUTS", "count": 2}]
+    both = [{"type": "INVESTMENT_PORTFOLIO", "id": a["id"]}, {"type": "INVESTMENT_PORTFOLIO", "id": b["id"]}]
+    assert tickers(from_inputs(client, both)) == {"AAA", "BBB", "CCC"}  # inputs are a union
+    price_above_20 = {"type": "SYMBOL_PRICE", "priceReference": "LATEST_BAR", "condition": "MORE_THAN", "value": 20}
+    assert tickers(from_inputs(client, both, [price_above_20])) == {"BBB"}
+
+
+def test_portfolio_input_keeps_holdings_that_left_the_universe(client, portfolios):
+    from stocksvest_app import db
+    from stocksvest_app.portfolios import store as pf
+
+    a, _ = portfolios
+    conn = db.connect(Settings().db_path)
+    with conn:  # shares of a symbol that is no longer halal (the market doesn't know it any more)
+        pf.open_lot(conn, a["id"], "ZZZ", None, pf.D(3), pf.D(4))
+    out = from_inputs(client, [{"type": "INVESTMENT_PORTFOLIO", "id": a["id"]}])
+    rows = {s["ticker"]: s for s in out["symbols"]}
+    assert set(rows) == {"AAA", "BBB", "ZZZ"} and rows["ZZZ"]["price"] is None and rows["ZZZ"]["name"] is None
+    tech = {"type": "SECTOR", "sectorIds": ["TECHNOLOGY"]}
+    assert tickers(from_inputs(client, [{"type": "INVESTMENT_PORTFOLIO", "id": a["id"]}], [tech])) == {"AAA"}
+    portfolio = client.get(f"/v1/portfolios/{a['id']}", headers=KEY).json()  # other prices still load
+    prices = {p["symbol"]: p["price"] for p in portfolio["positions"]}
+    assert prices["AAA"] == 10 and prices["ZZZ"] is None
+
+
+def test_portfolio_input_validation_and_delete_guard(client):
+    acct = client.post("/v1/broker-accounts", headers=KEY, json={"name": "Paper", "provider": "ALPACA"}).json()
+    p = client.post("/v1/portfolios", headers=KEY, json={"name": "Empty", "brokerAccountId": acct["id"]}).json()
+    r = client.post("/v1/filters", headers=KEY, json={"name": "F", "inputs": [{"type": "INVESTMENT_PORTFOLIO"}]})
+    assert r.status_code == 422 and "needs an id" in r.text
+    r = client.post("/v1/filters", headers=KEY,
+                    json={"name": "F", "inputs": [{"type": "INVESTMENT_PORTFOLIO", "id": "pf_missing"}]})
+    assert r.status_code == 422 and "pf_missing" in r.text
+    f = client.post("/v1/filters", headers=KEY,
+                    json={"name": "Mine", "inputs": [{"type": "INVESTMENT_PORTFOLIO", "id": p["id"]}]}).json()
+    assert tickers(client.post(f"/v1/filters/{f['id']}/run", headers=KEY).json()["result"]) == set()  # nothing held
+    r = client.delete(f"/v1/portfolios/{p['id']}", headers=KEY)
+    assert r.status_code == 409 and "Mine" in r.text
+    meta = client.get("/v1/filter-actions", headers=KEY).json()["inputTypes"]
+    entry = next(t for t in meta if t["type"] == "INVESTMENT_PORTFOLIO")
+    assert entry["available"] and entry["options"] == [{"value": p["id"], "label": "Empty"}]
