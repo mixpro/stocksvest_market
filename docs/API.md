@@ -188,7 +188,7 @@ Leave out `symbols` to get every symbol.
 | `latestPrice` / `latestTime` | Close of the newest bar of any timeframe: use for current value and P&L |
 | `dailyClose` / `dailyDate` | Close of the latest daily bar |
 | `dailyVolume` | Volume of the latest day |
-| `previousClose` | Previous trading day's close |
+| `previousClose` | Close of the trading day before the latest price's day (on Monday, also in pre-market: Friday's) |
 | `dailyChange` / `dailyChangePercent` | `latestPrice` vs `previousClose` |
 
 ### Price change over a period

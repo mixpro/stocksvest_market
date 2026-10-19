@@ -174,7 +174,7 @@ def _trading_days_back(days_desc: list[str], last_date: str, amount: int) -> str
     Returns:
         The start day, or None when the calendar doesn't reach that far back.
 
-    Used by: create_app.price_change (DAYS).
+    Used by: create_app.price_change (DAYS), create_app.snapshots (previous close).
     """
     prior = [d for d in days_desc if d <= last_date]
     return prior[amount] if len(prior) > amount else None
@@ -549,11 +549,15 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
     def snapshots(conn: Conn, symbols: str | None = None):
         """Latest price and daily change per symbol (all symbols if `symbols` is omitted).
         Feeds position P&L, SymbolPriceAction (LAST_CLOSE / LATEST_BAR) and the DAILY_* ranking keys.
+
+        `previousClose` is the close of the trading day before the latest price's day, so the daily change is the
+        move of that day only, also in pre-market before the day's daily bar exists.
         \f
         Args:
             conn: market DB connection (one per request, injected).
             symbols: comma-separated tickers/ids, or None for all.
         """
+        trading_days = [c["date"] for c in conn.execute("SELECT date FROM calendar ORDER BY date DESC")]
         out = {}
         for r in symbol_rows(conn, symbols):
             last = latest_price(conn, r["id"])
@@ -561,7 +565,12 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
                 "SELECT ts, c, v FROM bars_1day WHERE symbol_id = ? ORDER BY ts DESC LIMIT 2", (r["id"],)
             ).fetchall()
             today = days[0] if days else None
-            prev = days[1] if len(days) > 1 else None
+            prev = days[1] if len(days) > 1 else None  # without a calendar: the bar before the newest one
+            last_date = datetime.fromtimestamp(last["ts"], sync.ET).date().isoformat() if last else None
+            prev_day = _trading_days_back(trading_days, last_date, 1) if last_date else None
+            if prev_day:  # the trading day before the latest price's day (daily bars start at midnight New York)
+                prev = latest(conn, "bars_1day", r["id"],
+                              int(datetime.combine(date.fromisoformat(prev_day), time(), sync.ET).timestamp()))
             change = last["c"] - prev["c"] if last and prev else None
             out[r["ticker"]] = {
                 "latestPrice": last["c"] if last else None,

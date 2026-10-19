@@ -140,6 +140,25 @@ def test_price_change_skips_closed_hours(client, seeded):
     assert (out["fromTime"], out["fromPrice"], out["change"]) == ("2026-10-09T23:30:00Z", 7, 6)
 
 
+def test_snapshot_previous_close_in_pre_market(client, seeded):
+    add_calendar(seeded, "2026-10-09", "2026-10-12", "2026-10-14")
+    # Wednesday 08:00 New York, pre-market: no Wednesday daily bar yet, the newest is Tuesday's (close 12).
+    seeded.execute("INSERT INTO bars_1min VALUES ('id-S0001', ?, 15, 15, 15, 15, 5, 1, 15)", (ts(2026, 10, 14, 12),))
+    seeded.commit()
+    snap = client.get("/v1/snapshots?symbols=S0001", headers=READ).json()["snapshots"]["S0001"]
+    assert snap["dailyDate"] == "2026-10-13" and snap["latestPrice"] == 15
+    assert snap["previousClose"] == 12 and snap["dailyChange"] == 3  # Tuesday's close, not Monday's (11)
+
+
+def test_snapshot_previous_close_after_a_weekend(client, seeded):
+    add_calendar(seeded, "2026-10-09", "2026-10-12")
+    seeded.execute("DELETE FROM bars_1min")  # latest price = Tuesday's daily close (12)
+    seeded.execute("DELETE FROM bars_1day WHERE ts = ?", (ts(2026, 10, 12, 4),))  # no Monday bar (e.g. halted)
+    seeded.commit()
+    snap = client.get("/v1/snapshots?symbols=S0001", headers=READ).json()["snapshots"]["S0001"]
+    assert snap["previousClose"] == 10  # the last close before Tuesday: Friday's
+
+
 def test_trading_days_back():
     days = ["2026-11-30", "2026-11-27", "2026-11-25", "2026-11-24"]  # Thanksgiving (26th) and the weekend closed
     assert _trading_days_back(days, "2026-11-30", 1) == "2026-11-27"  # Monday: from Friday's close
