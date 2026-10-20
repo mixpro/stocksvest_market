@@ -168,6 +168,25 @@ class BrokerFill:
 
 
 @dataclass(frozen=True)
+class BrokerFee:
+    """A charge on the whole account that is not part of a fill, e.g. Alpaca's daily regulatory (CAT) fee
+    "for 8 trades on 2026-10-19".
+
+    Attributes:
+        broker_fee_id: the broker's id (imported once by this id).
+        amount: what was charged (positive).
+        date: the trading day it is for, "YYYY-MM-DD".
+        description: the broker's text.
+
+    Used by: Broker.list_fees (returned), orders.service.apply_account_fee.
+    """
+    broker_fee_id: str
+    amount: Decimal
+    date: str
+    description: str
+
+
+@dataclass(frozen=True)
 class BrokerPosition:
     """Shares the broker account holds of one symbol.
 
@@ -272,6 +291,14 @@ class Broker(Protocol):
 
         Args:
             since: only fills after this time (None = all the broker keeps).
+        """
+        ...
+
+    def list_fees(self, since: datetime | None) -> list[BrokerFee]:
+        """Account fees that are not part of a fill (regulatory fees and the like), oldest first.
+
+        Args:
+            since: only fees after this time (None = all the broker keeps).
         """
         ...
 

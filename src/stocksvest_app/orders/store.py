@@ -72,6 +72,17 @@ CREATE TABLE IF NOT EXISTS broker_syncs (
 );
 CREATE INDEX IF NOT EXISTS broker_syncs_by_account ON broker_syncs(broker_account_id, ran_at);
 
+-- Account fees booked apart from the fills (e.g. Alpaca's daily CAT fee), and who they were charged to.
+CREATE TABLE IF NOT EXISTS broker_fees (
+    broker_fee_id     TEXT PRIMARY KEY,
+    broker_account_id TEXT NOT NULL,
+    date              TEXT NOT NULL,             -- the trading day it is for
+    amount            TEXT NOT NULL,             -- positive = charged
+    description       TEXT NOT NULL,
+    charged_to        TEXT NOT NULL,             -- JSON: [{portfolioId, budgetId, amount}], the rest is unassigned
+    created_at        TEXT NOT NULL
+);
+
 -- Fills of orders placed outside the app (e.g. in the broker's own UI). They belong to no portfolio:
 -- their shares and cash show up as "unassigned" on the broker account.
 CREATE TABLE IF NOT EXISTS external_fills (
@@ -288,6 +299,47 @@ def set_fill_pnl(conn, fill_id: str, pnl) -> None:
     Used by: orders.service.apply_fill.
     """
     conn.execute("UPDATE fills SET realized_pnl = ? WHERE id = ?", (str(pnl), fill_id))
+
+
+def fee_exists(conn, broker_fee_id: str) -> bool:
+    """Whether an account fee was already imported.
+
+    Args:
+        conn: app DB connection.
+        broker_fee_id: the broker's id of the fee.
+
+    Used by: orders.service.sync_account.
+    """
+    return conn.execute("SELECT 1 FROM broker_fees WHERE broker_fee_id = ?", (broker_fee_id,)).fetchone() is not None
+
+
+def insert_fee(conn, account_id: str, fee, charged_to: list[dict]) -> None:
+    """Record an imported account fee and who it was charged to (inside the caller's transaction).
+
+    Args:
+        conn: app DB connection.
+        account_id: the broker account's id.
+        fee: the BrokerFee.
+        charged_to: [{portfolioId, budgetId, amount}].
+
+    Used by: orders.service.apply_account_fee.
+    """
+    conn.execute("INSERT INTO broker_fees(broker_fee_id, broker_account_id, date, amount, description, charged_to, "
+                 "created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                 (fee.broker_fee_id, account_id, fee.date, str(fee.amount), fee.description, json.dumps(charged_to),
+                  now_iso()))
+
+
+def last_fee_date(conn, account_id: str) -> str | None:
+    """The newest imported account fee's date, or None.
+
+    Args:
+        conn: app DB connection.
+        account_id: the broker account's id.
+
+    Used by: orders.service.sync_account (fees are fetched from a few days before).
+    """
+    return conn.execute("SELECT MAX(date) FROM broker_fees WHERE broker_account_id = ?", (account_id,)).fetchone()[0]
 
 
 def last_fill_time(conn, account_id: str) -> str | None:

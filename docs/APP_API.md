@@ -416,6 +416,11 @@ Each entry has `cashAfter` and `reservedAfter`, and links to its order, fill, ru
 **Broker sync** (every minute, per broker account):
 - The app imports balances, fills (each one once) and order statuses from the broker.
 - Fills of orders placed outside the app are recorded as external, and their shares and cash count as unassigned.
+- Account fees the broker books apart from the fills (e.g. Alpaca's daily **CAT fee**, a cent or so for the day's
+  trades) are imported too. Each is split, in exact cents, between the budgets and manual trades that traded that
+  day, by number of fills (a share for trades made outside the app stays unassigned). A fee for a day without app
+  trades is split between the portfolios by their cash. They show as `FEE` entries in the portfolio and budget
+  ledgers, with the broker's description.
 - Differences with the broker are recorded in `lastSync.mismatches`, only where the portfolios hold more shares or cash than the broker.
 
 ### History

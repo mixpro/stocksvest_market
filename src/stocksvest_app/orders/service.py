@@ -12,6 +12,7 @@ from ..brokers.base import (
     REJECTED,
     Broker,
     BrokerError,
+    BrokerFee,
     BrokerFill,
     BrokerOrder,
     BrokerOrderRequest,
@@ -377,6 +378,79 @@ def apply_fill(conn, row: sqlite3.Row, fill: BrokerFill) -> list[dict]:
     return mismatches
 
 
+def split_cents(amount: Decimal, weights: dict) -> dict:
+    """Split an amount by weights into cents that add up exactly (largest remainders get the leftover cents).
+
+    Args:
+        amount: what to split (may be negative).
+        weights: key -> weight (> 0).
+
+    Returns:
+        key -> share, in cents.
+
+    Used by: apply_account_fee.
+    """
+    sign = -1 if amount < 0 else 1
+    total = sum(weights.values())
+    cents = abs(int((amount * 100).to_integral_value()))
+    raw = {k: Decimal(cents) * Decimal(w) / Decimal(total) for k, w in weights.items()}
+    out = {k: int(v.to_integral_value(rounding="ROUND_FLOOR")) for k, v in raw.items()}
+    for k in sorted(raw, key=lambda k: raw[k] - out[k], reverse=True)[: cents - sum(out.values())]:
+        out[k] += 1
+    return {k: sign * Decimal(v) / 100 for k, v in out.items()}
+
+
+def apply_account_fee(conn, account: dict, portfolios: list[dict], fee: BrokerFee) -> list[dict]:
+    """Charge an account fee (e.g. the daily CAT fee for the day's trades) to whoever traded that day: split by
+    number of fills per budget (or the portfolio's manual trades), in exact cents. The share of trades made outside
+    the app stays with the account's unassigned cash. A fee for a day without app trades is split between the
+    portfolios by their cash. Call inside db.immediate().
+
+    Args:
+        conn: app DB connection.
+        account: the broker account.
+        portfolios: the account's portfolios.
+        fee: the fee.
+
+    Returns:
+        [{portfolioId, budgetId, amount}] that were charged.
+
+    Used by: sync_account.
+    """
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    ids = {p["id"] for p in portfolios}
+    weights: dict = {}
+    rows = conn.execute("SELECT f.portfolio_id, o.budget_id, f.executed_at FROM fills f "
+                        "LEFT JOIN orders o ON o.id = f.order_id").fetchall()
+    for r in rows:
+        if r["portfolio_id"] in ids and datetime.fromisoformat(r["executed_at"]).astimezone(et).date().isoformat() == fee.date:
+            key = (r["portfolio_id"], r["budget_id"])
+            weights[key] = weights.get(key, 0) + 1
+    external = sum(1 for r in conn.execute("SELECT executed_at FROM external_fills WHERE broker_account_id = ?",
+                                           (account["id"],))
+                   if datetime.fromisoformat(r["executed_at"]).astimezone(et).date().isoformat() == fee.date)
+    if external and weights:
+        weights[None] = external  # outside trades: their share stays unassigned
+    if not weights:  # no app trades that day: the portfolios pay by their cash
+        weights = {(p["id"], None): D(p["cash"]) for p in portfolios if D(p["cash"]) > 0}
+    if not weights:
+        weights = {None: 1}
+    charged = []
+    for key, share in split_cents(fee.amount, weights).items():
+        if key is None or not share:
+            continue
+        portfolio_id, budget_id = key
+        note = f"{fee.description} ({fee.date})"
+        pf.change_cash(conn, portfolio_id, "FEE", -share, budget_id=budget_id, note=note)
+        if budget_id and budget.get_budget(conn, budget_id):
+            budget.fee(conn, budget_id, share, None, None, None, note=note)
+        charged.append({"portfolioId": portfolio_id, "budgetId": budget_id, "amount": float(share)})
+    store.insert_fee(conn, account["id"], fee, charged)
+    return charged
+
+
 def cancel_order(conn, broker: Broker, order_id: str) -> dict:
     """Ask the broker to cancel an open order and record its new state.
 
@@ -407,8 +481,9 @@ def cancel_order(conn, broker: Broker, order_id: str) -> dict:
 
 def sync_account(conn, broker: Broker, account: dict) -> dict:
     """Sync one broker account and all its portfolios: balances, fills (assigned to portfolios through their
-    orders; fills of orders placed outside the app are recorded as external), order updates, then compare
-    the app's positions and cash with the broker. Shares and cash not in any portfolio are "unassigned".
+    orders; fills of orders placed outside the app are recorded as external), account fees (apply_account_fee),
+    order updates, then compare the app's positions and cash with the broker. Shares and cash not in any portfolio
+    are "unassigned".
 
     Args:
         conn: app DB connection.
@@ -449,6 +524,22 @@ def sync_account(conn, broker: Broker, account: dict) -> dict:
                 continue
             mismatches += apply_fill(conn, row, f)
         fills_imported += 1
+
+    # Account fees booked apart from the fills (after the fills, so they can be split by who traded).
+    # Only fees from since the account was added: older ones were before the app tracked its portfolios.
+    tracked_from = account["createdAt"][:10]
+    last_fee = store.last_fee_date(conn, account["id"]) or tracked_from
+    fee_since = datetime.fromisoformat(last_fee).replace(tzinfo=timezone.utc) - timedelta(days=3)
+    for fee in broker.list_fees(fee_since):
+        if fee.date < tracked_from:
+            continue
+        with immediate(conn):
+            if store.fee_exists(conn, fee.broker_fee_id):
+                continue
+            charged = apply_account_fee(conn, account, pf.list_portfolios(conn, account["id"]), fee)
+        audit.record(conn, "ACCOUNT_FEE", "BROKER_ACCOUNT", account["id"], source="SYNC",
+                     details={"brokerFeeId": fee.broker_fee_id, "date": fee.date, "amount": str(fee.amount),
+                              "description": fee.description, "chargedTo": charged})
 
     orders_updated = 0
     now = datetime.now(timezone.utc)

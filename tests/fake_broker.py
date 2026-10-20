@@ -14,6 +14,7 @@ from stocksvest_app.brokers.base import (
     SUBMITTED,
     AccountSnapshot,
     BrokerError,
+    BrokerFee,
     BrokerFill,
     BrokerOrder,
     BrokerPosition,
@@ -26,6 +27,7 @@ class FakeBroker:
         self.held: dict[str, tuple[Decimal, Decimal]] = {s: (Decimal(q), Decimal(p)) for s, (q, p) in (positions or {}).items()}
         self.orders: dict[str, BrokerOrder] = {}
         self.fills: list[BrokerFill] = []
+        self.fees: list[BrokerFee] = []
         self.ids = itertools.count(1)
         self.fail_next: BrokerError | None = None
         self.submitted: list = []
@@ -84,6 +86,14 @@ class FakeBroker:
 
     def list_fills(self, since):
         return [f for f in self.fills if since is None or f.executed_at > since]
+
+    def charge(self, amount, date: str, description="CAT fee"):
+        """Simulate an account fee booked separately from the fills (like Alpaca's daily CAT fee)."""
+        self.cash -= Decimal(str(amount))
+        self.fees.append(BrokerFee(f"fee{next(self.ids)}", Decimal(str(amount)), date, description))
+
+    def list_fees(self, since):
+        return list(self.fees)
 
     def positions(self):
         return [BrokerPosition(symbol=s, quantity=q, average_cost=p, market_value=None)

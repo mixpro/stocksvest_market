@@ -516,22 +516,24 @@ def sell_fill(conn, budget_id: str, proceeds: Decimal, cost_basis: Decimal, pnl:
            order_id=order_id, fill_id=fill_id, automation_id=automation_id)
 
 
-def fee(conn, budget_id: str, amount: Decimal, order_id: str | None, fill_id: str, automation_id: str | None) -> None:
-    """A fill's fee (FEE entry). No-op for 0.
+def fee(conn, budget_id: str, amount: Decimal, order_id: str | None, fill_id: str | None,
+        automation_id: str | None, note: str | None = None) -> None:
+    """A fee (FEE entry): of a fill, or the budget's share of an account fee. No-op for 0.
 
     Args:
         conn: app DB connection (caller manages the transaction).
         budget_id: the budget that pays it.
-        amount: the fee.
-        order_id: the order.
-        fill_id: the fill.
+        amount: the fee (negative = a refund).
+        order_id: the order, for fill fees.
+        fill_id: the fill, for fill fees.
         automation_id: the automation that placed the order, if any.
+        note: e.g. the broker's description of an account fee.
 
-    Used by: orders.service.apply_fill.
+    Used by: orders.service.apply_fill, orders.service.apply_account_fee.
     """
-    if amount > 0:
+    if amount:
         _apply(conn, budget_id, "FEE", -amount, cash=-amount, fees=amount, order_id=order_id, fill_id=fill_id,
-               automation_id=automation_id)
+               automation_id=automation_id, note=note)
 
 
 def entries(conn, budget_id: str, limit: int = 200) -> list[dict]:

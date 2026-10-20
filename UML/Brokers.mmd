@@ -46,6 +46,7 @@ classDiagram
     + getOrderByClientId(clientOrderId: string) BrokerOrder?
     + listOrders(since: datetime) List~BrokerOrder~
     + listFills(since: datetime) List~BrokerFill~
+    + listFees(since: datetime) List~BrokerFee~
     + positions() List~BrokerPosition~
     + toBrokerSymbol(symbolId: string) string
     + fromBrokerSymbol(brokerSymbol: string) string
@@ -104,6 +105,13 @@ classDiagram
     - price: Decimal
     - fee: Decimal
     - executedAt: datetime
+  }
+
+  class BrokerFee {
+    - brokerFeeId: string
+    - amount: Decimal
+    - date: Date
+    - description: string
   }
 
   class BrokerPosition {
@@ -185,6 +193,7 @@ classDiagram
   Broker ..> BrokerOrderRequest : accepts
   Broker ..> BrokerOrder : returns
   Broker ..> BrokerFill : returns
+  Broker ..> BrokerFee : returns
   Broker ..> BrokerPosition : returns
   Broker ..> BrokerAccountSnapshot : returns
   Broker ..> SymbolMapping : translates via
@@ -202,3 +211,4 @@ classDiagram
   note for BrokerCapabilities "The order planner checks every intent against these before submitting\n(e.g. no fractional shares, TIF not supported, no extended hours) and skips with a reason."
   note for BrokerSync "Runs every minute: imports order updates and fills, then compares positions and cash\nwith the broker. Mismatches are recorded and shown; the broker is the source of truth."
   note for FakeBroker "In-memory broker for automated tests. Simulations use the brokers' paper accounts."
+  note for BrokerFee "Account charges booked apart from fills (Alpaca FEE / PTC activities, e.g. the daily CAT fee).\nThe sync splits each one between the budgets and manual trades of that day, by number of fills."

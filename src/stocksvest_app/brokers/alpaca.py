@@ -17,6 +17,7 @@ from .base import (
     AccountSnapshot,
     BrokerCapabilities,
     BrokerError,
+    BrokerFee,
     BrokerFill,
     BrokerOrder,
     BrokerOrderRequest,
@@ -247,6 +248,28 @@ class AlpacaBroker:
                     fee=Decimal(0), executed_at=_time(f["transaction_time"])))
             if len(page) < params["page_size"]:
                 return fills
+            params["page_token"] = page[-1]["id"]
+
+    def list_fees(self, since: datetime | None) -> list[BrokerFee]:
+        """FEE and PTC (pass-through charge) activities, oldest first, all pages. Alpaca books regulatory fees
+        (e.g. the daily CAT fee for the day's trades) this way instead of on the fills.
+
+        Args:
+            since: only fees after this time; None = all.
+        """
+        params = {"activity_types": "FEE,PTC", "direction": "asc", "page_size": 100}
+        if since:
+            params["after"] = since.isoformat()
+        fees = []
+        while True:
+            page = self._call("GET", "/v2/account/activities", params=params) or []
+            for a in page:
+                amount = -_dec(a.get("net_amount") or "0")
+                if amount:  # a refund comes back negative and is imported as a negative fee
+                    fees.append(BrokerFee(broker_fee_id=a["id"], amount=amount, date=a.get("date", "")[:10],
+                                          description=a.get("description") or a["activity_type"]))
+            if len(page) < params["page_size"]:
+                return fees
             params["page_token"] = page[-1]["id"]
 
     def equity_history(self, period: str = "1M", timeframe: str = "1D") -> list[dict]:

@@ -420,3 +420,63 @@ def test_deleting_an_automation_keeps_the_budget(client, portfolio, automation, 
     sync(client, portfolio)
     b = client.get(f"/v1/budgets/{bid}", headers=KEY).json()
     assert b["invested"] == 50 and b["reserved"] == 0 and b["cash"] == 950
+
+
+# ------------------------------------------------------------------ account fees (not part of a fill)
+
+
+def today_et() -> str:
+    from zoneinfo import ZoneInfo
+    from datetime import datetime as dt
+    return dt.now(ZoneInfo("America/New_York")).date().isoformat()
+
+
+def test_account_fee_is_charged_to_whoever_traded(client, portfolio, automation, budget, broker):
+    bid = budget["id"]
+    client.post(f"/v1/budgets/{bid}/allocate", headers=KEY, json={"amount": 1000})
+    for kw in ({"budgetId": bid}, {"budgetId": bid}, {}):  # 2 budget trades, 1 manual trade
+        o = buy(client, portfolio, quantity=1, **kw).json()
+        broker.fill(o["brokerOrderId"], 1, 10)
+    broker.charge("0.04", today_et(), "CAT fee for proceed of 3 trades")
+    out = sync(client, portfolio)
+    assert out["sync"]["mismatches"] == []  # the app now matches the broker's cash to the cent
+    assert out["portfolio"]["cash"] == pytest.approx(10000 - 30 - 0.04)
+    b = client.get(f"/v1/budgets/{bid}", headers=KEY).json()
+    assert b["fees"] == pytest.approx(0.03) and b["cash"] == pytest.approx(1000 - 20 - 0.03)  # 2/3 of 4 cents, rounded up
+    entries = client.get(f"/v1/portfolios/{portfolio['id']}/ledger", headers=KEY).json()["entries"]
+    fees = sorted((e["amount"], e["budgetId"]) for e in entries if e["type"] == "FEE")
+    assert fees == [(-0.03, bid), (-0.01, None)] and "CAT fee" in entries[0]["note"]
+    sync(client, portfolio)  # imported once
+    assert client.get(f"/v1/budgets/{bid}", headers=KEY).json()["fees"] == pytest.approx(0.03)
+
+
+def test_account_fee_on_a_day_without_app_trades(client, portfolio, broker):
+    acct = portfolio["brokerAccountId"]
+    client.post(f"/v1/portfolios/{portfolio['id']}/capital/withdraw", headers=KEY, json={"amount": 2500})
+    other = client.post("/v1/portfolios", headers=KEY, json={"name": "Other", "brokerAccountId": acct, "capital": 2500}).json()
+    broker.charge("0.05", today_et())
+    sync(client, portfolio)
+    cash = {p["id"]: p["cash"] for p in client.get("/v1/portfolios", headers=KEY).json()["portfolios"]}
+    assert cash[portfolio["id"]] == pytest.approx(7500 - 0.04) and cash[other["id"]] == pytest.approx(2500 - 0.01)
+
+
+def test_fees_from_before_the_account_was_added_are_ignored(client, portfolio, broker):
+    broker.charge("1.00", "2020-01-02", "old fee")
+    assert sync(client, portfolio)["portfolio"]["cash"] == 10000
+
+
+def test_split_cents():
+    from decimal import Decimal
+    from stocksvest_app.orders.service import split_cents
+    shares = split_cents(Decimal("0.10"), {"a": 1, "b": 1, "c": 1})
+    assert sorted(shares.values()) == [Decimal("0.03"), Decimal("0.03"), Decimal("0.04")]
+    assert sum(split_cents(Decimal("-0.07"), {"a": 2, "b": 1}).values()) == Decimal("-0.07")
+    assert split_cents(Decimal("0.01"), {"a": 1, "b": 9}) == {"a": 0, "b": Decimal("0.01")}
+
+
+def test_alpaca_fee_activities():
+    rec = Recorder([(200, [{"id": "fee1", "activity_type": "FEE", "date": "2026-10-19", "net_amount": "-0.01",
+                            "description": "CAT fee for proceed of 8 trades on 2026-10-19"}])])
+    fees = AlpacaBroker("k", "s", session=rec).list_fees(None)
+    assert [(f.broker_fee_id, str(f.amount), f.date) for f in fees] == [("fee1", "0.01", "2026-10-19")]
+    assert rec.calls[0][1].endswith("/v2/account/activities") and rec.calls[0][2]["activity_types"] == "FEE,PTC"
