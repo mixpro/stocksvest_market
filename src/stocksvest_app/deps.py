@@ -1,4 +1,5 @@
-"""Shared request dependencies: settings, market access, DB connection and API-key check."""
+"""Shared request dependencies: settings, market access, DB connection and the access check (API key, or a user
+logged in at the trusted login proxy)."""
 
 import sqlite3
 from collections.abc import Iterator
@@ -6,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Annotated
 
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, Request
 
 from . import db
 from .config import Settings
@@ -14,6 +15,25 @@ from .brokers.base import Broker
 from .brokers.registry import make_broker
 from .market.client import MarketAPI
 from .market.data import MarketData
+
+
+def proxy_user(request: Request, trusted_proxies: list[str]) -> str | None:
+    """The user the login proxy vouches for: the Remote-User header, but only on a request coming straight from a
+    trusted proxy address (anyone else could send that header).
+
+    Args:
+        request: the incoming request.
+        trusted_proxies: addresses of the login proxy (Settings.trusted_proxies).
+
+    Returns:
+        The user name, or None.
+
+    Used by: AppContext.require_key, audit.middleware (the actor of each entry).
+    """
+    if not request.client or request.client.host not in trusted_proxies:
+        return None
+    user = (request.headers.get("remote-user") or "").strip()
+    return user or None
 
 
 @dataclass
@@ -48,14 +68,17 @@ class AppContext:
         finally:
             conn.close()
 
-    def require_key(self, x_api_key: Annotated[str | None, Header()] = None) -> None:
-        """Dependency on every /v1 route: accept only APP_API_KEYS values.
+    def require_key(self, request: Request, x_api_key: Annotated[str | None, Header()] = None) -> None:
+        """Dependency on every /v1 route: a user logged in at the trusted login proxy, or an APP_API_KEYS value.
 
         Args:
+            request: the incoming request (its address and Remote-User header).
             x_api_key: the X-API-Key header.
 
         Raises:
-            HTTPException: 401 when missing or wrong.
+            HTTPException: 401 when neither is present and valid.
         """
+        if proxy_user(request, self.settings.trusted_proxies):
+            return
         if not x_api_key or x_api_key not in self.settings.api_keys:
             raise HTTPException(401, "missing or invalid X-API-Key")

@@ -13,6 +13,8 @@ class Settings:
         market_url: base URL of the market service (MARKET_URL; http://market:8000 in Docker Compose).
         market_api_key: the key this app sends to the market service (MARKET_API_KEY).
         api_keys: keys accepted from clients in X-API-Key (APP_API_KEYS, comma separated).
+        trusted_proxies: addresses whose Remote-User header counts as a logged-in user instead of an API key: the
+            login proxy in front of the app (APP_TRUSTED_PROXIES, comma separated; e.g. the VPS's Tailscale IP).
         data_dir: folder holding app.db (DATA_DIR).
         run_retention_days: how long the run history is kept (RUN_RETENTION_DAYS, default 183 = ~6 months).
         run_scheduler: start the automation scheduler with the API (APP_RUN_SCHEDULER; off in tests).
@@ -26,6 +28,10 @@ class Settings:
     # Keys clients (and the sample UI) send in X-API-Key, comma separated.
     api_keys: list[str] = field(
         default_factory=lambda: [k.strip() for k in os.environ.get("APP_API_KEYS", "").split(",") if k.strip()]
+    )
+    # The login proxy (Caddy + Authelia on the VPS) checks the user and passes it in Remote-User; trusted only from here.
+    trusted_proxies: list[str] = field(
+        default_factory=lambda: [a.strip() for a in os.environ.get("APP_TRUSTED_PROXIES", "").split(",") if a.strip()]
     )
     data_dir: Path = field(default_factory=lambda: Path(os.environ.get("DATA_DIR", "data")))
     # Run history (filters now; automations and other actions later) is kept this long for analysis.

@@ -109,7 +109,7 @@ async function loadMarketStatus() {
 
 async function start(page, main) {
   initHeader(page);
-  if (!apiKey()) await askKey();
+  // No key prompt up front: behind the login proxy the server needs none; it answers 401 when it does.
   await Promise.all([main(), loadMarketStatus()]);
 }
 

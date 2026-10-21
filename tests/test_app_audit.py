@@ -179,3 +179,21 @@ def test_logging_never_breaks_the_operation(client, monkeypatch):
     monkeypatch.setattr(store, "_dump", lambda v: (_ for _ in ()).throw(RuntimeError("disk full")))
     r = client.post("/v1/filters", headers=KEY, json={"name": "Still works", "inputs": [{"type": "UNIVERSE"}]})
     assert r.status_code == 201
+
+
+def test_login_proxy_user_is_trusted_only_from_the_proxy(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("APP_API_KEYS", "app-key")
+    monkeypatch.setenv("APP_RUN_SCHEDULER", "false")
+    monkeypatch.setenv("APP_TRUSTED_PROXIES", "testclient")  # TestClient's address stands in for the VPS
+    with TestClient(create_app(Settings(), market_factory=lambda s: FakeMarket())) as proxied:
+        assert proxied.get("/v1/filters").status_code == 401  # no key, no login
+        assert proxied.get("/v1/filters", headers={"Remote-User": "saeed"}).status_code == 200
+        r = proxied.post("/v1/filters", headers={"Remote-User": "saeed"},
+                         json={"name": "F", "inputs": [{"type": "UNIVERSE"}]})
+        entry = proxied.get("/v1/activity?action=FILTER_CREATE", headers=KEY).json()["entries"][0]
+        assert r.status_code == 201 and entry["actor"] == "user:saeed"
+    monkeypatch.setenv("APP_TRUSTED_PROXIES", "100.96.27.63")  # requests from anywhere else can't claim a user
+    with TestClient(create_app(Settings(), market_factory=lambda s: FakeMarket())) as direct:
+        assert direct.get("/v1/filters", headers={"Remote-User": "saeed"}).status_code == 401
+        assert direct.get("/v1/filters", headers=KEY).status_code == 200

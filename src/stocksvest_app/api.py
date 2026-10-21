@@ -114,7 +114,7 @@ def create_app(settings: Settings | None = None, market_factory: Callable[[Setti
     app.include_router(orders_routes.router(ctx))
     app.include_router(performance_routes.router(ctx))
     app.include_router(audit_routes.router(ctx))
-    audit_middleware.install(app, settings.db_path)
+    audit_middleware.install(app, settings.db_path, settings.trusted_proxies)
     app.include_router(market_routes.router(ctx))
     app.mount("/ui", UIFiles(directory=STATIC_DIR, html=True), name="ui")
     return app

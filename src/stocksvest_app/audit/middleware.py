@@ -92,15 +92,27 @@ def _related(path_params: dict, body) -> dict:
     return out
 
 
-def install(app: FastAPI, db_path) -> None:
+def install(app: FastAPI, db_path, trusted_proxies: list[str] | tuple = ()) -> None:
     """Add the activity log middleware to the app.
 
     Args:
         app: the FastAPI app.
         db_path: app DB file (each entry is written on its own connection).
+        trusted_proxies: login proxy addresses whose Remote-User is recorded as the actor.
 
     Used by: api.create_app.
     """
+    from ..deps import proxy_user
+
+    def actor_of(request: Request) -> str:
+        """Who made the request: "user:<name>" when the login proxy vouches for it, else the API key fingerprint.
+
+        Args:
+            request: the incoming request.
+        """
+        user = proxy_user(request, list(trusted_proxies))
+        return f"user:{user}" if user else fingerprint(request.headers.get("x-api-key"))
+
     @app.middleware("http")
     async def activity_log(request: Request, call_next):
         """Run the request with a new correlation id (also returned as the x-correlation-id header), then record
@@ -115,7 +127,7 @@ def install(app: FastAPI, db_path) -> None:
         started = time.monotonic()
         cid = new_id("req")
         tokens = (store.correlation_id.set(cid), store.current_source.set("API"),
-                  store.current_actor.set(fingerprint(request.headers.get("x-api-key"))))
+                  store.current_actor.set(actor_of(request)))
         raw = await request.body()
         try:
             response = await call_next(request)
@@ -151,7 +163,7 @@ def install(app: FastAPI, db_path) -> None:
         await run_in_threadpool(
             store.record, None, action, entity, entity_id, related=_related(params, body), details=details,
             outcome="OK" if response.status_code < 400 else "FAILED", error=error, source="API",
-            actor=fingerprint(request.headers.get("x-api-key")), method=request.method, path=request.url.path,
+            actor=actor_of(request), method=request.method, path=request.url.path,
             status=response.status_code, duration_ms=int((time.monotonic() - started) * 1000), db_path=db_path,
             correlation=cid)
         headers = dict(response.headers)
