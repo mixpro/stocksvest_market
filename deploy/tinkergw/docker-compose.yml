@@ -38,6 +38,7 @@ services:
       DATA_DIR: /data
       APP_RUN_SCHEDULER: "true"
       APP_TRUSTED_PROXIES: 100.96.27.63   # the VPS: its Remote-User header counts as logged in
+      ALERTS_ENABLED: "true"              # email alerts + daily summary (SMTP_*, ALERT_EMAIL_TO in .env)
     volumes:
       - ./data:/data
     depends_on:

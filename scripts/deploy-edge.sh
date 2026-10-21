@@ -13,6 +13,7 @@ AUTHELIA_IMAGE=authelia/authelia:4.39.27
 echo "== copying run files to $VPS:$DIR"
 ssh "$VPS" "mkdir -p $DIR/authelia/data $DIR/secrets && chmod 700 $DIR/secrets"
 scp -q "$HERE/docker-compose.yml" "$HERE/stocksvest.caddy" "$VPS:$DIR/"
+scp -q "$HERE/watch.py" "$VPS:$DIR/../watch.py"
 scp -q "$HERE/authelia/configuration.yml" "$VPS:$DIR/authelia/"
 
 ssh "$VPS" DIR="$DIR" IMAGE="$AUTHELIA_IMAGE" bash -s <<'REMOTE'
@@ -60,5 +61,11 @@ if ! grep -qxF "$LINE" /etc/caddy/Caddyfile; then
 fi
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 systemctl reload caddy
+
+echo "== watcher: tinkergw reachable, nightly backup arrived (every 5 minutes)"
+chmod +x ../watch.py
+grep -q '^ALERT_EMAIL_TO=' .env || echo "!! set ALERT_EMAIL_TO in $DIR/.env to receive the watcher's emails"
+CRON="*/5 * * * * $DIR/../watch.py >> $DIR/../watch.log 2>&1"
+crontab -l 2>/dev/null | grep -qF watch.py || { { crontab -l 2>/dev/null || true; echo "$CRON"; } | crontab -; echo "  installed"; }
 echo "== done"
 REMOTE

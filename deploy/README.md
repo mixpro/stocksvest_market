@@ -42,6 +42,26 @@ anything there.
   folder (`rrsync -wo`): no shell, no reading, no deleting. Set up once with `scripts/setup-offsite-backup.sh`.
 - Restore: stop the stack on tinkergw, copy the files back into `~/stocksvest/data/` (gunzip `market.db.gz`), start it.
 
+## Alerts
+
+Emailed to `ALERT_EMAIL_TO` (in each server's `.env`) from `StocksVest <alerts@stocksvest.net>`, through Brevo.
+A problem is emailed once when it starts (after a short grace period, so a restart doesn't count) and once when it's
+resolved.
+
+| From | What | When |
+|---|---|---|
+| the app on tinkergw (`alerts/checks.py`, every 5 min) | an automation run FAILED or PARTIAL | right away, one email per check |
+| | a broker sync failed or found differences with the broker | while it lasts |
+| | the market service doesn't answer, or its sync fails | after 10 min |
+| | no market data sync for 30 min during the regular session | right away |
+| | live prices (IBKR) disconnected during the regular session | after 10 min |
+| | **daily summary**: portfolios, budgets, runs, orders, fills, open problems | 30 min after each close |
+| the VPS (`watch.py`, cron every 5 min) | the app on tinkergw doesn't answer (power, internet, Tailscale, container) | after 15 min |
+| | last night's backup didn't arrive | at 05:00 UTC |
+
+`ALERTS_ENABLED=true` is set for the app in `deploy/tinkergw/docker-compose.yml`; it's off everywhere else.
+Test the VPS side with `ssh root@65.21.180.156 /opt/stocksvest-market/watch.py --test`.
+
 ## Login
 
 - Every request to `stocksvest.hardansaeed.com` needs a password **and** a second factor (passkey or TOTP).

@@ -46,6 +46,7 @@ class AppContext:
         market: MarketData helpers on top of market_api (caching, batching); set in __post_init__.
         scheduler: the running AutomationScheduler, or None (tests, APP_RUN_SCHEDULER=false).
         broker_factory: broker account dict -> Broker adapter (registry.make_broker, or a fake in tests).
+        mailer: sends alert emails (alerts.mailer.Mailer from the settings, or a fake in tests).
 
     Used by: api.create_app (built), every routes.router(ctx), automations.runner/scheduler,
     performance.snapshots, runs.routes.record.
@@ -55,10 +56,14 @@ class AppContext:
     market_api: MarketAPI
     scheduler: object | None = None  # the automation scheduler, when running
     broker_factory: Callable[[dict], Broker] = field(default=make_broker)  # broker account -> adapter
+    mailer: object | None = None  # alert emails; built from the settings when not given
 
     def __post_init__(self):
-        """Wrap market_api in MarketData."""
+        """Wrap market_api in MarketData; build the mailer from the settings unless one was given."""
         self.market = MarketData(self.market_api)
+        if self.mailer is None:
+            from .alerts.mailer import Mailer
+            self.mailer = Mailer(self.settings)
 
     def conn(self) -> Iterator[sqlite3.Connection]:
         """Dependency: one DB connection per request, closed afterwards."""

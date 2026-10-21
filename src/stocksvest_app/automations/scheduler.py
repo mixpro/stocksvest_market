@@ -208,6 +208,11 @@ class AutomationScheduler:
                 from ..performance import snapshots
                 snapshots.scheduled(self.ctx, conn, now)
                 self.last_error = None
+                try:  # alerts never get in the way of trading
+                    from ..alerts import checks
+                    checks.check(self.ctx, conn, now)
+                except Exception:
+                    log.exception("alert checks failed")
             except Exception as e:
                 log.exception("scheduler tick failed")
                 self.last_error = str(e)
