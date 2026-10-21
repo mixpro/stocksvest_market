@@ -81,6 +81,21 @@ class FakeMarket:
         self.calls.append(("snapshots", symbols))
         return {"snapshots": {t: SNAPS[t] for t in (symbols or SNAPS)}}
 
+    def quotes(self, symbols):
+        """Live quotes when set in self.live (ticker -> quote), else the delayed snapshot price."""
+        self._check()
+        self.calls.append(("quotes", symbols))
+        live = getattr(self, "live", {})
+        out = {}
+        for t in symbols:
+            if t in live:
+                out[t] = {"source": "IBKR", "ageSeconds": 1, "time": "t", **live[t]}
+            else:
+                p = SNAPS[t]["latestPrice"]
+                out[t] = {"source": "DELAYED", "bid": None, "ask": None, "last": p, "price": p, "time": "t",
+                          "ageSeconds": 960}
+        return {"quotes": out, "liveQuotes": {"enabled": bool(live), "connected": bool(live)}}
+
     def price_change(self, period_amount, period_unit, symbols=None):
         self._check()
         self.calls.append(("price_change", period_amount, period_unit, symbols))

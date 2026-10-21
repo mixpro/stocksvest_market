@@ -1,5 +1,6 @@
 """Run one automation: checks, market context, filter targets, actions, and the run record."""
 
+import copy
 import logging
 import sqlite3
 import threading
@@ -265,6 +266,7 @@ def run_automation(ctx: AppContext, conn: sqlite3.Connection, automation: dict, 
         "metrics": {},
     }
     tradings: list[tuple[dict, Trading | None]] = []  # (budget entry of the result, its Trading or None if it failed)
+    live = LiveQuotes(ctx)  # live quotes fetched for this run, shared by every budget and order action
 
     def finish(status: str, error: str | None = None) -> dict:
         """Fill in the metrics and store (or, for previews, return) the run.
@@ -292,6 +294,8 @@ def run_automation(ctx: AppContext, conn: sqlite3.Connection, automation: dict, 
         for entry, trading in tradings:
             if trading:
                 entry["after"] = trading.budget_snapshot()
+        if live.asked:
+            result["liveQuotes"] = live.summary()
         if preview:
             return {"preview": True, "status": status, "error": error, "result": result}
         run = runs_store.add_run(conn, "AUTOMATION", automation["id"], automation, result["metrics"]["durationMs"],
@@ -367,7 +371,7 @@ def run_automation(ctx: AppContext, conn: sqlite3.Connection, automation: dict, 
                             entry["notificationId"] = n["id"]
                 elif action["type"] == "PLACE_ORDER":
                     _place_orders(ctx, conn, automation, tradings, PlaceOrderAction.model_validate(action), index,
-                                  tickers, ev, result["market"], entry, run_id, preview)
+                                  tickers, ev, result["market"], entry, run_id, preview, live)
                 else:
                     raise ValueError(f"{action['type']} actions are not available yet")
             except Exception as e:  # one failing action does not stop the others
@@ -387,8 +391,58 @@ def run_automation(ctx: AppContext, conn: sqlite3.Connection, automation: dict, 
         lock.release()
 
 
+class LiveQuotes:
+    """Live quotes for one run: asked once per symbol, shared by every budget and order action.
+
+    Attributes:
+        quotes: ticker -> quote from MarketData.live_quotes (source IBKR or DELAYED).
+        asked: tickers asked for so far.
+        error: the market service's error, if the last request failed (orders then use the delayed price).
+
+    Used by: run_automation (one per run; summary() goes into the run record), _place_orders.
+    """
+
+    def __init__(self, ctx: AppContext):
+        """Args:
+            ctx: app context (market helpers).
+        """
+        self.ctx = ctx
+        self.quotes: dict[str, dict] = {}
+        self.asked: set[str] = set()
+        self.error: str | None = None
+
+    def merge_into(self, snapshots: dict[str, dict], tickers: list[str]) -> None:
+        """Fetch the tickers not asked yet and put their live prices into the planner's snapshots (in place).
+
+        Args:
+            snapshots: the PlanContext's ticker -> snapshot.
+            tickers: symbols the plan would order.
+        """
+        missing = [t for t in dict.fromkeys(tickers) if t not in self.asked]
+        if missing:
+            self.asked.update(missing)
+            try:
+                self.quotes.update(self.ctx.market.live_quotes(set(missing)))
+            except MarketError as e:
+                self.error = e.detail
+                log.warning("live quotes unavailable, using delayed prices: %s", e.detail)
+        for t in tickers:
+            q = self.quotes.get(t)
+            if q and q.get("source") == "IBKR":
+                snapshots[t] = {**snapshots.get(t, {}), "latestPrice": q["price"], "bid": q["bid"], "ask": q["ask"],
+                                "priceSource": "IBKR", "quoteAgeSeconds": q.get("ageSeconds")}
+
+    def summary(self) -> dict:
+        """For the run record: how many symbols got a live quote, the error if any, and each quote used."""
+        live = {t: q for t, q in self.quotes.items() if q.get("source") == "IBKR"}
+        return {"asked": len(self.asked), "live": len(live), "error": self.error,
+                "quotes": {t: {k: q.get(k) for k in ("source", "bid", "ask", "last", "time", "ageSeconds")}
+                           for t, q in sorted(self.quotes.items())}}
+
+
 def _place_orders(ctx, conn, automation, tradings: list[tuple[dict, "Trading | None"]], action: PlaceOrderAction,
-                  index: int, tickers: list[str], ev, market: dict, entry: dict, run_id: str, preview: bool) -> None:
+                  index: int, tickers: list[str], ev, market: dict, entry: dict, run_id: str, preview: bool,
+                  live: LiveQuotes | None = None) -> None:
     """For every budget of the automation: plan orders for the matched symbols with that budget's money and shares,
     and (unless previewing) submit the ones that pass every guard.
 
@@ -406,6 +460,8 @@ def _place_orders(ctx, conn, automation, tradings: list[tuple[dict, "Trading | N
             notHeld, intents}.
         run_id: the run's id (client order ids are <runId>-<index>-<budgetId>-<ticker>).
         preview: plan only.
+        live: the run's live quotes. A first plan on the delayed data says which symbols would get orders; their
+            live prices are fetched and the real plan uses them. None = delayed prices only.
     """
     entry["side"] = action.side
     entry["budgets"] = []
@@ -423,6 +479,13 @@ def _place_orders(ctx, conn, automation, tradings: list[tuple[dict, "Trading | N
             continue
         try:
             plan_ctx = trading.context(snapshots, market.get("session"), market.get("dataAgeMinutes"))
+            for t, s in snapshots.items():
+                plan_ctx.snapshots.setdefault(t, s)  # the context may come from an earlier action
+            if live is not None:
+                probe = planner.plan(action, trading.guards, tickers, copy.deepcopy(plan_ctx), trading.broker)
+                wanted = [i["ticker"] for i in probe["intents"]
+                          if i["skipReason"] not in ("STALE_DATA", "OUTSIDE_REGULAR_HOURS")][:100]
+                live.merge_into(plan_ctx.snapshots, wanted)
             out = planner.plan(action, trading.guards, tickers, plan_ctx, trading.broker)
         except Exception as e:  # one budget failing does not stop the others
             log.exception("automation %s: planning for budget %s failed", automation["id"], trading.budget_id)

@@ -39,6 +39,9 @@ class Settings:
         daily_history_days / hourly_history_days / minute_history_days: how long each bar timeframe is kept.
         run_scheduler: start the background sync loop with the API (RUN_SCHEDULER).
         sync_interval_minutes: time between incremental syncs during the session (SYNC_INTERVAL_MINUTES).
+        ibkr_enabled: connect to IB Gateway for live quotes (IBKR_ENABLED; off by default and in tests).
+        ibkr_host / ibkr_port: the gateway's API address (IBKR_HOST, IBKR_PORT; 4002 = paper login).
+        ibkr_client_id: this service's own API client id, distinct from any other program (IBKR_CLIENT_ID).
 
     Used by: create_app (api), main (__main__), AlpacaClient, Scheduler/due_jobs, every sync function, make_client
     (sectors).
@@ -78,6 +81,13 @@ class Settings:
         default_factory=lambda: os.environ.get("RUN_SCHEDULER", "true").lower() in ("1", "true", "yes")
     )
     sync_interval_minutes: int = field(default_factory=lambda: int(os.environ.get("SYNC_INTERVAL_MINUTES", "5")))
+    # Live quotes from IB Gateway (read-only connection; see ibkr.py).
+    ibkr_enabled: bool = field(
+        default_factory=lambda: os.environ.get("IBKR_ENABLED", "false").lower() in ("1", "true", "yes")
+    )
+    ibkr_host: str = field(default_factory=lambda: os.environ.get("IBKR_HOST", "127.0.0.1"))
+    ibkr_port: int = field(default_factory=lambda: int(os.environ.get("IBKR_PORT", "4002")))
+    ibkr_client_id: int = field(default_factory=lambda: int(os.environ.get("IBKR_CLIENT_ID", "31")))
 
     @property
     def db_path(self) -> Path:

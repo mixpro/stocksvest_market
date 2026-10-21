@@ -3,3 +3,4 @@ uvicorn[standard]==0.54.0
 python-multipart==0.0.32
 requests==2.34.2
 tzdata==2026.5
+ib_async==2.1.0

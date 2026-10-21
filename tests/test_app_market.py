@@ -70,6 +70,7 @@ def test_every_endpoint_has_a_function_and_the_fake_matches():
     (lambda m: m.snapshots(["AAPL"]), "/v1/snapshots", {"symbols": "AAPL"}),
     (lambda m: m.price_change(5, "DAYS", ["AAPL", "MSFT"]), "/v1/price-change",
      {"periodAmount": 5, "periodUnit": "DAYS", "symbols": "AAPL,MSFT"}),
+    (lambda m: m.quotes(["AAPL", "JRSH"]), "/v1/quotes", {"symbols": "AAPL,JRSH"}),
     (lambda m: m.calendar("2026-10-16", "2026-10-16"), "/v1/calendar", {"start": "2026-10-16", "end": "2026-10-16"}),
     (lambda m: m.status(), "/v1/status", None),
 ])
@@ -108,6 +109,8 @@ def test_market_routes_call_the_matching_function(settings):
         assert fake.calls[-1] == ("symbols", None, None, "ADR", ["TECHNOLOGY", "ENERGY"], None, None)
         c.get("/v1/market/price-change?periodAmount=2&periodUnit=WEEKS&symbols=AAA", headers=KEY)
         assert fake.calls[-1] == ("price_change", 2, "WEEKS", ["AAA"])
+        q = c.get("/v1/market/quotes?symbols=AAA,BBB", headers=KEY).json()["quotes"]
+        assert fake.calls[-1] == ("quotes", ["AAA", "BBB"]) and q["AAA"]["source"] == "DELAYED"
         assert c.get("/v1/market/symbols/ZZZ", headers=KEY).status_code == 404  # market status forwarded
         assert c.get("/v1/market/bars/AAA?timeframe=2Days", headers=KEY).status_code == 422  # validated by the app
         assert c.get("/v1/market/status", headers=KEY).json()["dataDelayMinutes"] == 16

@@ -21,6 +21,7 @@ ENDPOINTS = {
     "multi_bars": "/v1/bars",
     "snapshots": "/v1/snapshots",
     "price_change": "/v1/price-change",
+    "quotes": "/v1/quotes",
     "calendar": "/v1/calendar",
     "status": "/v1/status",
 }
@@ -127,6 +128,15 @@ class MarketAPI(Protocol):
             period_amount: how many units back.
             period_unit: "MINUTES", "HOURS", "DAYS", "WEEKS", "MONTHS" or "YEARS".
             symbols: tickers or ids; None = every symbol.
+        """
+        ...
+
+    def quotes(self, symbols: list[str]) -> dict:
+        """GET /v1/quotes: {"quotes": {ticker: {source (IBKR | DELAYED), bid, ask, last, price, time, ageSeconds}},
+        "liveQuotes": {enabled, connected, lastError, lastQuoteAt}}. Live from IBKR when it can answer.
+
+        Args:
+            symbols: tickers or ids (at most 100).
         """
         ...
 
@@ -269,6 +279,14 @@ class MarketClient:
         """
         return self._get("price_change", query=_query(periodAmount=period_amount, periodUnit=period_unit,
                                                       symbols=symbols))
+
+    def quotes(self, symbols) -> dict:
+        """GET /v1/quotes.
+
+        Args:
+            symbols: tickers or ids (at most 100).
+        """
+        return self._get("quotes", query=_query(symbols=symbols))
 
     def calendar(self, start=None, end=None) -> dict:
         """GET /v1/calendar.

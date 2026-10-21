@@ -29,7 +29,8 @@ class PlanContext:
     actions of the run).
 
     Attributes:
-        snapshots: ticker -> market snapshot (latestPrice, dailyChangePercent, dailyVolume).
+        snapshots: ticker -> market snapshot (latestPrice, dailyChangePercent, dailyVolume), plus bid, ask,
+            priceSource ("IBKR") and quoteAgeSeconds when the runner merged a live quote in.
         holdings: ticker -> Holding (the budget's shares).
         open_buys: tickers with an open buy order paid from the budget (for skipBuyIfHeld).
         open_sells: ticker -> the budget's shares already being sold.
@@ -115,7 +116,8 @@ def _intent(ticker, side, rank, sizing, **kw) -> dict:
         kw: fields to override.
     """
     out = {"ticker": ticker, "side": side, "rank": rank, "sizing": sizing.model_dump(mode="json"), "quantity": 0,
-           "estimatedPrice": None, "estimatedCost": None, "limitPrice": None, "stopPrice": None,
+           "estimatedPrice": None, "priceSource": None, "quoteAgeSeconds": None, "estimatedCost": None,
+           "limitPrice": None, "stopPrice": None,
            "decision": "PLACE", "skipReason": None, "detail": None, "orderId": None}
     out.update(kw)
     return out
@@ -144,7 +146,8 @@ def plan(action: PlaceOrderAction, guards: OrderGuards, matched: list[str], ctx:
         broker: the portfolio's Broker (capability checks only; nothing is sent).
 
     Returns:
-        {"intents": [{ticker, side, rank, sizing, quantity, estimatedPrice, estimatedCost, limitPrice, stopPrice,
+        {"intents": [{ticker, side, rank, sizing, quantity, estimatedPrice, priceSource, quoteAgeSeconds,
+        estimatedCost, limitPrice, stopPrice,
         decision (PLACE|SKIP), skipReason, detail, orderId}], "notHeld": matches a SELL can't use}.
 
     Used by: runner._place_orders.
@@ -180,7 +183,16 @@ def plan(action: PlaceOrderAction, guards: OrderGuards, matched: list[str], ctx:
             _skip(intent, "OUTSIDE_REGULAR_HOURS", f"market session is {ctx.session}")
             continue
 
-        snap_price = ctx.snapshots.get(ticker, {}).get("latestPrice")
+        # Price: a live quote when the runner got one (buys at the ask, sells at the bid), else the delayed price.
+        snap = ctx.snapshots.get(ticker, {})
+        live = snap.get("priceSource") == "IBKR"
+        intent["priceSource"] = "IBKR" if live else "DELAYED"
+        intent["quoteAgeSeconds"] = snap.get("quoteAgeSeconds")
+        if guards.requireLivePrice and not live:
+            _skip(intent, "NO_LIVE_PRICE", "no live quote right now (requireLivePrice)")
+            continue
+        side_price = (snap.get("ask") if action.side == "BUY" else snap.get("bid")) if live else None
+        snap_price = side_price if side_price is not None else snap.get("latestPrice")
         if snap_price is None:
             _skip(intent, "NO_PRICE")
             continue

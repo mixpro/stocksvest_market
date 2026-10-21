@@ -35,12 +35,16 @@ def broker_for(account, broker):
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch, broker):
+def market():
+    return FakeMarket(last_sync=datetime.now(timezone.utc).isoformat())
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch, broker, market):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("APP_API_KEYS", "app-key")
     monkeypatch.setenv("APP_RUN_SCHEDULER", "false")
     BROKEN.clear()
-    market = FakeMarket(last_sync=datetime.now(timezone.utc).isoformat())
     with TestClient(create_app(Settings(), market_factory=lambda s: market,
                                broker_factory=lambda a: broker_for(a, broker))) as c:
         yield c
@@ -280,3 +284,45 @@ def test_validation(client, setup):
     created = client.post("/v1/automations", headers=KEY, json={**base, "actions": [order_action()]}).json()
     assert created["orderGuards"]["maxOrdersPerRun"] == 10 and created["orderGuards"]["regularHoursOnly"] is True
     assert created["budgets"] == [] and "portfolioId" not in created
+
+
+# ------------------------------------------------------------------ live prices (IBKR, through the market service)
+
+
+def test_orders_use_live_prices_buys_at_the_ask(client, setup, broker, market):
+    market.live = {"AAA": {"bid": 10.9, "ask": 11.1, "last": 11.0, "price": 11.0},  # delayed price was 10
+                   "BBB": {"bid": 49.0, "ask": 49.5, "last": 49.2, "price": 49.25}}
+    r = run(client, make(client, setup, order_action()))
+    by = {i["ticker"]: i for i in section(r)["intents"]}
+    assert (by["AAA"]["estimatedPrice"], by["AAA"]["quantity"], by["AAA"]["priceSource"]) == (11.1, 9, "IBKR")
+    assert (by["CCC"]["estimatedPrice"], by["CCC"]["priceSource"]) == (5.0, "DELAYED")  # no live quote: delayed
+    assert by["AAA"]["quoteAgeSeconds"] == 1
+    lq = r["result"]["liveQuotes"]
+    assert lq["asked"] == 4 and lq["live"] == 2 and lq["quotes"]["AAA"]["ask"] == 11.1 and lq["error"] is None
+    asked = [c for c in market.calls if c[0] == "quotes"]
+    assert asked == [("quotes", ["AAA", "BBB", "CCC", "DDD"])]  # only the symbols the plan would order, once
+
+
+def test_sells_use_the_bid_and_require_live_price_skips(client, setup, broker, market):
+    a = make(client, setup, order_action(sizings=[{"mode": "QUANTITY", "value": 4}]))
+    run(client, a)
+    fill_all(broker)
+    seller = automation(client, setup, order_action("SELL", [{"mode": "PERCENT_OF_POSITION", "value": 100}]),
+                        guards={"requireLivePrice": True}, name="Seller")
+    client.post(f"/v1/budgets/{a['budget']['id']}/automations", headers=KEY, json={"automationId": seller["id"]})
+    market.live = {"AAA": {"bid": 9.5, "ask": 9.7, "last": 9.6, "price": 9.6}}
+    r = run(client, seller)
+    by = {i["ticker"]: i for i in section(r)["intents"]}
+    assert (by["AAA"]["decision"], by["AAA"]["estimatedPrice"]) == ("PLACE", 9.5)  # sold at the bid
+    assert by["BBB"]["skipReason"] == "NO_LIVE_PRICE" and by["CCC"]["skipReason"] == "NO_LIVE_PRICE"
+
+
+def test_live_quotes_down_falls_back_to_delayed_prices(client, setup, broker, market, monkeypatch):
+    from stocksvest_app.market.client import MarketError
+
+    def down(symbols):
+        raise MarketError(502, "market service unreachable")
+    monkeypatch.setattr(market, "quotes", down)
+    r = run(client, make(client, setup, order_action()))
+    assert [i["priceSource"] for i in section(r)["intents"][:3]] == ["DELAYED"] * 3
+    assert r["status"] == "SUCCEEDED" and r["result"]["liveQuotes"]["error"] == "market service unreachable"

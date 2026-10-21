@@ -158,6 +158,15 @@ def router(ctx: AppContext) -> APIRouter:
         """
         return call(lambda: api.price_change(period_amount, period_unit, _split(symbols)))
 
+    @r.get("/quotes")
+    def quotes(symbols: str):
+        """Prices right now: IBKR live bid/ask/last when available, else the delayed price (market `GET /v1/quotes`).
+        \f
+        Args:
+            symbols: comma-separated tickers or ids, at most 100.
+        """
+        return call(lambda: api.quotes(_split(symbols)))
+
     @r.get("/calendar")
     def calendar(start: date | None = None, end: date | None = None):
         """Trading days and session times (market `GET /v1/calendar`).

@@ -29,8 +29,13 @@ def broker():
 
 
 @pytest.fixture
-def client(settings, broker):
-    with TestClient(create_app(settings, market_factory=lambda s: FakeMarket(),
+def market():
+    return FakeMarket()
+
+
+@pytest.fixture
+def client(settings, broker, market):
+    with TestClient(create_app(settings, market_factory=lambda s: market,
                                broker_factory=lambda account: broker)) as c:
         yield c
 
@@ -480,3 +485,20 @@ def test_alpaca_fee_activities():
     fees = AlpacaBroker("k", "s", session=rec).list_fees(None)
     assert [(f.broker_fee_id, str(f.amount), f.date) for f in fees] == [("fee1", "0.01", "2026-10-19")]
     assert rec.calls[0][1].endswith("/v2/account/activities") and rec.calls[0][2]["activity_types"] == "FEE,PTC"
+
+
+
+# ------------------------------------------------------------------ live prices for manual orders and positions
+
+
+def test_manual_orders_and_positions_use_live_prices(client, portfolio, broker, market):
+    market.live = {"AAA": {"bid": 10.4, "ask": 10.6, "last": 10.5, "price": 10.5}}
+    order = buy(client, portfolio, quantity=2).json()
+    assert order["estimatedPrice"] == 10.6  # a live buy is estimated at the ask (delayed price: 10)
+    broker.fill(order["brokerOrderId"], 2, "10.6")
+    sync(client, portfolio)
+    pos = client.get(f"/v1/portfolios/{portfolio['id']}", headers=KEY).json()["positions"][0]
+    assert (pos["price"], pos["priceSource"], pos["marketValue"]) == (10.5, "IBKR", 21.0)
+    market.live = {}
+    pos = client.get(f"/v1/portfolios/{portfolio['id']}", headers=KEY).json()["positions"][0]
+    assert (pos["price"], pos["priceSource"]) == (10.0, "DELAYED")

@@ -229,6 +229,30 @@ The period counts only time the market is open:
 `fromPrice` is the last price at or before the start of the period (`fromTime` is that bar). Values are `null` when
 there is not enough history or trading calendar.
 
+### Live quotes
+
+`GET /v1/quotes?symbols=AAPL,JRSH` (up to 100 symbols): the price **right now**, from Interactive Brokers when the
+service is connected to an IB Gateway (`IBKR_ENABLED=true`), otherwise the newest delayed price.
+
+```json
+{
+  "quotes": {
+    "AAPL": {"source": "IBKR", "bid": 340.35, "ask": 340.39, "last": 340.41, "price": 340.37,
+             "time": "2026-10-21T15:28:34Z", "ageSeconds": 0},
+    "JRSH": {"source": "DELAYED", "bid": null, "ask": null, "last": 6.26, "price": 6.26,
+             "time": "2026-10-21T15:12:00Z", "ageSeconds": 1000}
+  },
+  "liveQuotes": {"enabled": true, "connected": true, "lastError": null, "lastQuoteAt": "2026-10-21T15:28:34Z"}
+}
+```
+
+- `price` is the bid/ask midpoint, or the last trade when there is no bid/ask.
+- A symbol falls back to `DELAYED` when IBKR has no live quote for it within a few seconds, the gateway is down, the
+  account lacks the market data subscription, or another login of the same IBKR user holds the live data.
+- The IBKR connection is read-only (it can't place orders) and uses its own client id. Settings: `IBKR_ENABLED`,
+  `IBKR_HOST` (127.0.0.1), `IBKR_PORT` (4002 = paper login), `IBKR_CLIENT_ID` (31).
+- `GET /v1/status` shows the same `liveQuotes` block.
+
 ---
 
 ## Trading calendar

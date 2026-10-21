@@ -204,12 +204,16 @@ def _market_time_back(sessions_desc: list[tuple[datetime, datetime]], end: datet
     return None
 
 
-def create_app(settings: Settings | None = None, client_factory: Callable[[Settings], AlpacaClient] = AlpacaClient):
-    """Build the market service: endpoints, auth, and (when enabled) the background sync scheduler.
+def create_app(settings: Settings | None = None, client_factory: Callable[[Settings], AlpacaClient] = AlpacaClient,
+               quote_source=None):
+    """Build the market service: endpoints, auth, and (when enabled) the background sync scheduler and the IBKR
+    live quote connection.
 
     Args:
         settings: service settings; default reads the environment.
         client_factory: builds the Alpaca client for admin jobs (tests pass a fake).
+        quote_source: live quotes (an object with quotes(tickers), connected, last_error); default IbkrQuotes when
+            IBKR_ENABLED, else none (tests pass a fake).
 
     Returns:
         The FastAPI app.
@@ -217,11 +221,16 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
     Used by: __main__.main (serve), tests.
     """
     settings = settings or Settings()
-    state: dict = {"scheduler": None}
+    owns_quotes = quote_source is None and settings.ibkr_enabled
+    if owns_quotes:
+        from .ibkr import IbkrQuotes
+        quote_source = IbkrQuotes(settings)
+    state: dict = {"scheduler": None, "quotes": quote_source}
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        """Startup: create/upgrade the DB and start the scheduler (RUN_SCHEDULER). Shutdown: stop it.
+        """Startup: create/upgrade the DB, start the scheduler (RUN_SCHEDULER) and the IBKR connection
+        (IBKR_ENABLED). Shutdown: stop both.
 
         Args:
             app: the FastAPI app.
@@ -232,9 +241,13 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
         if settings.run_scheduler:
             state["scheduler"] = Scheduler(settings)
             state["scheduler"].start()
+        if owns_quotes:
+            quote_source.start()
         yield
         if state["scheduler"]:
             state["scheduler"].stop()
+        if owns_quotes:
+            quote_source.stop()
 
     app = FastAPI(
         title="StocksVest Market",
@@ -387,7 +400,54 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
             "lastError": sched.last_error if sched else None,
             "dataDelayMinutes": settings.sip_delay_minutes,
             "sectorsEnabled": bool(settings.sec_user_agent),
+            "liveQuotes": quotes_status(),
         }
+
+    def quotes_status() -> dict:
+        """The live quote source's state: enabled, connected, last error, time of the last live quote.
+
+        Used by: status, quotes.
+        """
+        q = state["quotes"]
+        if q is None:
+            return {"enabled": False, "connected": False, "lastError": None, "lastQuoteAt": None}
+        last = getattr(q, "last_quote_at", None)
+        return {"enabled": True, "connected": bool(q.connected), "lastError": q.last_error,
+                "lastQuoteAt": last.isoformat(timespec="seconds") if last else None}
+
+    @app.get("/v1/quotes", tags=["prices"], dependencies=read)
+    def quotes(conn: Conn, symbols: Annotated[str, Query(description="Comma-separated tickers/ids, up to 100")]):
+        """Live price per symbol right now: bid, ask and last from IBKR (`source: IBKR`), or, when IBKR can't
+        answer, the newest delayed price (`source: DELAYED`, about 16 minutes old). `price` is the bid/ask midpoint
+        (or the last trade); `ageSeconds` says how old it is.
+        \f
+        Args:
+            conn: market DB connection (one per request, injected).
+            symbols: comma-separated tickers or ids (at most 100).
+        """
+        rows = symbol_rows(conn, symbols)
+        if len(rows) > 100:
+            raise HTTPException(400, "at most 100 symbols per request")
+        source = state["quotes"]
+        live = source.quotes([r["ticker"] for r in rows]) if source is not None else {}
+        now = datetime.now(timezone.utc)
+        out = {}
+        for r in rows:
+            q = live.get(r["ticker"])
+            if q:
+                bid, ask, last = q.get("bid"), q.get("ask"), q.get("last")
+                at = datetime.fromisoformat(q["time"])
+                out[r["ticker"]] = {"source": "IBKR", "bid": bid, "ask": ask, "last": last,
+                                    "price": (bid + ask) / 2 if bid is not None and ask is not None else last,
+                                    "time": _iso(int(at.timestamp())),
+                                    "ageSeconds": max(0, int((now - at).total_seconds()))}
+                continue
+            bar = latest_price(conn, r["id"])
+            out[r["ticker"]] = {"source": "DELAYED", "bid": None, "ask": None,
+                                "last": bar["c"] if bar else None, "price": bar["c"] if bar else None,
+                                "time": _iso(bar["ts"]) if bar else None,
+                                "ageSeconds": int(now.timestamp()) - bar["ts"] if bar else None}
+        return {"quotes": out, "liveQuotes": quotes_status()}
 
     @app.get("/v1/symbols", tags=["symbols"], dependencies=read)
     def list_symbols(

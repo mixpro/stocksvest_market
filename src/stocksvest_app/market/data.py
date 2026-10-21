@@ -83,6 +83,27 @@ class MarketData:
         data = self.api.price_change(amount, unit, self._symbols_arg(tickers))["changes"]
         return {t: v for t, v in data.items() if t in tickers}
 
+    def live_quotes(self, tickers: set[str]) -> dict[str, dict]:
+        """Prices right now (IBKR live when the market service can get them, else its delayed price), for the few
+        symbols about to be traded. Not cached: every call asks again.
+
+        Args:
+            tickers: tickers wanted (halal universe only, like snapshots); empty = no call.
+
+        Returns:
+            ticker -> {source (IBKR | DELAYED), bid, ask, last, price, time, ageSeconds}.
+
+        Raises:
+            MarketError: the market service failed.
+
+        Used by: automations.runner._place_orders, portfolios.routes (manual orders, position prices).
+        """
+        tickers = sorted(tickers & self.universe().keys()) if tickers else []
+        out: dict[str, dict] = {}
+        for i in range(0, len(tickers), 100):  # the market service takes at most 100 per call
+            out.update(self.api.quotes(tickers[i:i + 100])["quotes"])
+        return out
+
     def calendar_days(self, start, end) -> list[dict]:
         """Trading days between two dates (inclusive), cached for CALENDAR_TTL_SECONDS.
 

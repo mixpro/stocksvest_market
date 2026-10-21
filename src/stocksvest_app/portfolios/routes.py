@@ -159,21 +159,31 @@ def router(ctx: AppContext) -> APIRouter:
         """
         return Decimal(str(account["cash"] or 0)) - store.assigned_cash(conn, account["id"])
 
-    def summary(conn, p: dict) -> dict:
+    def summary(conn, p: dict, live: bool = False) -> dict:
         """Portfolio with positions valued at the latest prices, budgets, totals and the account's last sync.
 
         Args:
             conn: app DB connection.
             p: the portfolio dict.
+            live: value the positions at live prices (IBKR, through the market service) where available; else
+                the delayed prices only.
         """
         rows = store.positions(conn, p["id"], by_owner=True)
+        symbols = {x["symbol"] for x in rows}
         try:
-            snaps = ctx.market.snapshots({x["symbol"] for x in rows})
+            snaps = ctx.market.snapshots(symbols)
         except MarketError:
             snaps = {}
+        quotes = {}
+        if live and symbols:
+            try:
+                quotes = {t: q for t, q in ctx.market.live_quotes(symbols).items() if q.get("source") == "IBKR"}
+            except MarketError:
+                quotes = {}
         positions, value_total, unrealized = [], D0, D0
         for x in rows:
-            price = snaps.get(x["symbol"], {}).get("latestPrice")
+            q = quotes.get(x["symbol"])
+            price = q["price"] if q else snaps.get(x["symbol"], {}).get("latestPrice")
             value = x["quantity"] * Decimal(str(price)) if price is not None else None
             if value is not None:
                 value_total += value
@@ -181,7 +191,7 @@ def router(ctx: AppContext) -> APIRouter:
             positions.append({"symbol": x["symbol"], "budgetId": x["budgetId"], "automationId": x["automationId"],
                               "quantity": num(x["quantity"]),
                               "averageCost": num(x["averageCost"]), "costBasis": num(x["costBasis"]),
-                              "price": price, "marketValue": num(value),
+                              "price": price, "priceSource": "IBKR" if q else "DELAYED", "marketValue": num(value),
                               "unrealizedPnL": num(value - x["costBasis"]) if value is not None else None})
         manual = service.open_manual_buys(conn, p["id"])
         account = account_of(conn, p)
@@ -226,13 +236,14 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.get("/{portfolio_id}")
     def get_portfolio(portfolio_id: str, conn: Conn):
-        """The portfolio with positions at the latest prices, budgets, totals and the last broker sync.
+        """The portfolio with positions at live prices where available (`priceSource: IBKR`, else the ~16 min delayed
+        price), budgets, totals and the last broker sync.
         \f
         Args:
             portfolio_id: the portfolio's id (path).
             conn: app DB connection (injected).
         """
-        return summary(conn, load(conn, portfolio_id))
+        return summary(conn, load(conn, portfolio_id), live=True)
 
     @r.put("/{portfolio_id}")
     def update_portfolio(portfolio_id: str, body: PortfolioUpdate, conn: Conn):
@@ -389,8 +400,12 @@ def router(ctx: AppContext) -> APIRouter:
             if symbol not in ctx.market.universe():
                 raise HTTPException(422, f"{symbol} is not in the halal universe")
             snap = ctx.market.snapshots({symbol}).get(symbol, {})
+            quote = ctx.market.live_quotes({symbol}).get(symbol, {})
         except MarketError as e:
             raise HTTPException(502, e.detail)
+        estimate = snap.get("latestPrice")
+        if quote.get("source") == "IBKR":  # live: buys at the ask, sells at the bid
+            estimate = (quote.get("ask") if body.side == "BUY" else quote.get("bid")) or quote.get("price")
         if body.budgetId:
             b = budget.get_budget(conn, body.budgetId)
             if not b or b["portfolioId"] != portfolio_id:
@@ -400,7 +415,7 @@ def router(ctx: AppContext) -> APIRouter:
                 conn, broker_for(conn, p), p, symbol=symbol, side=body.side, type=body.type, quantity=body.quantity,
                 time_in_force=body.timeInForce, limit_price=body.limitPrice, stop_price=body.stopPrice,
                 trail_percent=body.trailPercent, extended_hours=body.extendedHours, budget_id=body.budgetId,
-                estimated_price=Decimal(str(snap["latestPrice"])) if snap.get("latestPrice") is not None else None)
+                estimated_price=Decimal(str(estimate)) if estimate is not None else None)
         except service.OrderRejected as e:
             raise HTTPException(422, f"{e.reason}: {e}")
 

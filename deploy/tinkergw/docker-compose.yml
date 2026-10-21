@@ -16,6 +16,11 @@ services:
       PORT: "8000"
       DATA_DIR: /data
       RUN_SCHEDULER: "true"            # the Mac's .env turns it off; here it must run
+      # Live quotes from the IB Gateway on this machine (read-only connection, own client id; the bridge uses 17).
+      IBKR_ENABLED: "true"
+      IBKR_HOST: 127.0.0.1
+      IBKR_PORT: "4002"
+      IBKR_CLIENT_ID: "31"
     volumes:
       - ./data:/data
     restart: unless-stopped

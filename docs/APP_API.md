@@ -267,14 +267,21 @@ budget, and position caps and `skipBuyIfHeld` look at the budget's shares and op
 
 ```json
 {"maxOrdersPerRun": 10, "maxPositionValue": null, "maxPositionPercent": null,
- "regularHoursOnly": true, "skipBuyIfHeld": true, "maxDataAgeMinutes": 30}
+ "regularHoursOnly": true, "skipBuyIfHeld": true, "maxDataAgeMinutes": 30, "requireLivePrice": false}
 ```
+
+`requireLivePrice: true` places an order only when its symbol has a live quote (see below); otherwise it is skipped
+(`NO_LIVE_PRICE`) instead of priced at the ~16 minute delayed price.
 
 **How a run plans orders:**
 1. **Sync:** current fills and balances are imported from each budget's broker account first. If a broker can't
    be reached, that budget is reported as failed and the others still trade (the run is `PARTIAL`).
 2. **Rank and size:** symbols are ranked and sized.
-3. **Guards:** applied in rank order. Each symbol becomes an intent: `PLACE`, or `SKIP` with a reason:
+3. **Live prices:** a first plan on the delayed data shows which symbols would get orders. Their live quotes are
+   fetched once per run (IBKR, through the market service's `/v1/quotes`) and the real plan uses them: **buys at the
+   ask, sells at the bid**. Symbols without a live quote, or when live quotes fail, use the delayed price. Each intent
+   has `priceSource` (`IBKR` or `DELAYED`) and `quoteAgeSeconds`.
+4. **Guards:** applied in rank order. Each symbol becomes an intent: `PLACE`, or `SKIP` with a reason:
 
    | `skipReason` | Meaning |
    |---|---|
@@ -285,15 +292,17 @@ budget, and position caps and `skipBuyIfHeld` look at the budget's shares and op
    | `INSUFFICIENT_BUDGET` | Not enough budget left; the top ranks are served first |
    | `MAX_ORDERS_REACHED` | `maxOrdersPerRun` reached |
    | `NO_PRICE` | No price for the symbol |
+   | `NO_LIVE_PRICE` | `requireLivePrice` is on and the symbol has no live quote |
    | `ZERO_QUANTITY` | The sizing comes to less than one share |
    | `NOT_SUPPORTED_BY_BROKER` | The broker doesn't support this order type, time in force or extended hours |
 
-4. **Submit:** `PLACE` intents go to the broker with the client order ID `<runId>-<actionIndex>-<budgetId>-<ticker>`,
+5. **Submit:** `PLACE` intents go to the broker with the client order ID `<runId>-<actionIndex>-<budgetId>-<ticker>`,
    so a retry never creates a second order.
 
 **What the run records:** `result.budgets` (each budget's money `before` and `after`, or its `error`), and per
 order action `budgets: [{budgetId, name, status, notHeld, intents}]`, every intent with its `orderId`, and the
-order totals in `metrics` (including `budgetCount`).
+order totals in `metrics` (including `budgetCount`). `result.liveQuotes` lists the live quotes the run used
+(`asked`, `live`, `error`, and per symbol `source`, `bid`, `ask`, `last`, `time`, `ageSeconds`).
 
 **Preview** shows the same plan without placing anything.
 
@@ -351,7 +360,7 @@ Alpaca paper account  $100,000
 | Call | Notes |
 |---|---|
 | `POST /v1/portfolios` | `{"name": "Growth", "brokerAccountId": "bka_…", "capital": 40000}`. `capital` comes from the account's unassigned cash |
-| `GET /v1/portfolios/{id}` | Capital (`allocated`), `cash`, `unallocatedCash` (not in budgets), `positionsValue`, `equity`, unrealized and realized P&L, positions (per symbol, budget and buying automation), budgets, the account's unassigned cash, last sync |
+| `GET /v1/portfolios/{id}` | Capital (`allocated`), `cash`, `unallocatedCash` (not in budgets), `positionsValue`, `equity`, unrealized and realized P&L, positions (per symbol, budget and buying automation; valued at live prices where available, see each position's `priceSource`), budgets, the account's unassigned cash, last sync |
 | `POST /v1/portfolios/{id}/capital/allocate` / `withdraw` | `{"amount": 5000}`: move money between the account's unassigned cash and the portfolio. A withdrawal can only take unallocated cash |
 | `GET /v1/portfolios/{id}/ledger` | Every change of the portfolio's cash, newest first |
 | `DELETE /v1/portfolios/{id}` | Only when empty: no shares, no open orders, no budgets, and no filter using it (input or `POSITION` action). Its cash goes back to the account |
@@ -369,6 +378,7 @@ Alpaca paper account  $100,000
 ```
 
 - Only **halal symbols** are accepted.
+- The order's `estimatedPrice` is the live ask (buy) or bid (sell) when a live quote is available.
 - Without `budgetId`, a buy uses unallocated cash and a sell uses manual shares.
 - With `budgetId` (a budget of this portfolio), a buy uses its money and a sell its shares.
 
@@ -517,6 +527,7 @@ endpoint, and parameters are the same as in the [market API](API.md):
 | `GET /v1/market/bars?symbols=A,B&timeframe=…` | `GET /v1/bars` |
 | `GET /v1/market/snapshots?symbols=A,B` | `GET /v1/snapshots` |
 | `GET /v1/market/price-change?periodAmount=&periodUnit=&symbols=` | `GET /v1/price-change` |
+| `GET /v1/market/quotes?symbols=` | `GET /v1/quotes` (live prices) |
 | `GET /v1/market/calendar?start=&end=` | `GET /v1/calendar` |
 | `GET /v1/market/status` | `GET /v1/status` |
 

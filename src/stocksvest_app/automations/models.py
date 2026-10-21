@@ -408,6 +408,8 @@ class OrderGuards(BaseModel):
         regularHoursOnly: place nothing outside the regular session.
         skipBuyIfHeld: no buy when the budget holds the symbol or has a buy open (from any of its automations).
         maxDataAgeMinutes: place nothing when the market data is older than this.
+        requireLivePrice: place an order only with a live quote (IBKR) for its symbol; otherwise skip it
+            (NO_LIVE_PRICE) instead of using the ~16 minute delayed price.
 
     Used by: AutomationIn.orderGuards, runner.Trading, planner.plan.
     """
@@ -417,6 +419,7 @@ class OrderGuards(BaseModel):
     regularHoursOnly: bool = True
     skipBuyIfHeld: bool = True
     maxDataAgeMinutes: int = Field(default=30, ge=1)
+    requireLivePrice: bool = False
 
 
 # Any automation action; the "type" field picks the model. Used by: AutomationIn.actions, runner.run_automation.
