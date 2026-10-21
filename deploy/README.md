@@ -24,7 +24,7 @@ On tinkergw (`~/stocksvest`), every service uses the host network with an explic
 | Where | Folder | What |
 |---|---|---|
 | `deploy/edge/` → VPS `/opt/stocksvest-market/edge` | `docker-compose.yml`, `stocksvest.caddy`, `authelia/configuration.yml` | Authelia, and the Caddy site blocks for `stocksvest.hardansaeed.com` and `auth.hardansaeed.com`. The VPS Caddyfile gets one line: `import /opt/stocksvest-market/edge/stocksvest.caddy` |
-| VPS only | `secrets/{jwt,session,storage}`, `authelia/users.yml`, `authelia/data/`, `authelia/notifications.txt` | Created on the server; never in git |
+| VPS only | `secrets/{jwt,session,storage,smtp_password}`, `.env`, `authelia/users.yml`, `authelia/data/` | Created on the server; never in git |
 | `deploy/tinkergw/` → `tinkergw:~/stocksvest` | `docker-compose.yml`, `backup.sh`, `grafana/` | The market service, the app and Grafana (image `stocksvest:<git commit>`, built on the Mac) |
 | tinkergw only | `.env` (copied once from the Mac), `data/`, `backups/` | Secrets, the databases, nightly backups (03:15, 14 days) |
 
@@ -48,13 +48,16 @@ anything there.
 - One session covers every `*.hardansaeed.com` site behind Authelia: 12 h at most, 2 h without activity, 1 month
   with "remember me".
 - 3 wrong passwords within 2 minutes block the user for 15 minutes.
-- There's no mail server yet: Authelia writes its one-time codes to `notifications.txt` on the VPS:
-  `ssh root@65.21.180.156 tail -n 20 /opt/stocksvest-market/edge/authelia/notifications.txt`
+- One-time codes are emailed to the user's address (users.yml) from `StocksVest <alerts@stocksvest.net>` through
+  Brevo (`smtp-relay.brevo.com:587`; `stocksvest.net` is authenticated there with DKIM). The SMTP login and key live
+  only on the servers: `scripts/set-smtp-key.sh` asks for them and writes `edge/secrets/smtp_password` + `edge/.env`
+  on the VPS and `SMTP_*` in tinkergw's `.env`.
 
 ## Commands
 
 ```bash
 scripts/edge-set-password.sh        # create or change the login (asks on your terminal, sends only the hash)
+scripts/set-smtp-key.sh             # Brevo SMTP login and key for Authelia and alerts (asks on your terminal)
 scripts/deploy-edge.sh              # Authelia + Caddy on the VPS
 scripts/deploy-tinkergw.sh          # tests, build linux/amd64, load on tinkergw, restart, health checks
 STOCKSVEST_TAG=<tag> scripts/deploy-tinkergw.sh --no-build    # roll back to an image already on tinkergw

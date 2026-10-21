@@ -10,6 +10,8 @@ services:
       AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET_FILE: /secrets/jwt
       AUTHELIA_SESSION_SECRET_FILE: /secrets/session
       AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE: /secrets/storage
+      AUTHELIA_NOTIFIER_SMTP_PASSWORD_FILE: /secrets/smtp_password
+    env_file: .env                    # AUTHELIA_NOTIFIER_SMTP_USERNAME (written by scripts/set-smtp-key.sh)
     volumes:
       - ./authelia:/config            # configuration.yml (from git), users.yml, data/, notifications.txt (VPS only)
       - ./secrets:/secrets:ro

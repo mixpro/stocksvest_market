@@ -53,5 +53,8 @@ storage:
     path: /config/data/db.sqlite3  # registered passkeys / TOTP and login history
 
 notifier:
-  filesystem:                      # no mail server yet: one-time codes are written here (read it over SSH)
-    filename: /config/notifications.txt
+  smtp:                            # one-time codes by email, through Brevo (scripts/set-smtp-key.sh)
+    address: submission://smtp-relay.brevo.com:587
+    sender: "StocksVest <alerts@stocksvest.net>"
+    subject: "[StocksVest] {title}"
+    # username: AUTHELIA_NOTIFIER_SMTP_USERNAME (edge/.env); password: secrets/smtp_password (both VPS only)

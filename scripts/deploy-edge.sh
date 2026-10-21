@@ -30,12 +30,16 @@ chmod 600 secrets/*
 if [ ! -s authelia/users.yml ]; then
   echo "!! authelia/users.yml is missing: run scripts/edge-set-password.sh first"; exit 1
 fi
+if [ ! -s secrets/smtp_password ] || ! grep -q '^AUTHELIA_NOTIFIER_SMTP_USERNAME=' .env 2>/dev/null; then
+  echo "!! the SMTP login is missing: run scripts/set-smtp-key.sh first"; exit 1
+fi
 
 echo "== validating the Authelia configuration"
 docker run --rm -v "$DIR/authelia:/config" -v "$DIR/secrets:/secrets:ro" \
   -e AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET_FILE=/secrets/jwt \
   -e AUTHELIA_SESSION_SECRET_FILE=/secrets/session \
   -e AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE=/secrets/storage \
+  -e AUTHELIA_NOTIFIER_SMTP_PASSWORD_FILE=/secrets/smtp_password --env-file .env \
   "$IMAGE" authelia validate-config --config /config/configuration.yml
 
 echo "== starting Authelia (restarted: it reads configuration.yml only at startup; logins in memory are reset)"
