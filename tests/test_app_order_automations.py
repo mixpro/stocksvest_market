@@ -326,3 +326,19 @@ def test_live_quotes_down_falls_back_to_delayed_prices(client, setup, broker, ma
     r = run(client, make(client, setup, order_action()))
     assert [i["priceSource"] for i in section(r)["intents"][:3]] == ["DELAYED"] * 3
     assert r["status"] == "SUCCEEDED" and r["result"]["liveQuotes"]["error"] == "market service unreachable"
+
+
+def test_no_live_quotes_when_nothing_can_be_placed(client, setup, broker, market):
+    market.live = {"AAA": {"bid": 10.9, "ask": 11.1, "last": 11.0, "price": 11.0}}
+    MARKET.update(session="CLOSED")
+    r = run(client, make(client, setup, order_action()), preview=True)
+    assert {i["skipReason"] for i in section(r)["intents"]} == {"OUTSIDE_REGULAR_HOURS"}
+    assert not [c for c in market.calls if c[0] == "quotes"] and "liveQuotes" not in r["result"]
+
+
+def test_top_n_quotes_only_the_selected_symbols(client, setup, market):
+    market.live = {"AAA": {"bid": 10.9, "ask": 11.1, "last": 11.0, "price": 11.0}}
+    action = order_action(selection={"mode": "TOP_N", "topN": 2, "rankBy": "DAILY_CHANGE_PERCENT"})
+    r = run(client, make(client, setup, action), preview=True)
+    assert [c for c in market.calls if c[0] == "quotes"] == [("quotes", ["AAA", "CCC"])]  # the top 2, not all 4
+    assert [(i["ticker"], i["priceSource"]) for i in section(r)["intents"]] == [("AAA", "IBKR"), ("CCC", "DELAYED")]

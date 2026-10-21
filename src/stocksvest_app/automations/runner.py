@@ -1,6 +1,5 @@
 """Run one automation: checks, market context, filter targets, actions, and the run record."""
 
-import copy
 import logging
 import sqlite3
 import threading
@@ -460,8 +459,8 @@ def _place_orders(ctx, conn, automation, tradings: list[tuple[dict, "Trading | N
             notHeld, intents}.
         run_id: the run's id (client order ids are <runId>-<index>-<budgetId>-<ticker>).
         preview: plan only.
-        live: the run's live quotes. A first plan on the delayed data says which symbols would get orders; their
-            live prices are fetched and the real plan uses them. None = delayed prices only.
+        live: the run's live quotes: planner.select() picks the symbols, their live prices are fetched, and
+            planner.size() prices them. None = delayed prices only.
     """
     entry["side"] = action.side
     entry["budgets"] = []
@@ -481,12 +480,12 @@ def _place_orders(ctx, conn, automation, tradings: list[tuple[dict, "Trading | N
             plan_ctx = trading.context(snapshots, market.get("session"), market.get("dataAgeMinutes"))
             for t, s in snapshots.items():
                 plan_ctx.snapshots.setdefault(t, s)  # the context may come from an earlier action
-            if live is not None:
-                probe = planner.plan(action, trading.guards, tickers, copy.deepcopy(plan_ctx), trading.broker)
-                wanted = [i["ticker"] for i in probe["intents"]
-                          if i["skipReason"] not in ("STALE_DATA", "OUTSIDE_REGULAR_HOURS")][:100]
-                live.merge_into(plan_ctx.snapshots, wanted)
-            out = planner.plan(action, trading.guards, tickers, plan_ctx, trading.broker)
+            # Select which symbols to act on, quote exactly those live, then price, size and check them.
+            chosen = planner.select(action, tickers, plan_ctx)
+            if live is not None and not planner.market_blocked(trading.guards, plan_ctx):
+                live.merge_into(plan_ctx.snapshots, chosen["symbols"][:100])
+            out = {"intents": planner.size(action, trading.guards, chosen["symbols"], plan_ctx, trading.broker),
+                   "notHeld": chosen["notHeld"]}
         except Exception as e:  # one budget failing does not stop the others
             log.exception("automation %s: planning for budget %s failed", automation["id"], trading.budget_id)
             sub.update(status="FAILED", error=str(e))

@@ -361,7 +361,7 @@ class PlaceOrderAction(BaseModel):
         selection: SymbolSelection.
         sizings: OrderSizing list (see above).
 
-    Used by: Action, AutomationIn.check_trading, runner._place_orders, planner.plan.
+    Used by: Action, AutomationIn.check_trading, runner._place_orders, planner.select / size.
     """
 
     type: Literal["PLACE_ORDER"]

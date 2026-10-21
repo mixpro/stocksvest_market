@@ -277,9 +277,10 @@ budget, and position caps and `skipBuyIfHeld` look at the budget's shares and op
 1. **Sync:** current fills and balances are imported from each budget's broker account first. If a broker can't
    be reached, that budget is reported as failed and the others still trade (the run is `PARTIAL`).
 2. **Rank and size:** symbols are ranked and sized.
-3. **Live prices:** a first plan on the delayed data shows which symbols would get orders. Their live quotes are
-   fetched once per run (IBKR, through the market service's `/v1/quotes`) and the real plan uses them: **buys at the
-   ask, sells at the bid**. Symbols without a live quote, or when live quotes fail, use the delayed price. Each intent
+3. **Live prices:** for exactly the selected symbols (all matches, or the top N; sells only held ones), live quotes are
+   fetched once per run (IBKR, through the market service's `/v1/quotes`) and used to price and size them: **buys at
+   the ask, sells at the bid**. Nothing is fetched when the market is closed or the data too old (nothing can be
+   placed then). Symbols without a live quote, or when live quotes fail, use the delayed price. Each intent
    has `priceSource` (`IBKR` or `DELAYED`) and `quoteAgeSeconds`.
 4. **Guards:** applied in rank order. Each symbol becomes an intent: `PLACE`, or `SKIP` with a reason:
 

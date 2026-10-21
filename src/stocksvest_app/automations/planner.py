@@ -135,31 +135,31 @@ def _skip(intent: dict, reason: str, detail: str | None = None) -> dict:
     return intent
 
 
-def plan(action: PlaceOrderAction, guards: OrderGuards, matched: list[str], ctx: PlanContext, broker) -> dict:
-    """Turn matched symbols into order intents.
+def select(action: PlaceOrderAction, matched: list[str], ctx: PlanContext) -> dict:
+    """Which matched symbols the action acts on, in rank order. Needs no prices beyond the ranking key, so the
+    runner can fetch live quotes for exactly these before size().
+
+    Sells consider only symbols the budget holds. TOP_N ranks by action.selection.rankBy (on the snapshots the
+    context has: the delayed market data) and keeps the best topN; ALL_MATCHES keeps every candidate, sorted.
 
     Args:
         action: the PLACE_ORDER action.
-        guards: the automation's OrderGuards.
         matched: matched tickers from the run's filters.
-        ctx: PlanContext (mutated: orders_planned, budget_left).
-        broker: the portfolio's Broker (capability checks only; nothing is sent).
+        ctx: PlanContext (holdings and snapshots; not changed).
 
     Returns:
-        {"intents": [{ticker, side, rank, sizing, quantity, estimatedPrice, priceSource, quoteAgeSeconds,
-        estimatedCost, limitPrice, stopPrice,
-        decision (PLACE|SKIP), skipReason, detail, orderId}], "notHeld": matches a SELL can't use}.
+        {"symbols": tickers in rank order, "notHeld": matches a SELL can't use}.
 
-    Used by: runner._place_orders.
+    Used by: plan, runner._place_orders.
     """
-    # 1. Candidates: sells only from the budget's shares.
+    # Candidates: sells only from the budget's shares.
     if action.side == "SELL":
         candidates = [t for t in matched if ctx.holdings.get(t) and ctx.holdings[t].quantity > 0]
         not_held = len(matched) - len(candidates)
     else:
         candidates, not_held = list(matched), 0
 
-    # 2. Rank and select.
+    # Rank and select.
     sel = action.selection
     if sel.mode == SelectionMode.TOP_N:
         valued = [(t, _rank_value(sel.rankBy, t, ctx)) for t in candidates]
@@ -167,7 +167,50 @@ def plan(action: PlaceOrderAction, guards: OrderGuards, matched: list[str], ctx:
         candidates = [t for t, _ in with_value + [x for x in valued if x[1] is None]][: sel.topN]
     else:
         candidates = sorted(candidates)
+    return {"symbols": candidates, "notHeld": not_held}
 
+
+def market_blocked(guards: OrderGuards, ctx: PlanContext) -> tuple[str, str] | None:
+    """A whole-run reason to place nothing: market data too old, or outside the regular session when the guards
+    ask for it.
+
+    Args:
+        guards: the automation's OrderGuards.
+        ctx: PlanContext (data age and session).
+
+    Returns:
+        (skipReason, detail), or None when orders may go ahead.
+
+    Used by: size, runner._place_orders (no live quotes are fetched when nothing can be placed anyway).
+    """
+    if ctx.data_age_minutes is None or ctx.data_age_minutes > guards.maxDataAgeMinutes:
+        return "STALE_DATA", f"market data is {ctx.data_age_minutes} min old (max {guards.maxDataAgeMinutes})"
+    if guards.regularHoursOnly and ctx.session != "REGULAR":
+        return "OUTSIDE_REGULAR_HOURS", f"market session is {ctx.session}"
+    return None
+
+
+def size(action: PlaceOrderAction, guards: OrderGuards, symbols: list[str], ctx: PlanContext, broker) -> list[dict]:
+    """Price, size and check the selected symbols in rank order: one intent each, PLACE or SKIP with a reason.
+
+    Prices: a live quote merged into ctx.snapshots by the runner (buys at the ask, sells at the bid), else the
+    delayed price. The budget is spent top rank first.
+
+    Args:
+        action: the PLACE_ORDER action.
+        guards: the automation's OrderGuards.
+        symbols: select()'s symbols, in rank order.
+        ctx: PlanContext (mutated: orders_planned, budget_left).
+        broker: the portfolio's Broker (capability checks only; nothing is sent).
+
+    Returns:
+        [{ticker, side, rank, sizing, quantity, estimatedPrice, priceSource, quoteAgeSeconds, estimatedCost,
+        limitPrice, stopPrice, decision (PLACE|SKIP), skipReason, detail, orderId}].
+
+    Used by: plan, runner._place_orders.
+    """
+    blocked = market_blocked(guards, ctx)
+    candidates = symbols
     intents = []
     for i, ticker in enumerate(candidates):
         rank = i + 1
@@ -175,12 +218,9 @@ def plan(action: PlaceOrderAction, guards: OrderGuards, matched: list[str], ctx:
         intent = _intent(ticker, action.side, rank, sizing)
         intents.append(intent)
 
-        # 3. Whole-run guards.
-        if ctx.data_age_minutes is None or ctx.data_age_minutes > guards.maxDataAgeMinutes:
-            _skip(intent, "STALE_DATA", f"market data is {ctx.data_age_minutes} min old (max {guards.maxDataAgeMinutes})")
-            continue
-        if guards.regularHoursOnly and ctx.session != "REGULAR":
-            _skip(intent, "OUTSIDE_REGULAR_HOURS", f"market session is {ctx.session}")
+        # 1. Whole-run guards.
+        if blocked:
+            _skip(intent, *blocked)
             continue
 
         # Price: a live quote when the runner got one (buys at the ask, sells at the bid), else the delayed price.
@@ -200,7 +240,7 @@ def plan(action: PlaceOrderAction, guards: OrderGuards, matched: list[str], ctx:
         intent["estimatedPrice"] = float(price)
         held = ctx.holdings.get(ticker, Holding(D0, D0))
 
-        # 4. Size.
+        # 2. Size.
         if action.side == "BUY":
             if sizing.mode == SizingMode.QUANTITY:
                 qty = sizing.value
@@ -213,7 +253,7 @@ def plan(action: PlaceOrderAction, guards: OrderGuards, matched: list[str], ctx:
             qty = min(sizing.value, free) if sizing.mode == SizingMode.QUANTITY else free * sizing.value / 100
         qty = qty.quantize(Decimal(1), rounding=ROUND_DOWN)
 
-        # 5. Position guards (buys): never let one symbol grow past the caps; shrink the order to fit.
+        # 3. Position guards (buys): never let one symbol grow past the caps; shrink the order to fit.
         if action.side == "BUY":
             if guards.skipBuyIfHeld and (held.quantity > 0 or ticker in ctx.open_buys):
                 _skip(intent, "ALREADY_HELD", "the budget already holds it or has a buy order open")
@@ -238,7 +278,7 @@ def plan(action: PlaceOrderAction, guards: OrderGuards, matched: list[str], ctx:
             continue
         intent["quantity"] = float(qty)
 
-        # 6. Prices for limit / stop orders.
+        # 4. Prices for limit / stop orders.
         limit = stop = None
         if action.limitOffsetPercent is not None:
             limit = _round_price(price * (1 + action.limitOffsetPercent / 100))
@@ -255,7 +295,7 @@ def plan(action: PlaceOrderAction, guards: OrderGuards, matched: list[str], ctx:
             _skip(intent, e.reason, str(e))
             continue
 
-        # 7. Budget (buys, top rank first) and the per-run order cap.
+        # 5. Budget (buys, top rank first) and the per-run order cap.
         if action.side == "BUY":
             unit = limit if action.orderType in ("LIMIT", "STOP_LIMIT") else (stop or price) * (1 + PRICE_BUFFER)
             cost = (qty * unit).quantize(Decimal("0.01"))
@@ -272,4 +312,23 @@ def plan(action: PlaceOrderAction, guards: OrderGuards, matched: list[str], ctx:
         ctx.orders_planned += 1
         if action.side == "BUY":
             ctx.budget_left -= cost
-    return {"intents": intents, "notHeld": not_held}
+    return intents
+
+
+def plan(action: PlaceOrderAction, guards: OrderGuards, matched: list[str], ctx: PlanContext, broker) -> dict:
+    """select() then size() on whatever prices the context holds (no live quotes are fetched here).
+
+    Args:
+        action: the PLACE_ORDER action.
+        guards: the automation's OrderGuards.
+        matched: matched tickers from the run's filters.
+        ctx: PlanContext (mutated by size()).
+        broker: the portfolio's Broker (capability checks only).
+
+    Returns:
+        {"intents": size()'s intents, "notHeld": select()'s notHeld}.
+
+    Used by: tests and callers that plan without live prices (the runner calls select and size itself).
+    """
+    chosen = select(action, matched, ctx)
+    return {"intents": size(action, guards, chosen["symbols"], ctx, broker), "notHeld": chosen["notHeld"]}
