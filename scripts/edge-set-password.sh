@@ -6,7 +6,7 @@
 set -euo pipefail
 
 VPS="${VPS:-root@65.21.180.156}"
-DIR=/opt/stocksvest/edge
+DIR=/opt/stocksvest-market/edge
 USERNAME="${1:-saeed}"
 AUTHELIA_IMAGE=authelia/authelia:4.39.27
 

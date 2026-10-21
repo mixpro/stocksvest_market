@@ -23,10 +23,24 @@ On tinkergw (`~/stocksvest`), every service uses the host network with an explic
 
 | Where | Folder | What |
 |---|---|---|
-| `deploy/edge/` → VPS `/opt/stocksvest/edge` | `docker-compose.yml`, `stocksvest.caddy`, `authelia/configuration.yml` | Authelia, and the Caddy site blocks for `stocksvest.hardansaeed.com` and `auth.hardansaeed.com`. The VPS Caddyfile gets one line: `import /opt/stocksvest/edge/stocksvest.caddy` |
+| `deploy/edge/` → VPS `/opt/stocksvest-market/edge` | `docker-compose.yml`, `stocksvest.caddy`, `authelia/configuration.yml` | Authelia, and the Caddy site blocks for `stocksvest.hardansaeed.com` and `auth.hardansaeed.com`. The VPS Caddyfile gets one line: `import /opt/stocksvest-market/edge/stocksvest.caddy` |
 | VPS only | `secrets/{jwt,session,storage}`, `authelia/users.yml`, `authelia/data/`, `authelia/notifications.txt` | Created on the server; never in git |
 | `deploy/tinkergw/` → `tinkergw:~/stocksvest` | `docker-compose.yml`, `backup.sh`, `grafana/` | The market service, the app and Grafana (image `stocksvest:<git commit>`, built on the Mac) |
 | tinkergw only | `.env` (copied once from the Mac), `data/`, `backups/` | Secrets, the databases, nightly backups (03:15, 14 days) |
+
+**On the VPS, everything of this project lives in `/opt/stocksvest-market/`.** `/opt/stocksvest/` belongs to the
+other StocksVest project, whose `deploy.sh` wipes it (except `data/` and `secrets/`) on every deploy: never put
+anything there.
+
+## Backups
+
+- **tinkergw:** every night at 03:15, `backup.sh` makes online copies of `app.db` and `market.db` into
+  `~/stocksvest/backups/YYYY-MM-DD/` (kept 14 days) and pushes them to the VPS.
+- **VPS:** `/opt/stocksvest-market/backups/app/` keeps the 30 newest days plus the first backup of each of the last 12
+  months; `market/` keeps the 3 newest (it can be rebuilt from Alpaca). `prune-backups.py` thins them out daily at 05:30.
+- tinkergw pushes with its own key (`~/.ssh/stocksvest_backup`), which the VPS accepts only for writing into that
+  folder (`rrsync -wo`): no shell, no reading, no deleting. Set up once with `scripts/setup-offsite-backup.sh`.
+- Restore: stop the stack on tinkergw, copy the files back into `~/stocksvest/data/` (gunzip `market.db.gz`), start it.
 
 ## Login
 
@@ -35,7 +49,7 @@ On tinkergw (`~/stocksvest`), every service uses the host network with an explic
   with "remember me".
 - 3 wrong passwords within 2 minutes block the user for 15 minutes.
 - There's no mail server yet: Authelia writes its one-time codes to `notifications.txt` on the VPS:
-  `ssh root@65.21.180.156 tail -n 20 /opt/stocksvest/edge/authelia/notifications.txt`
+  `ssh root@65.21.180.156 tail -n 20 /opt/stocksvest-market/edge/authelia/notifications.txt`
 
 ## Commands
 

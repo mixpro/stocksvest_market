@@ -1,4 +1,4 @@
-# Template only. The real users.yml lives on the VPS (/opt/stocksvest/edge/authelia/users.yml) and is written by
+# Template only. The real users.yml lives on the VPS (/opt/stocksvest-market/edge/authelia/users.yml) and is written by
 # scripts/edge-set-password.sh, which asks for the password on your terminal and stores only its argon2 hash.
 users:
   saeed:

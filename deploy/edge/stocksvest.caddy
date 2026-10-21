@@ -1,4 +1,4 @@
-# Imported by the VPS's /etc/caddy/Caddyfile:  import /opt/stocksvest/edge/stocksvest.caddy
+# Imported by the VPS's /etc/caddy/Caddyfile:  import /opt/stocksvest-market/edge/stocksvest.caddy
 
 # The login page (Authelia).
 auth.hardansaeed.com {
