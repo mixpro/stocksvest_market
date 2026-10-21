@@ -493,12 +493,15 @@ def test_alpaca_fee_activities():
 
 def test_manual_orders_and_positions_use_live_prices(client, portfolio, broker, market):
     market.live = {"AAA": {"bid": 10.4, "ask": 10.6, "last": 10.5, "price": 10.5}}
-    order = buy(client, portfolio, quantity=2).json()
+    order = buy(client, portfolio, quantity=2).json()  # (positions are valued at the last trade, below)
     assert order["estimatedPrice"] == 10.6  # a live buy is estimated at the ask (delayed price: 10)
     broker.fill(order["brokerOrderId"], 2, "10.6")
     sync(client, portfolio)
     pos = client.get(f"/v1/portfolios/{portfolio['id']}", headers=KEY).json()["positions"][0]
     assert (pos["price"], pos["priceSource"], pos["marketValue"]) == (10.5, "IBKR", 21.0)
+    market.live = {"AAA": {"bid": 10.0, "ask": 11.4, "last": 10.3, "price": 10.7}}  # wide after-hours quote
+    pos = client.get(f"/v1/portfolios/{portfolio['id']}", headers=KEY).json()["positions"][0]
+    assert pos["price"] == 10.3  # the last trade, like the broker shows it, not the 10.7 midpoint
     market.live = {}
     pos = client.get(f"/v1/portfolios/{portfolio['id']}", headers=KEY).json()["positions"][0]
     assert (pos["price"], pos["priceSource"]) == (10.0, "DELAYED")

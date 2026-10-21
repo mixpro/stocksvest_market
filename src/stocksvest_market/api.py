@@ -438,7 +438,7 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
                 bid, ask, last = q.get("bid"), q.get("ask"), q.get("last")
                 at = datetime.fromisoformat(q["time"])
                 out[r["ticker"]] = {"source": "IBKR", "bid": bid, "ask": ask, "last": last,
-                                    "price": (bid + ask) / 2 if bid is not None and ask is not None else last,
+                                    "price": round((bid + ask) / 2, 4) if bid is not None and ask is not None else last,
                                     "time": _iso(int(at.timestamp())),
                                     "ageSeconds": max(0, int((now - at).total_seconds()))}
                 continue

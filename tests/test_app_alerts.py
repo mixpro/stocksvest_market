@@ -87,7 +87,8 @@ def test_check_runs_at_most_every_five_minutes_and_reports_failed_runs(env):
     checks.check(ctx, conn, at(11, 2))  # too soon: nothing checked
     assert mailer.sent == []
     checks.check(ctx, conn, datetime.now(timezone.utc) + timedelta(minutes=6))  # the run's time is "now"
-    assert mailer.subjects() == ["1 automation run(s) failed"] and "Buy: FAILED. filters: boom" in mailer.sent[0][1]
+    failed = [t for subj, t in mailer.sent if subj == "1 automation run(s) failed"]  # (after the close a summary too)
+    assert len(failed) == 1 and "Buy: FAILED. filters: boom" in failed[0]
 
 
 def test_ibkr_down_during_the_session(env, monkeypatch):

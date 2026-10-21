@@ -165,8 +165,8 @@ def router(ctx: AppContext) -> APIRouter:
         Args:
             conn: app DB connection.
             p: the portfolio dict.
-            live: value the positions at live prices (IBKR, through the market service) where available; else
-                the delayed prices only.
+            live: value the positions at the live last trade (IBKR, through the market service) where available;
+                else the delayed prices only.
         """
         rows = store.positions(conn, p["id"], by_owner=True)
         symbols = {x["symbol"] for x in rows}
@@ -183,7 +183,9 @@ def router(ctx: AppContext) -> APIRouter:
         positions, value_total, unrealized = [], D0, D0
         for x in rows:
             q = quotes.get(x["symbol"])
-            price = q["price"] if q else snaps.get(x["symbol"], {}).get("latestPrice")
+            # Valued at the last trade, like the broker shows it (the bid/ask midpoint drifts after the close).
+            price = (q.get("last") if q.get("last") is not None else q["price"]) if q else \
+                snaps.get(x["symbol"], {}).get("latestPrice")
             value = x["quantity"] * Decimal(str(price)) if price is not None else None
             if value is not None:
                 value_total += value

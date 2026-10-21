@@ -34,12 +34,12 @@ def client_with(settings, source):
 
 def test_quotes_live_and_delayed_fallback(settings, seeded):  # noqa: F811
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    source = FakeSource({"S0001": {"bid": 12.5, "ask": 12.7, "last": 12.6, "time": now, "marketDataType": 1}})
+    source = FakeSource({"S0001": {"bid": 28.0, "ask": 28.01, "last": 12.6, "time": now, "marketDataType": 1}})
     with client_with(settings, source) as c:
         body = c.get("/v1/quotes?symbols=S0001,S0002", headers=READ).json()
     live, delayed = body["quotes"]["S0001"], body["quotes"]["S0002"]
-    assert live["source"] == "IBKR" and live["price"] == pytest.approx(12.6) and live["ageSeconds"] <= 2
-    assert (live["bid"], live["ask"], live["last"]) == (12.5, 12.7, 12.6)
+    assert live["source"] == "IBKR" and live["price"] == 28.005 and live["ageSeconds"] <= 2  # rounded, no float noise
+    assert (live["bid"], live["ask"], live["last"]) == (28.0, 28.01, 12.6)
     assert delayed["source"] == "DELAYED" and delayed["price"] is None  # S0002 has no bars in the fixture
     assert source.asked == [["S0001", "S0002"]] and body["liveQuotes"]["connected"] is True
 
