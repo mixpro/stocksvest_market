@@ -20,3 +20,18 @@ stocksvest.hardansaeed.com {
 		reverse_proxy 100.126.3.52:8100
 	}
 }
+
+# Grafana on tinkergw, behind the same login (Grafana takes the user from Remote-User, only from the VPS).
+grafanavest.hardansaeed.com {
+	route {
+		request_header -Remote-User
+		request_header -Remote-Groups
+		request_header -Remote-Email
+		request_header -Remote-Name
+		forward_auth 127.0.0.1:9091 {
+			uri /api/authz/forward-auth
+			copy_headers Remote-User Remote-Groups Remote-Email Remote-Name
+		}
+		reverse_proxy 100.126.3.52:3000
+	}
+}

@@ -1,10 +1,71 @@
-# tinkergw (home server): what runs there. No source code on that machine: only this file, .env and data.
-# Step 1 of the move: a dummy app to prove the VPS relay and login work. The real app and market service replace it.
+# tinkergw (home server): what runs there. No source code on that machine: only this file, .env, grafana/ and data/.
+# Images are built on the Mac and loaded by scripts/deploy-tinkergw.sh, which also sets STOCKSVEST_TAG in .env.
+#
+# Every service uses the host network with an explicit address, so nothing listens anywhere by accident:
+#   market   127.0.0.1:8000      only the app on this machine (and, later, the IB Gateway on 127.0.0.1:4002)
+#   app      100.126.3.52:8100   Tailscale only: the VPS login proxy forwards stocksvest.hardansaeed.com here
+#   grafana  100.126.3.52:3000   Tailscale only: the VPS forwards grafanavest.hardansaeed.com here
 services:
-  whoami:
-    image: traefik/whoami:v1.11.0     # prints every request it receives, headers included
-    container_name: stocksvest-whoami
-    command: ["--port", "8100", "--name", "stocksvest-dummy"]
-    ports:
-      - "100.126.3.52:8100:8100"      # Tailscale address only: reachable from the VPS, not from the LAN or internet
+  market:
+    image: stocksvest:${STOCKSVEST_TAG:?run scripts/deploy-tinkergw.sh}
+    container_name: stocksvest-market
+    network_mode: host
+    env_file: .env
+    environment:
+      HOST: 127.0.0.1
+      PORT: "8000"
+      DATA_DIR: /data
+      RUN_SCHEDULER: "true"            # the Mac's .env turns it off; here it must run
+    volumes:
+      - ./data:/data
     restart: unless-stopped
+
+  app:
+    image: stocksvest:${STOCKSVEST_TAG:?run scripts/deploy-tinkergw.sh}
+    container_name: stocksvest-app
+    command: ["python", "-m", "stocksvest_app", "serve"]
+    network_mode: host
+    env_file: .env
+    environment:
+      HOST: 100.126.3.52
+      APP_PORT: "8100"
+      MARKET_URL: http://127.0.0.1:8000
+      DATA_DIR: /data
+      APP_RUN_SCHEDULER: "true"
+      APP_TRUSTED_PROXIES: 100.96.27.63   # the VPS: its Remote-User header counts as logged in
+    volumes:
+      - ./data:/data
+    depends_on:
+      - market
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: stocksvest-grafana
+    network_mode: host
+    # SQLite readers in WAL mode need write access to the DB's -shm file, so Grafana runs as root like the services.
+    user: "0"
+    environment:
+      GF_INSTALL_PLUGINS: frser-sqlite-datasource
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/market.json
+      GF_SERVER_HTTP_ADDR: 100.126.3.52
+      GF_SERVER_HTTP_PORT: "3000"
+      GF_SERVER_ROOT_URL: https://grafanavest.hardansaeed.com
+      # Logged in at the VPS (Authelia): Grafana takes the user from Remote-User, only from the VPS.
+      GF_AUTH_PROXY_ENABLED: "true"
+      GF_AUTH_PROXY_HEADER_NAME: Remote-User
+      GF_AUTH_PROXY_HEADER_PROPERTY: username
+      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+      GF_AUTH_PROXY_WHITELIST: 100.96.27.63
+      GF_USERS_AUTO_ASSIGN_ORG_ROLE: Admin
+    volumes:
+      - ./data:/var/lib/stocksvest
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    restart: unless-stopped
+
+volumes:
+  grafana-data:

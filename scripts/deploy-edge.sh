@@ -38,8 +38,9 @@ docker run --rm -v "$DIR/authelia:/config" -v "$DIR/secrets:/secrets:ro" \
   -e AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE=/secrets/storage \
   "$IMAGE" authelia validate-config --config /config/configuration.yml
 
-echo "== starting Authelia"
+echo "== starting Authelia (restarted: it reads configuration.yml only at startup; logins in memory are reset)"
 docker compose up -d
+docker compose restart authelia
 for i in $(seq 1 30); do
   curl -fs -o /dev/null http://127.0.0.1:9091/api/health && break
   sleep 2

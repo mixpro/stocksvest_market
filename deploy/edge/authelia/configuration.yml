@@ -28,7 +28,9 @@ authentication_backend:
 access_control:
   default_policy: deny             # anything not listed below is refused
   rules:
-    - domain: stocksvest.hardansaeed.com
+    - domain:
+        - stocksvest.hardansaeed.com
+        - grafanavest.hardansaeed.com
       policy: two_factor
 
 session:
