@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from .config import Settings
 
 log = logging.getLogger(__name__)
+# ib_async logs every account event at INFO (e.g. other programs' executions on connect); keep only problems.
+logging.getLogger("ib_async").setLevel(logging.WARNING)
 
 # Symbols subscribed at once: IBKR allows ~100 simultaneous market data lines per account. Used by: IbkrQuotes._fetch
 CHUNK = 50
