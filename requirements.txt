@@ -2,5 +2,5 @@ fastapi==0.143.1
 uvicorn[standard]==0.54.0
 python-multipart==0.0.32
 requests==2.34.2
-tzdata==2026.5
+tzdata==2025.3  # ib_async 2.1.0 needs tzdata < 2026; New York time rules are the same
 ib_async==2.1.0
