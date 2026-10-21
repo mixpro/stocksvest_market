@@ -1,0 +1,18 @@
+# The VPS edge: Authelia, the login service Caddy asks before forwarding a request.
+# Runs from /opt/stocksvest/edge on the VPS (copied by scripts/deploy-edge.sh). Caddy itself runs on the host.
+services:
+  authelia:
+    image: authelia/authelia:4.39.27
+    container_name: stocksvest-authelia
+    environment:
+      TZ: UTC
+      # Secrets are files created once on the VPS (scripts/deploy-edge.sh), never in git.
+      AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET_FILE: /secrets/jwt
+      AUTHELIA_SESSION_SECRET_FILE: /secrets/session
+      AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE: /secrets/storage
+    volumes:
+      - ./authelia:/config            # configuration.yml (from git), users.yml, data/, notifications.txt (VPS only)
+      - ./secrets:/secrets:ro
+    ports:
+      - "127.0.0.1:9091:9091"         # only Caddy on the same host reaches it
+    restart: unless-stopped

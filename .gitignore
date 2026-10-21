@@ -5,3 +5,8 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .DS_Store
+
+# deploy secrets stay on the servers
+deploy/**/secrets/
+deploy/**/users.yml
+deploy/**/notifications.txt

@@ -1,0 +1,55 @@
+# Authelia: login for *.hardansaeed.com sites behind the VPS Caddy.
+# Secrets come from files (see docker-compose.yml); users from users.yml (VPS only, never in git).
+theme: auto
+
+server:
+  address: tcp://0.0.0.0:9091/
+
+log:
+  level: info
+
+totp:
+  issuer: hardansaeed.com          # the name shown in the authenticator app
+
+webauthn:                          # passkeys: Face ID / Touch ID / security keys
+  disable: false
+  display_name: StocksVest
+  attestation_conveyance_preference: indirect
+  timeout: 60s
+
+authentication_backend:
+  password_reset:
+    disable: true                  # one user: reset on the VPS (scripts/edge-set-password.sh)
+  file:
+    path: /config/users.yml
+    password:
+      algorithm: argon2
+
+access_control:
+  default_policy: deny             # anything not listed below is refused
+  rules:
+    - domain: stocksvest.hardansaeed.com
+      policy: two_factor
+
+session:
+  name: hardansaeed_session
+  expiration: 12h                  # a session lasts at most this long
+  inactivity: 2h                   # ... or until this long without any request
+  remember_me: 1M                  # with "remember me" ticked at login
+  cookies:
+    - domain: hardansaeed.com      # one login for every *.hardansaeed.com site behind Authelia
+      authelia_url: https://auth.hardansaeed.com
+      default_redirection_url: https://stocksvest.hardansaeed.com
+
+regulation:                        # against password guessing
+  max_retries: 3
+  find_time: 2m
+  ban_time: 15m
+
+storage:
+  local:
+    path: /config/data/db.sqlite3  # registered passkeys / TOTP and login history
+
+notifier:
+  filesystem:                      # no mail server yet: one-time codes are written here (read it over SSH)
+    filename: /config/notifications.txt

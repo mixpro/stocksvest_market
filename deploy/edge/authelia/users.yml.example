@@ -1,0 +1,8 @@
+# Template only. The real users.yml lives on the VPS (/opt/stocksvest/edge/authelia/users.yml) and is written by
+# scripts/edge-set-password.sh, which asks for the password on your terminal and stores only its argon2 hash.
+users:
+  saeed:
+    displayname: Saeed
+    email: you@example.com
+    password: "$argon2id$v=19$m=65536,t=3,p=4$...hash..."
+    groups: [admins]

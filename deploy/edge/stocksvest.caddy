@@ -1,0 +1,22 @@
+# Imported by the VPS's /etc/caddy/Caddyfile:  import /opt/stocksvest/edge/stocksvest.caddy
+
+# The login page (Authelia).
+auth.hardansaeed.com {
+	reverse_proxy 127.0.0.1:9091
+}
+
+# StocksVest on tinkergw, reached over Tailscale. Every request is checked by Authelia first.
+stocksvest.hardansaeed.com {
+	route {
+		# Never trust identity headers sent by the client; only Authelia's answer sets them.
+		request_header -Remote-User
+		request_header -Remote-Groups
+		request_header -Remote-Email
+		request_header -Remote-Name
+		forward_auth 127.0.0.1:9091 {
+			uri /api/authz/forward-auth
+			copy_headers Remote-User Remote-Groups Remote-Email Remote-Name
+		}
+		reverse_proxy 100.126.3.52:8100
+	}
+}
