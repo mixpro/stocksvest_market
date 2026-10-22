@@ -502,6 +502,7 @@ def test_manual_orders_and_positions_use_live_prices(client, portfolio, broker, 
     sync(client, portfolio)
     pos = client.get(f"/v1/portfolios/{portfolio['id']}", headers=KEY).json()["positions"][0]
     assert (pos["price"], pos["priceSource"], pos["marketValue"]) == (10.5, "IBKR", 21.0)
+    assert sync(client, portfolio)["portfolio"]["positions"][0]["price"] == 10.5  # "Sync now" shows the same prices
     market.live = {"AAA": {"bid": 10.0, "ask": 11.4, "last": 10.3, "price": 10.7}}  # wide after-hours quote
     pos = client.get(f"/v1/portfolios/{portfolio['id']}", headers=KEY).json()["positions"][0]
     assert pos["price"] == 10.3  # the last trade, like the broker shows it, not the 10.7 midpoint

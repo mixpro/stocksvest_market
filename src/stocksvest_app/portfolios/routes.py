@@ -306,7 +306,7 @@ def router(ctx: AppContext) -> APIRouter:
             if body.amount > free:
                 raise HTTPException(422, f"only {free:.2f} of the account is unassigned")
             store.change_cash(conn, portfolio_id, "ALLOCATE", body.amount, allocated=body.amount, note=body.note)
-        return summary(conn, store.get_portfolio(conn, portfolio_id))
+        return summary(conn, store.get_portfolio(conn, portfolio_id), live=True)
 
     @r.post("/{portfolio_id}/capital/withdraw")
     def withdraw(portfolio_id: str, body: CapitalChangeIn, conn: Conn):
@@ -323,7 +323,7 @@ def router(ctx: AppContext) -> APIRouter:
             if body.amount > free:
                 raise HTTPException(422, f"only {free:.2f} is unallocated in this portfolio")
             store.change_cash(conn, portfolio_id, "WITHDRAW", -body.amount, allocated=-body.amount, note=body.note)
-        return summary(conn, store.get_portfolio(conn, portfolio_id))
+        return summary(conn, store.get_portfolio(conn, portfolio_id), live=True)
 
     @r.get("/{portfolio_id}/ledger")
     def ledger(portfolio_id: str, conn: Conn, limit: Annotated[int, Query(ge=1, le=1000)] = 200):
@@ -347,7 +347,7 @@ def router(ctx: AppContext) -> APIRouter:
         """
         p = load(conn, portfolio_id)
         result = run_sync(conn, account_of(conn, p))
-        return {"sync": result, "portfolio": summary(conn, store.get_portfolio(conn, portfolio_id))}
+        return {"sync": result, "portfolio": summary(conn, store.get_portfolio(conn, portfolio_id), live=True)}
 
     @r.get("/{portfolio_id}/orders")
     def orders(portfolio_id: str, conn: Conn, status: str | None = None,
