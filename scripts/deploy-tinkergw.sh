@@ -34,13 +34,13 @@ fi
 
 echo "== run files"
 ssh "$HOST" "mkdir -p ~/$DIR/data ~/$DIR/grafana ~/$DIR/backups"
-scp -q deploy/tinkergw/docker-compose.yml deploy/tinkergw/backup.sh "$HOST:$DIR/"
+scp -q deploy/tinkergw/docker-compose.yml deploy/tinkergw/backup.sh deploy/tinkergw/gateway-check.sh "$HOST:$DIR/"
 scp -q -r grafana/provisioning grafana/dashboards "$HOST:$DIR/grafana/"
 
 ssh "$HOST" TAG="$TAG" DIR="$DIR" bash -s <<'REMOTE'
 set -euo pipefail
 cd ~/"$DIR"
-chmod +x backup.sh
+chmod +x backup.sh gateway-check.sh
 [ -s .env ] || { echo "!! ~/$DIR/.env is missing: copy it from the Mac first (see deploy/README.md)"; exit 1; }
 if grep -q '^STOCKSVEST_TAG=' .env; then
   sed -i "s/^STOCKSVEST_TAG=.*/STOCKSVEST_TAG=$TAG/" .env
@@ -64,6 +64,11 @@ LINE="15 3 * * * $HOME/$DIR/backup.sh >> $HOME/$DIR/backups/backup.log 2>&1"
 if ! crontab -l 2>/dev/null | grep -qF "$DIR/backup.sh"; then
   { crontab -l 2>/dev/null || true; echo "$LINE"; } | crontab -   # no crontab yet: start one
   echo "== nightly backup installed (03:15)"
+fi
+LINE="0 7 * * * $HOME/$DIR/gateway-check.sh >> $HOME/$DIR/backups/gateway-check.log 2>&1"
+if ! crontab -l 2>/dev/null | grep -qF "$DIR/gateway-check.sh"; then
+  { crontab -l 2>/dev/null || true; echo "$LINE"; } | crontab -
+  echo "== daily IB Gateway support check installed (07:00)"
 fi
 docker image ls stocksvest --format '  kept image: {{.Tag}} ({{.CreatedSince}})' | head -5
 REMOTE

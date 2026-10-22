@@ -56,11 +56,36 @@ resolved.
 | | no market data sync for 30 min during the regular session | right away |
 | | live prices (IBKR) disconnected during the regular session | after 10 min |
 | | **daily summary**: portfolios, budgets, runs, orders, fills, open problems | 30 min after each close |
+| tinkergw (`gateway-check.sh`, cron daily 07:00 UTC) | the IB Gateway version stops being supported (IBKR's API message 2172) | 21, 7 and 2 days before, once each |
 | the VPS (`watch.py`, cron every 5 min) | the app on tinkergw doesn't answer (power, internet, Tailscale, container) | after 15 min |
 | | last night's backup didn't arrive | at 05:00 UTC |
 
 `ALERTS_ENABLED=true` is set for the app in `deploy/tinkergw/docker-compose.yml`; it's off everywhere else.
 Test the VPS side with `ssh root@65.21.180.156 /opt/stocksvest-market/watch.py --test`.
+
+## Upgrading the IB Gateway
+
+IBKR announces when a gateway version stops being supported (API message 2172, e.g. "1045.1 … desupported on
+20261215 … minimum 1050.1"); `gateway-check.sh` emails 21, 7 and 2 days before. Gateway versions live side by side
+in `~/Jts/ibgateway/<NNNN>` and IBC starts the one in `~/ibc/gatewaystart.sh` (`TWS_MAJOR_VRSN`), so no `sudo` is
+needed and the old version stays for rollback. Do it when the markets are closed, logged out of IBKR elsewhere.
+
+1. **Version:** IBKR's current versions are in
+   `https://download2.interactivebrokers.com/installers/ibgateway/{stable,latest}-standalone/version.json`; take stable
+   unless it is below IBKR's minimum.
+2. **Download** `ibgateway-stable-standalone-linux-x64.sh` to tinkergw; compare its size with the `Content-Length` of
+   the same URL (`curl -sI …`).
+3. **Back up:** `tar -czf ~/gateway-backup-$(date +%F).tar.gz -C ~ Jts ibc`
+4. **Install next to the current one:** `sh ./<installer>.sh -q -dir ~/Jts/ibgateway/<NNNN>` (the running gateway
+   isn't touched; IBC 3.24.2 supports gateway 10.48 and newer).
+5. **Switch:** `cp ~/ibc/gatewaystart.sh ~/ibc/gatewaystart.sh.bak-<old>`, set `TWS_MAJOR_VRSN=<NNNN>`, then stop the
+   gateway's Java process (`kill $(pgrep -u saeed -f "i4j_jres.*java|ibgateway/.*/jre/bin/java")`); systemd starts it
+   again in ~30 s.
+6. **Check:** `~/ibc/logs/ibc-*_GATEWAY-<NNNN>_*.txt` shows "Login has completed"; port 4002 listens; `TrustedIPs=127.0.0.1`
+   in `~/Jts/jts.ini`; the bridge's `/health` says `ibConnected: true`; the market service's `/v1/status` says
+   `liveQuotes.connected: true`; `gateway-check.sh --dry-run` reports no support end date.
+7. **Roll back** if needed: restore `gatewaystart.sh.bak-<old>` and restart the same way. Remove the old version's
+   folder and the backup a week later.
 
 ## Login
 
