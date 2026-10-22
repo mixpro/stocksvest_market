@@ -135,20 +135,24 @@ def _skip(intent: dict, reason: str, detail: str | None = None) -> dict:
     return intent
 
 
-def select(action: PlaceOrderAction, matched: list[str], ctx: PlanContext) -> dict:
+def select(action: PlaceOrderAction, matched: list[str], ctx: PlanContext, guards: OrderGuards | None = None) -> dict:
     """Which matched symbols the action acts on, in rank order. Needs no prices beyond the ranking key, so the
     runner can fetch live quotes for exactly these before size().
 
     Sells consider only symbols the budget holds. TOP_N ranks by action.selection.rankBy (on the snapshots the
     context has: the delayed market data) and keeps the best topN; ALL_MATCHES keeps every candidate, sorted.
+    A TOP_N buy with skipBuyIfHeld leaves out what the budget already holds or has a buy open for *before* taking
+    the top N, so "top 3" means the 3 best it doesn't own yet.
 
     Args:
         action: the PLACE_ORDER action.
         matched: matched tickers from the run's filters.
-        ctx: PlanContext (holdings and snapshots; not changed).
+        ctx: PlanContext (holdings, open buys and snapshots; not changed).
+        guards: the automation's OrderGuards (skipBuyIfHeld); None = no guards.
 
     Returns:
-        {"symbols": tickers in rank order, "notHeld": matches a SELL can't use}.
+        {"symbols": tickers in rank order, "notHeld": matches a SELL can't use,
+        "alreadyHeld": matches a TOP_N buy left out because the budget holds them}.
 
     Used by: plan, runner._place_orders.
     """
@@ -158,6 +162,12 @@ def select(action: PlaceOrderAction, matched: list[str], ctx: PlanContext) -> di
         not_held = len(matched) - len(candidates)
     else:
         candidates, not_held = list(matched), 0
+    already_held = []
+    if (action.side == "BUY" and action.selection.mode == SelectionMode.TOP_N and guards is not None
+            and guards.skipBuyIfHeld):
+        held = {t for t, h in ctx.holdings.items() if h.quantity > 0} | ctx.open_buys
+        already_held = sorted(t for t in candidates if t in held)
+        candidates = [t for t in candidates if t not in held]
 
     # Rank and select.
     sel = action.selection
@@ -167,7 +177,7 @@ def select(action: PlaceOrderAction, matched: list[str], ctx: PlanContext) -> di
         candidates = [t for t, _ in with_value + [x for x in valued if x[1] is None]][: sel.topN]
     else:
         candidates = sorted(candidates)
-    return {"symbols": candidates, "notHeld": not_held}
+    return {"symbols": candidates, "notHeld": not_held, "alreadyHeld": already_held}
 
 
 def market_blocked(guards: OrderGuards, ctx: PlanContext) -> tuple[str, str] | None:
@@ -330,5 +340,5 @@ def plan(action: PlaceOrderAction, guards: OrderGuards, matched: list[str], ctx:
 
     Used by: tests and callers that plan without live prices (the runner calls select and size itself).
     """
-    chosen = select(action, matched, ctx)
+    chosen = select(action, matched, ctx, guards)
     return {"intents": size(action, guards, chosen["symbols"], ctx, broker), "notHeld": chosen["notHeld"]}

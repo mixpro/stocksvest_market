@@ -251,7 +251,7 @@ curl -X POST -H "X-API-Key: $APP_KEY" -H "Content-Type: application/json" \
 | `trailPercent` | For `TRAILING_STOP` |
 | `timeInForce` | `DAY`, `GTC`, `IOC`, `FOK`, `OPG`, `CLS` (whatever the broker supports) |
 | `extendedHours` | Only with `LIMIT` + `DAY` |
-| `selection` | `ALL_MATCHES`, or `TOP_N` with `topN` and `rankBy`: `DAILY_CHANGE_PERCENT`, `LAST_PRICE`, `DAILY_VOLUME`, `POSITION_VALUE`, `UNREALIZED_PNL_PERCENT` |
+| `selection` | `ALL_MATCHES`, or `TOP_N` with `topN` and `rankBy`: `DAILY_CHANGE_PERCENT`, `LAST_PRICE`, `DAILY_VOLUME`, `POSITION_VALUE`, `UNREALIZED_PNL_PERCENT`. A `TOP_N` buy with `skipBuyIfHeld` leaves out what the budget holds or has a buy open for **before** taking the top N ("top 3" = the 3 best it doesn't own yet); they are listed as `alreadyHeld` in the run |
 | `sizings` | One sizing for every symbol, or (`TOP_N`) one per rank. Buy: `QUANTITY`, `CASH_AMOUNT`, `PERCENT_OF_BUDGET`. Sell: `QUANTITY`, `PERCENT_OF_POSITION` |
 
 **Rules:**

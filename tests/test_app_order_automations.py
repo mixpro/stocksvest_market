@@ -342,3 +342,27 @@ def test_top_n_quotes_only_the_selected_symbols(client, setup, market):
     r = run(client, make(client, setup, action), preview=True)
     assert [c for c in market.calls if c[0] == "quotes"] == [("quotes", ["AAA", "CCC"])]  # the top 2, not all 4
     assert [(i["ticker"], i["priceSource"]) for i in section(r)["intents"]] == [("AAA", "IBKR"), ("CCC", "DELAYED")]
+
+
+def test_top_n_buy_skips_what_the_budget_already_holds(client, setup, broker):
+    # Daily change ranking: AAA +11.1%, CCC 0%, BBB -16.7%. Buy the top 1.
+    action = order_action(selection={"mode": "TOP_N", "topN": 1, "rankBy": "DAILY_CHANGE_PERCENT"},
+                          sizings=[{"mode": "QUANTITY", "value": 2}])
+    a = make(client, setup, action)
+    first = run(client, a)
+    assert intents(first) == [("AAA", 2, "PLACE", None)]
+    fill_all(broker)
+    second = run(client, a)  # AAA is held now: the next best (CCC) is bought instead of skipping AAA
+    assert intents(second) == [("CCC", 2, "PLACE", None)] and section(second)["alreadyHeld"] == ["AAA"]
+    third = run(client, a)  # CCC has an open buy (not filled yet): it is left out too
+    assert intents(third) == [("BBB", 2, "PLACE", None)] and section(third)["alreadyHeld"] == ["AAA", "CCC"]
+
+
+def test_top_n_still_counts_held_symbols_when_skip_buy_if_held_is_off(client, setup, broker):
+    action = order_action(selection={"mode": "TOP_N", "topN": 1, "rankBy": "DAILY_CHANGE_PERCENT"},
+                          sizings=[{"mode": "QUANTITY", "value": 2}])
+    a = make(client, setup, action, guards={"skipBuyIfHeld": False})
+    run(client, a)
+    fill_all(broker)
+    again = run(client, a)
+    assert intents(again) == [("AAA", 2, "PLACE", None)] and "alreadyHeld" not in section(again)

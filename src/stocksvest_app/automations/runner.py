@@ -481,11 +481,13 @@ def _place_orders(ctx, conn, automation, tradings: list[tuple[dict, "Trading | N
             for t, s in snapshots.items():
                 plan_ctx.snapshots.setdefault(t, s)  # the context may come from an earlier action
             # Select which symbols to act on, quote exactly those live, then price, size and check them.
-            chosen = planner.select(action, tickers, plan_ctx)
+            chosen = planner.select(action, tickers, plan_ctx, trading.guards)
             if live is not None and not planner.market_blocked(trading.guards, plan_ctx):
                 live.merge_into(plan_ctx.snapshots, chosen["symbols"][:100])
             out = {"intents": planner.size(action, trading.guards, chosen["symbols"], plan_ctx, trading.broker),
                    "notHeld": chosen["notHeld"]}
+            if chosen["alreadyHeld"]:
+                sub["alreadyHeld"] = chosen["alreadyHeld"]  # left out of a TOP_N buy before ranking
         except Exception as e:  # one budget failing does not stop the others
             log.exception("automation %s: planning for budget %s failed", automation["id"], trading.budget_id)
             sub.update(status="FAILED", error=str(e))

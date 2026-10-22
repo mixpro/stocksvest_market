@@ -426,7 +426,7 @@ function showRun(run) {
     ...(r.actions || []).filter((a) => a.detail).map((a) => el("p", { class: "muted" }, `${a.index + 1}. ${a.detail}`)),
     ...(r.actions || []).flatMap((a) => (a.budgets || []).map((b) => el("div", {},
       el("h3", {}, `${a.index + 1}. ${a.side === "SELL" ? "Sell" : "Buy"} orders · ${b.name}`,
-        el("span", { class: "muted" }, ` · ${b.intents.filter((x) => x.decision === "PLACE").length} placed${b.notHeld ? ` · ${b.notHeld} matches not held` : ""}`)),
+        el("span", { class: "muted" }, ` · ${b.intents.filter((x) => x.decision === "PLACE").length} placed${b.notHeld ? ` · ${b.notHeld} matches not held` : ""}${b.alreadyHeld?.length ? ` · already held, left out: ${b.alreadyHeld.join(", ")}` : ""}`)),
       b.error ? el("div", { class: "down" }, b.error) : null,
       b.intents.length ? el("table", {},
         el("thead", {}, el("tr", {}, ...["#", "Symbol", "Qty", "Price", "Cost", "Decision", "Why"].map((h) => el("th", {}, h)))),
