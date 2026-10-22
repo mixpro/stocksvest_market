@@ -38,6 +38,9 @@ session:
   expiration: 12h                  # a session lasts at most this long
   inactivity: 2h                   # ... or until this long without any request
   remember_me: 1M                  # with "remember me" ticked at login
+  redis:                           # sessions kept in Redis: an Authelia restart doesn't log you out
+    host: redis
+    port: 6379
   cookies:
     - domain: hardansaeed.com      # one login for every *.hardansaeed.com site behind Authelia
       authelia_url: https://auth.hardansaeed.com

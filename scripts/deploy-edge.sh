@@ -11,12 +11,15 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)/deploy/edge"
 AUTHELIA_IMAGE=authelia/authelia:4.39.27
 
 echo "== copying run files to $VPS:$DIR"
-ssh "$VPS" "mkdir -p $DIR/authelia/data $DIR/secrets && chmod 700 $DIR/secrets"
+ssh "$VPS" "mkdir -p $DIR/authelia/data $DIR/secrets $DIR/redis && chmod 700 $DIR/secrets $DIR/redis"
+# Fingerprint of what Authelia reads at startup (file hashes only), to restart it only when it changed.
+fingerprint='sha256sum authelia/configuration.yml docker-compose.yml 2>/dev/null | cut -d" " -f1 | tr -d "\n"'
+OLD_SUM="$(ssh "$VPS" "cd $DIR && $fingerprint")"
 scp -q "$HERE/docker-compose.yml" "$HERE/stocksvest.caddy" "$VPS:$DIR/"
 scp -q "$HERE/watch.py" "$VPS:$DIR/../watch.py"
 scp -q "$HERE/authelia/configuration.yml" "$VPS:$DIR/authelia/"
 
-ssh "$VPS" DIR="$DIR" IMAGE="$AUTHELIA_IMAGE" bash -s <<'REMOTE'
+ssh "$VPS" DIR="$DIR" IMAGE="$AUTHELIA_IMAGE" OLD_SUM="$OLD_SUM" bash -s <<'REMOTE'
 set -euo pipefail
 cd "$DIR"
 
@@ -43,9 +46,15 @@ docker run --rm -v "$DIR/authelia:/config" -v "$DIR/secrets:/secrets:ro" \
   -e AUTHELIA_NOTIFIER_SMTP_PASSWORD_FILE=/secrets/smtp_password --env-file .env \
   "$IMAGE" authelia validate-config --config /config/configuration.yml
 
-echo "== starting Authelia (restarted: it reads configuration.yml only at startup; logins in memory are reset)"
+echo "== starting Authelia and Redis"
 docker compose up -d
-docker compose restart authelia
+NEW_SUM="$(sha256sum authelia/configuration.yml docker-compose.yml | cut -d" " -f1 | tr -d "\n")"
+if [ "$NEW_SUM" != "$OLD_SUM" ]; then  # Authelia reads its configuration only at startup
+  docker compose restart authelia
+  echo "  configuration changed: Authelia restarted (logins are kept in Redis)"
+else
+  echo "  configuration unchanged: Authelia not restarted"
+fi
 for i in $(seq 1 30); do
   curl -fs -o /dev/null http://127.0.0.1:9091/api/health && break
   sleep 2

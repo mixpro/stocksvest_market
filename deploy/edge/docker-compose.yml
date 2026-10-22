@@ -1,4 +1,4 @@
-# The VPS edge: Authelia, the login service Caddy asks before forwarding a request.
+# The VPS edge: Authelia, the login service Caddy asks before forwarding a request, and Redis for its sessions.
 # Runs from /opt/stocksvest-market/edge on the VPS (copied by scripts/deploy-edge.sh). Caddy itself runs on the host.
 services:
   authelia:
@@ -17,4 +17,16 @@ services:
       - ./secrets:/secrets:ro
     ports:
       - "127.0.0.1:9091:9091"         # only Caddy on the same host reaches it
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Logins live here instead of in Authelia's memory, so restarting Authelia doesn't log anyone out.
+  # Only Authelia reaches it (no published port); the session data is encrypted with Authelia's session secret.
+  redis:
+    image: redis:7.4.10-alpine
+    container_name: stocksvest-authelia-redis
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - ./redis:/data                 # survives Redis restarts too
     restart: unless-stopped

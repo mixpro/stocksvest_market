@@ -68,6 +68,8 @@ Test the VPS side with `ssh root@65.21.180.156 /opt/stocksvest-market/watch.py -
 - One session covers every `*.hardansaeed.com` site behind Authelia: 12 h at most, 2 h without activity, 1 month
   with "remember me".
 - 3 wrong passwords within 2 minutes block the user for 15 minutes.
+- Logins are kept in a small Redis next to Authelia (`stocksvest-authelia-redis`, no published port), so restarting
+  Authelia doesn't log you out. `deploy-edge.sh` restarts Authelia only when its configuration or compose file changed.
 - One-time codes are emailed to the user's address (users.yml) from `StocksVest <alerts@stocksvest.net>` through
   Brevo (`smtp-relay.brevo.com:587`; `stocksvest.net` is authenticated there with DKIM). The SMTP login and key live
   only on the servers: `scripts/set-smtp-key.sh` asks for them and writes `edge/secrets/smtp_password` + `edge/.env`
