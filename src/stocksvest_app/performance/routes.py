@@ -28,6 +28,21 @@ def _json(values: dict) -> dict:
             for k, v in values.items()}
 
 
+def _with_returns(point: dict) -> dict:
+    """A portfolio point plus its returns: totalReturn (equity - capital), totalReturnPct (of capital) and
+    unrealizedPct (of the open positions' cost), like the portfolio summary; a percent is None without a base.
+
+    Args:
+        point: the point in API form (allocated, equity, invested, unrealizedPnL).
+
+    Used by: router (portfolio history points and current values).
+    """
+    gain = point["equity"] - point["allocated"]
+    return {**point, "totalReturn": round(gain, 2),
+            "totalReturnPct": round(gain / point["allocated"] * 100, 2) if point["allocated"] else None,
+            "unrealizedPct": round(point["unrealizedPnL"] / point["invested"] * 100, 2) if point["invested"] else None}
+
+
 def router(ctx: AppContext) -> APIRouter:
     """The history routes (/v1/portfolios/{id}/history and /snapshot, /v1/budgets/{id}/performance, /v1/broker-accounts/{id}/equity-history).
 
@@ -56,7 +71,8 @@ def router(ctx: AppContext) -> APIRouter:
     def portfolio_history(portfolio_id: str, conn: Conn, start: str | None = None, end: str | None = None,
                           kind: Literal["INTERVAL", "CLOSE", "MANUAL"] | None = None):
         """Snapshots oldest first (every 15 min in the regular session, end of day, on request), plus `current`:
-        the same values right now. Use kind=CLOSE for one point per day.
+        the same values right now. Each has its returns too (totalReturn, totalReturnPct, unrealizedPct).
+        Use kind=CLOSE for one point per day.
         \f
         Args:
             portfolio_id: the portfolio's id (path).
@@ -67,9 +83,9 @@ def router(ctx: AppContext) -> APIRouter:
         """
         p = portfolio(conn, portfolio_id)
         now = datetime.now(timezone.utc)
-        return {"points": store.portfolio_points(conn, portfolio_id, start, end, kind),
-                "current": {"at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                            **_json(snapshots.portfolio_values(ctx, conn, p))}}
+        return {"points": [_with_returns(x) for x in store.portfolio_points(conn, portfolio_id, start, end, kind)],
+                "current": _with_returns({"at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                          **_json(snapshots.portfolio_values(ctx, conn, p))})}
 
     @r.post("/v1/portfolios/{portfolio_id}/snapshot", tags=["history"])
     def snapshot_now(portfolio_id: str, conn: Conn):

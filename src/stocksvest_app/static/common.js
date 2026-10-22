@@ -119,12 +119,16 @@ async function start(page, main) {
 const SERIES_COLORS = ["#2563eb", "#16a34a", "#f59e0b", "#9333ea", "#dc2626"];
 
 // Line chart with one or more series: [{name, data: [{at, value}], scale?: "left"|"right"}]. Needs lightweight-charts.
-function lineChart(container, series, { height = 260 } = {}) {
+// series: [{ name, data: [{ at, value, ... }], scale?: "left", hover?: (point) => text }].
+// format: axis/label text of a value (e.g. a percent); zeroLine: dotted line at 0. Hovering shows each series' value
+// at that time (its hover text when given) next to the legend.
+function lineChart(container, series, { height = 260, format = null, zeroLine = false } = {}) {
   container.replaceChildren();
   const dark = matchMedia("(prefers-color-scheme: dark)").matches;
   const box = el("div", { style: `height:${height}px` });
   const legend = el("div", { class: "legend" });
-  container.append(legend, box);
+  const readout = el("div", { class: "muted legend" });
+  container.append(legend, box, readout);
   const chart = LightweightCharts.createChart(box, {
     autoSize: true,
     layout: { background: { color: "transparent" }, textColor: dark ? "#e6e8eb" : "#1d2330" },
@@ -133,15 +137,25 @@ function lineChart(container, series, { height = 260 } = {}) {
     leftPriceScale: { visible: series.some((s) => s.scale === "left") },
     rightPriceScale: { visible: true },
   });
-  series.forEach((s, i) => {
+  const lines = series.map((s, i) => {
     const color = SERIES_COLORS[i % SERIES_COLORS.length];
     const line = chart.addLineSeries({ color, lineWidth: 2, priceScaleId: s.scale === "left" ? "left" : "right",
-      lastValueVisible: true, priceLineVisible: false });
+      lastValueVisible: true, priceLineVisible: false,
+      ...(format ? { priceFormat: { type: "custom", formatter: format, minMove: 0.01 } } : {}) });
+    if (zeroLine && i === 0) line.createPriceLine({ price: 0, color: dark ? "#6b7280" : "#9ca3af", lineWidth: 1, lineStyle: 1, axisLabelVisible: false });
     // One value per second at most, oldest first (the chart library requires it).
     const seen = new Map();
-    for (const p of s.data) if (p.value !== null && p.value !== undefined) seen.set(Math.floor(new Date(p.at).getTime() / 1000), p.value);
-    line.setData([...seen.entries()].sort((a, b) => a[0] - b[0]).map(([time, value]) => ({ time, value })));
+    for (const p of s.data) if (p.value !== null && p.value !== undefined) seen.set(Math.floor(new Date(p.at).getTime() / 1000), p);
+    line.setData([...seen.entries()].sort((a, b) => a[0] - b[0]).map(([time, p]) => ({ time, value: p.value })));
     legend.append(el("span", { style: `color:${color}` }, `● ${s.name}`));
+    return { s, line, seen, color };
+  });
+  chart.subscribeCrosshairMove((param) => {
+    const hits = param.time ? lines.filter((l) => l.seen.has(param.time)) : [];
+    if (!hits.length) return readout.replaceChildren();
+    readout.replaceChildren(el("span", {}, new Date(param.time * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })),
+      ...hits.map((l) => { const p = l.seen.get(param.time);
+        return el("span", { style: `color:${l.color}` }, `${l.s.name} ${l.s.hover ? l.s.hover(p) : format ? format(p.value) : money(p.value)}`); }));
   });
   chart.timeScale().fitContent();
   return chart;

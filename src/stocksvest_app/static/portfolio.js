@@ -1,8 +1,9 @@
 // Portfolio page: broker accounts, portfolios with their capital, history chart, positions (by budget and buyer),
 // budgets with their automations, manual orders, orders and fills.
 
-const pf = { accounts: [], portfolios: [], automations: {}, selectedId: null, data: null, range: "1M" };
+const pf = { accounts: [], portfolios: [], automations: {}, selectedId: null, data: null, range: "1M", view: "Value" };
 const RANGES = [["1W", 7], ["1M", 30], ["3M", 90], ["1Y", 365], ["All", null]];
+const VIEWS = [["Value"], ["Return %"]];
 const ALPACA_PERIOD = { "1W": "1W", "1M": "1M", "3M": "3M", "1Y": "1A", All: "1A" };
 
 function setError(message) {
@@ -91,8 +92,22 @@ async function drawHistory() {
   if (!box) return;
   const days = Object.fromEntries(RANGES)[pf.range];
   const start = sinceDays(days);
-  const { points, current } = await api(`/v1/portfolios/${pf.selectedId}/history${start ? `?start=${start}` : ""}`);
+  const returns = pf.view === "Return %";
+  // Return % over a month or more: one point per day (the close), so the line stays readable.
+  const query = new URLSearchParams({ ...(start ? { start } : {}), ...(returns && pf.range !== "1W" ? { kind: "CLOSE" } : {}) });
+  const { points, current } = await api(`/v1/portfolios/${pf.selectedId}/history?${query}`);
   const all = [...points, current];
+  if (returns) {
+    const pctText = (v) => `${v > 0 ? "+" : ""}${Number(v).toFixed(2)}%`;
+    lineChart(box, [
+      { name: "Total return", data: all.map((p) => ({ at: p.at, value: p.totalReturnPct, gain: p.totalReturn })),
+        hover: (p) => `${pctText(p.value)} (${signed(p.gain)})` },
+      { name: "Open positions", data: all.map((p) => ({ at: p.at, value: p.unrealizedPct, gain: p.unrealizedPnL })),
+        hover: (p) => `${pctText(p.value)} (${signed(p.gain)})` },
+    ], { format: pctText, zeroLine: true });
+    if (points.length < 2) box.append(el("p", { class: "muted" }, "History builds up from now: one point after each close (every 15 minutes on 1W)."));
+    return;
+  }
   const series = [
     { name: "Equity", data: all.map((p) => ({ at: p.at, value: p.equity })) },
     { name: "Cash", data: all.map((p) => ({ at: p.at, value: p.cash })) },
@@ -180,8 +195,9 @@ function render() {
       el("dt", {}, "Last sync"), el("dd", {}, sync ? `${when(sync.ranAt)}${sync.error ? ` · ${sync.error}` : ""}` : "—")),
     capitalControls(p),
     el("div", { class: "section-head" }, el("h3", {}, "History"),
-      el("span", {}, rangeButtons(RANGES, pf.range, (d, label) => { pf.range = label; render(); drawHistory(); }), " ",
-        el("label", { class: "muted" }, el("input", { type: "checkbox", id: "with-account", onchange: () => guard(drawHistory) }), " whole account"))),
+      el("span", {}, rangeButtons(VIEWS, pf.view, (_, label) => { pf.view = label; render(); drawHistory(); }), " ",
+        rangeButtons(RANGES, pf.range, (d, label) => { pf.range = label; render(); drawHistory(); }), " ",
+        pf.view === "Value" ? el("label", { class: "muted" }, el("input", { type: "checkbox", id: "with-account", onchange: () => guard(drawHistory) }), " whole account") : null)),
     el("div", { id: "history", class: "chart-box" }),
     sync?.mismatches?.length ? el("div", { class: "error" }, "Differences with the broker:\n" +
       sync.mismatches.map((m) => `${m.kind} ${m.symbol || ""} app ${m.appValue ?? ""} broker ${m.brokerValue ?? ""} ${m.detail || ""}`).join("\n")) : null,

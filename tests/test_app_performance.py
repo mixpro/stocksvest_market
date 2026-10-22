@@ -71,6 +71,8 @@ def test_portfolio_history_values(client, broker, portfolio, budget):
     assert snap["unallocated"] == 4000.0  # 4920 cash - 920 still in the budget
     hist = client.get(f"/v1/portfolios/{portfolio['id']}/history", headers=KEY).json()
     assert [p["kind"] for p in hist["points"]] == ["MANUAL"] and hist["current"]["equity"] == 5020.0
+    for p in (hist["points"][0], hist["current"]):  # +20 on 5,000 capital; +20 on 80 of cost
+        assert (p["totalReturn"], p["totalReturnPct"], p["unrealizedPct"]) == (20.0, 0.4, 25.0)
     assert client.get(f"/v1/portfolios/{portfolio['id']}/history?kind=CLOSE", headers=KEY).json()["points"] == []
 
 
