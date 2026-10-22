@@ -93,7 +93,7 @@ def test_market_schedule_follows_the_trading_calendar():
 
 
 def test_schedule_validation():
-    for bad in ({"type": "INTERVAL", "every": 1, "unit": "MINUTE"},
+    for bad in ({"type": "INTERVAL", "every": 0, "unit": "MINUTE"},
                 {"type": "DAILY", "atTimes": ["10:00"], "timezone": "Mars/Base"},
                 {"type": "ONCE", "at": "2026-10-20T09:40:00"},
                 {"type": "MARKET", "anchor": "REGULAR_OPEN", "repeatUntil": "REGULAR_CLOSE"},
@@ -171,8 +171,14 @@ def test_validation(client, tech_filter):
     order = automation_body(tech_filter["id"], actions=[{"type": "ADD_TO_WATCHLIST"}])
     r = client.post("/v1/automations", headers=KEY, json=order)
     assert r.status_code == 422 and "not available yet" in r.text
-    fast = automation_body(tech_filter["id"], schedules=[{"type": "INTERVAL", "every": 1, "unit": "MINUTE"}])
-    assert "5 minutes" in client.post("/v1/automations", headers=KEY, json=fast).text
+    for schedule in ({"type": "INTERVAL", "every": 1, "unit": "MINUTE"},
+                     {"type": "MARKET", "anchor": "REGULAR_OPEN", "repeatEveryMinutes": 1}):
+        r = client.post("/v1/automations", headers=KEY, json=automation_body(tech_filter["id"], schedules=[schedule]))
+        assert r.status_code == 201, r.text  # every minute is allowed
+    for schedule in ({"type": "INTERVAL", "every": 0, "unit": "MINUTE"},
+                     {"type": "MARKET", "anchor": "REGULAR_OPEN", "repeatEveryMinutes": 0}):
+        r = client.post("/v1/automations", headers=KEY, json=automation_body(tech_filter["id"], schedules=[schedule]))
+        assert r.status_code == 422
 
 
 def test_preview_and_run_now(client, tech_filter):

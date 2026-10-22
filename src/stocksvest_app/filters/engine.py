@@ -1,9 +1,11 @@
 """Evaluate filters: resolve inputs (union), then narrow the symbols with each action in order."""
 
+import logging
 import sqlite3
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+from ..market.client import MarketError
 from ..market.data import MarketData
 from ..portfolios import store as portfolios_store
 from . import store
@@ -24,6 +26,7 @@ from .models import (
 )
 
 ET = ZoneInfo("America/New_York")  # Used by: Evaluator._last_close (today's date in New York)
+log = logging.getLogger(__name__)
 
 
 class EngineError(ValueError):
@@ -153,6 +156,8 @@ class Evaluator:
         self.now = now or datetime.now(timezone.utc)
         self._filter_results: dict[str, set[str]] = {}
         self._snapshots: dict[str, dict] = {}
+        self._live: dict[str, float] = {}  # ticker -> IBKR live last trade
+        self._live_asked: set[str] = set()
         self._session_open: bool | None = None
 
     # -- inputs
@@ -284,8 +289,30 @@ class Evaluator:
         """
         return set(self._positions(portfolio_ids))
 
+    def _live_last(self, tickers: set[str]) -> dict[str, float]:
+        """IBKR live last trades for these tickers, asked once per evaluation; tickers without one (no live quote,
+        no trade yet today, market service down) are left out so callers use the delayed price.
+
+        Args:
+            tickers: tickers needed.
+
+        Used by: _unrealized_pnl.
+        """
+        missing = tickers - self._live_asked
+        if missing:
+            self._live_asked |= missing
+            try:
+                quotes = self.market.live_quotes(missing)
+            except MarketError as e:
+                log.warning("live quotes unavailable for filters, using delayed prices: %s", e.detail)
+                quotes = {}
+            self._live.update({t: q["last"] for t, q in quotes.items()
+                               if q.get("source") == "IBKR" and q.get("last") is not None})
+        return {t: self._live[t] for t in tickers if t in self._live}
+
     def _unrealized_pnl(self, action: UnrealizedPnlAction, symbols: set[str]) -> set[str]:
-        """Keep the held symbols whose unrealized gain/loss at the latest price matches the action.
+        """Keep the held symbols whose unrealized gain/loss matches the action, at the IBKR live last trade when
+        there is one (like the portfolio page), else the delayed latest price.
 
         Args:
             action: the UNREALIZED_PNL action.
@@ -295,9 +322,10 @@ class Evaluator:
         """
         held = {t: p for t, p in self._positions(action.portfolioIds).items() if t in symbols}
         snaps = self._snaps(set(held))
+        live = self._live_last(set(held))
         out = set()
         for t, p in held.items():
-            price = snaps.get(t, {}).get("latestPrice")
+            price = live.get(t, snaps.get(t, {}).get("latestPrice"))
             if price is None:
                 continue
             pnl = float(p["quantity"]) * price - float(p["costBasis"])

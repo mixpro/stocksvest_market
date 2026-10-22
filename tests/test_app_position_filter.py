@@ -17,11 +17,15 @@ def broker():
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch, broker):
+def market():
+    return FakeMarket()
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch, broker, market):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("APP_API_KEYS", "app-key")
     monkeypatch.setenv("APP_RUN_SCHEDULER", "false")
-    market = FakeMarket()
     with TestClient(create_app(Settings(), market_factory=lambda s: market, broker_factory=lambda a: broker)) as c:
         yield c
 
@@ -148,6 +152,24 @@ def test_unrealized_pnl_combines_the_portfolios_shares(client, portfolios, broke
     client.post(f"/v1/portfolios/{a['id']}/sync", headers=KEY)
     assert tickers(preview(client, [pnl([a["id"]], "MORE_THAN", 50)])) == {"BBB", "CCC"}
     assert tickers(preview(client, [pnl([a["id"], b["id"]], "BETWEEN", -21, max_value=-19)])) == {"CCC"}
+
+
+def test_unrealized_pnl_uses_live_last_trades(client, portfolios, market, monkeypatch):
+    a, b = portfolios
+    both = (a["id"], b["id"])
+    market.live = {"AAA": {"bid": 8.9, "ask": 9.1, "last": 9.0, "price": 9.0},  # live -10%, delayed 0%
+                   "BBB": {"bid": 49.0, "ask": 49.5, "last": None, "price": 49.25}}  # no trade yet: delayed
+    assert tickers(preview(client, [pnl(both, "LESS_THAN", -8)])) == {"AAA", "CCC"}
+    assert tickers(preview(client, [pnl(both, "MORE_THAN", 100)])) == {"BBB"}
+    asked = [c for c in market.calls if c[0] == "quotes"]
+    assert asked[-1] == ("quotes", ["AAA", "BBB", "CCC"])  # once per evaluation, only the held symbols
+
+    from stocksvest_app.market.client import MarketError
+
+    def down(symbols):
+        raise MarketError(502, "market service unreachable")
+    monkeypatch.setattr(market, "quotes", down)
+    assert tickers(preview(client, [pnl(both, "LESS_THAN", -8)])) == {"CCC"}  # delayed prices instead
 
 
 def test_unrealized_pnl_validation_and_metadata(client, portfolios):

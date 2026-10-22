@@ -163,20 +163,13 @@ class IntervalUnit(str, Enum):
 
 class IntervalSchedule(ScheduleBase):
     """Fires every `every` x `unit` from startAt (or the automation's creation), optionally only on `onDays` and
-    inside `window`. The smallest interval is 5 minutes. Used by: Schedule, timing.
+    inside `window`. The smallest interval is 1 minute. Used by: Schedule, timing.
     """
     type: Literal["INTERVAL"]
     every: int = Field(ge=1)
     unit: IntervalUnit
     onDays: list[Weekday] = []  # empty = every day
     window: TimeWindow | None = None  # only fire inside this time of day
-
-    @model_validator(mode="after")
-    def check_minimum(self):
-        """At least 5 minutes between fires."""
-        if self.unit == IntervalUnit.MINUTE and self.every < 5:
-            raise ValueError("the smallest interval is 5 minutes")
-        return self
 
 
 class DailySchedule(ScheduleBase):
@@ -216,7 +209,7 @@ class MarketSchedule(ScheduleBase):
     type: Literal["MARKET"]
     anchor: MarketAnchor
     offsetMinutes: int = Field(default=0, ge=-240, le=240)
-    repeatEveryMinutes: int | None = Field(default=None, ge=5)
+    repeatEveryMinutes: int | None = Field(default=None, ge=1)
     repeatUntil: MarketAnchor | None = None  # repeats strictly before this anchor; default REGULAR_CLOSE
 
     @model_validator(mode="after")

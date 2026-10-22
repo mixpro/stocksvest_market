@@ -64,7 +64,7 @@ inputs (union) ──► action 1 ──► action 2 ──► … ──► mat
      doesn't appear with a `UNIVERSE` input. Example, "tech stocks I hold in either portfolio":
      `[{"type": "POSITION", "portfolioIds": ["pf_a", "pf_b"]}, {"type": "SECTOR", "sectorIds": ["TECHNOLOGY"]}]`
    - **`UNREALIZED_PNL`:** the shares of all the listed portfolios (manual and automation) count together, valued at
-     the latest price (~16 min delayed) against what they cost. `PERCENT` is of the cost, `ABSOLUTE` in dollars.
+     the IBKR live last trade (else the ~16 min delayed price, like the portfolio page) against what they cost. `PERCENT` is of the cost, `ABSOLUTE` in dollars.
      Symbols not held there, or without a price, are dropped. Unlike `PRICE_CHANGE`, which looks at a time window,
      this compares with the buy price. Example, "sell what is down 8% or more":
      `{"type": "UNREALIZED_PNL", "portfolioIds": ["pf_a"], "valueType": "PERCENT", "condition": "LESS_THAN", "value": -8}`
@@ -184,15 +184,19 @@ curl -X POST -H "X-API-Key: $APP_KEY" -H "Content-Type: application/json" \
 
 | `type` | Fields | Example |
 |---|---|---|
-| `MARKET` | `anchor` (`PRE_MARKET_OPEN`, `REGULAR_OPEN`, `REGULAR_CLOSE`, `AFTER_HOURS_CLOSE`), `offsetMinutes`, optional `repeatEveryMinutes` (≥ 5) and `repeatUntil` | `{"type": "MARKET", "anchor": "REGULAR_CLOSE", "offsetMinutes": -15}` = 15 min before the close |
+| `MARKET` | `anchor` (`PRE_MARKET_OPEN`, `REGULAR_OPEN`, `REGULAR_CLOSE`, `AFTER_HOURS_CLOSE`), `offsetMinutes`, optional `repeatEveryMinutes` (≥ 1) and `repeatUntil` | `{"type": "MARKET", "anchor": "REGULAR_CLOSE", "offsetMinutes": -15}` = 15 min before the close |
 | `DAILY` | `atTimes` | `{"type": "DAILY", "atTimes": ["09:45", "15:30"]}` |
 | `WEEKLY` | `onDays`, `atTimes`, `everyNWeeks` | `{"type": "WEEKLY", "onDays": ["MON"], "atTimes": ["10:00"]}` |
-| `INTERVAL` | `every` (minutes ≥ 5), `unit` (`MINUTE`, `HOUR`, `DAY`), optional `onDays`, `window` | `{"type": "INTERVAL", "every": 30, "unit": "MINUTE", "window": {"start": "09:30", "end": "16:00"}}` |
+| `INTERVAL` | `every` (≥ 1), `unit` (`MINUTE`, `HOUR`, `DAY`), optional `onDays`, `window` | `{"type": "INTERVAL", "every": 30, "unit": "MINUTE", "window": {"start": "09:30", "end": "16:00"}}` |
 | `ONCE` | `at` (with time zone offset) | `{"type": "ONCE", "at": "2026-10-20T10:00:00-04:00"}` |
 
 **`MARKET` schedules:**
 - They follow the trading calendar: they run only on trading days, use that day's session times (early closes included), and always use New York time.
 - Repeats stop *before* `repeatUntil` (default: the regular close).
+
+**How often is useful:** runs can repeat every minute, but only live prices change that fast: `UNREALIZED_PNL`
+and order prices use IBKR quotes. `PRICE_CHANGE`, `SYMBOL_PRICE` and the ranking keys use the market service's
+bars, which are ~16 minutes delayed and refreshed every 5 minutes.
 
 **All types also take:**
 - **`timezone`:** default `America/New_York`, e.g. `Asia/Jerusalem`. `MARKET` ignores it.
