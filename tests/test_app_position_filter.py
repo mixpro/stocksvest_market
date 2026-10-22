@@ -119,6 +119,57 @@ def test_saved_filter_run(client, portfolios):
     assert {s["ticker"] for s in run["result"]["symbols"]} == {"AAA", "BBB"}
 
 
+# ------------------------------------------------------------------ UNREALIZED_PNL action
+# All bought at $10: AAA is now $10 (0%), BBB $50 (+400%, +$80), CCC $5 (-50%, -$10).
+
+
+def pnl(ids, condition, value, value_type="PERCENT", max_value=None):
+    return {"type": "UNREALIZED_PNL", "portfolioIds": list(ids), "valueType": value_type,
+            "condition": condition, "value": value, "maxValue": max_value}
+
+
+def test_unrealized_pnl_percent_and_dollars(client, portfolios):
+    a, b = portfolios
+    both = (a["id"], b["id"])
+    out = preview(client, [pnl(both, "LESS_THAN", -8)])
+    assert tickers(out) == {"CCC"} and out["steps"] == [{"step": "INPUTS", "count": 4},
+                                                         {"step": "UNREALIZED_PNL", "count": 1}]
+    assert tickers(preview(client, [pnl(both, "MORE_THAN", 100)])) == {"BBB"}
+    assert tickers(preview(client, [pnl(both, "BETWEEN", -1, max_value=1)])) == {"AAA"}
+    assert tickers(preview(client, [pnl(both, "MORE_THAN", 50, "ABSOLUTE")])) == {"BBB"}
+    assert tickers(preview(client, [pnl([a["id"]], "LESS_THAN", 0)])) == set()  # CCC is only held in B
+
+
+def test_unrealized_pnl_combines_the_portfolios_shares(client, portfolios, broker):
+    a, b = portfolios
+    order = client.post(f"/v1/portfolios/{a['id']}/orders", headers=KEY,
+                        json={"symbol": "CCC", "side": "BUY", "quantity": 2}).json()
+    broker.fill(order["brokerOrderId"], 2, 2.5)  # A's CCC is up 100%, B's down 50%: together cost $25, worth $20
+    client.post(f"/v1/portfolios/{a['id']}/sync", headers=KEY)
+    assert tickers(preview(client, [pnl([a["id"]], "MORE_THAN", 50)])) == {"BBB", "CCC"}
+    assert tickers(preview(client, [pnl([a["id"], b["id"]], "BETWEEN", -21, max_value=-19)])) == {"CCC"}
+
+
+def test_unrealized_pnl_validation_and_metadata(client, portfolios):
+    a, _ = portfolios
+    body = lambda actions: {"name": "F", "inputs": [{"type": "UNIVERSE"}], "actions": actions}  # noqa: E731
+    assert client.post("/v1/filters", headers=KEY, json=body([pnl([], "LESS_THAN", -8)])).status_code == 422
+    r = client.post("/v1/filters", headers=KEY, json=body([pnl(["pf_missing"], "LESS_THAN", -8)]))
+    assert r.status_code == 422 and "pf_missing" in r.text
+    r = client.post("/v1/filters", headers=KEY, json=body([pnl([a["id"]], "BETWEEN", -8)]))
+    assert r.status_code == 422 and "maxValue" in r.text
+    empty = client.post("/v1/portfolios", headers=KEY, json={"name": "Empty", "brokerAccountId": a["brokerAccountId"]})
+    f = client.post("/v1/filters", headers=KEY,
+                    json={**body([pnl([empty.json()["id"]], "LESS_THAN", -8)]), "name": "Stop loss"}).json()
+    r = client.delete(f"/v1/portfolios/{empty.json()['id']}", headers=KEY)
+    assert r.status_code == 409 and "Stop loss" in r.text
+    client.delete(f"/v1/filters/{f['id']}", headers=KEY)
+    meta = next(m for m in client.get("/v1/filter-actions", headers=KEY).json()["actions"]
+                if m["type"] == "UNREALIZED_PNL")
+    assert meta["available"] and [f["name"] for f in meta["fields"]] == [
+        "portfolioIds", "valueType", "condition", "value", "maxValue"]
+
+
 # ------------------------------------------------------------------ INVESTMENT_PORTFOLIO input
 
 

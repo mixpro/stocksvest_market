@@ -197,6 +197,7 @@ const ACTION_DEFAULTS = {
   SYMBOL_PRICE: { priceReference: "LATEST_BAR", condition: "BETWEEN", value: 10, maxValue: 100 },
   PRICE_CHANGE: { periodAmount: 5, periodUnit: "DAYS", valueType: "PERCENT", condition: "MORE_THAN", value: 3 },
   POSITION: { portfolioIds: [] },
+  UNREALIZED_PNL: { portfolioIds: [], valueType: "PERCENT", condition: "LESS_THAN", value: -8 },
 };
 
 function addActionSelect() {
@@ -208,7 +209,7 @@ function addActionSelect() {
     },
   }, el("option", { value: "" }, "+ Add action…"),
     ...state.meta.actions.map((a) =>
-      el("option", { value: a.type, disabled: !a.available }, a.available ? a.label : `${a.label} (${a.type === "POSITION" ? "no portfolios yet" : "no data yet"})`)));
+      el("option", { value: a.type, disabled: !a.available }, a.available ? a.label : `${a.label} (${a.fields.some((f) => f.name === "portfolioIds") ? "no portfolios yet" : "no data yet"})`)));
 }
 
 function groupEditor() {

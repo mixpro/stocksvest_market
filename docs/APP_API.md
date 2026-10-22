@@ -45,6 +45,7 @@ inputs (union) ──► action 1 ──► action 2 ──► … ──► mat
    | `SYMBOL_PRICE` | `priceReference`, `condition`, `value`, `maxValue` | the price matches |
    | `PRICE_CHANGE` | `periodAmount`, `periodUnit`, `valueType`, `condition`, `value`, `maxValue` | the change over the period matches |
    | `POSITION` | `portfolioIds`: one or more portfolio ids | the symbol is held in at least one of the portfolios (manual or automation shares) |
+   | `UNREALIZED_PNL` | `portfolioIds`, `valueType`, `condition`, `value`, `maxValue` | the unrealized gain/loss of the shares held matches, e.g. `PERCENT` `LESS_THAN` `-8` = down more than 8% from the buy price (a stop-loss) |
 
    - **`priceReference`:**
      - `LATEST_BAR`: newest price (~16 min delayed)
@@ -62,6 +63,11 @@ inputs (union) ──► action 1 ──► action 2 ──► … ──► mat
      (`422`). Because actions only narrow what the inputs give, a held symbol that has left the halal universe
      doesn't appear with a `UNIVERSE` input. Example, "tech stocks I hold in either portfolio":
      `[{"type": "POSITION", "portfolioIds": ["pf_a", "pf_b"]}, {"type": "SECTOR", "sectorIds": ["TECHNOLOGY"]}]`
+   - **`UNREALIZED_PNL`:** the shares of all the listed portfolios (manual and automation) count together, valued at
+     the latest price (~16 min delayed) against what they cost. `PERCENT` is of the cost, `ABSOLUTE` in dollars.
+     Symbols not held there, or without a price, are dropped. Unlike `PRICE_CHANGE`, which looks at a time window,
+     this compares with the buy price. Example, "sell what is down 8% or more":
+     `{"type": "UNREALIZED_PNL", "portfolioIds": ["pf_a"], "valueType": "PERCENT", "condition": "LESS_THAN", "value": -8}`
 
 `GET /v1/filter-actions` returns all of this as data (fields, options, required rules), so a client can build its editor from it.
 

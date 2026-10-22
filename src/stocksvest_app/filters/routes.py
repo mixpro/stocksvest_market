@@ -76,8 +76,8 @@ def router(ctx: AppContext) -> APIRouter:
         """Everything a client needs to build the filter editor: input types and action fields.
         \f
         Sector options come from the market API (empty, and SECTOR marked unavailable, when it is down).
-        Portfolio options (POSITION, and the INVESTMENT_PORTFOLIO input) are the app's portfolios; POSITION is
-        unavailable until one exists.
+        Portfolio options (POSITION, UNREALIZED_PNL, and the INVESTMENT_PORTFOLIO input) are the app's portfolios;
+        POSITION and UNREALIZED_PNL are unavailable until one exists.
 
         Args:
             conn: app DB connection (injected).
@@ -90,6 +90,7 @@ def router(ctx: AppContext) -> APIRouter:
         condition = {"name": "condition", "kind": "select", "options": _values(Condition), "required": True}
         value = {"name": "value", "kind": "number", "required": True}
         max_value = {"name": "maxValue", "kind": "number", "requiredWhen": {"condition": "BETWEEN"}}
+        portfolio_ids = {"name": "portfolioIds", "kind": "multiselect", "options": portfolios, "required": True}
         return {
             "inputTypes": [
                 {"type": t.value, "needsId": t != InputType.UNIVERSE, "available": t in AVAILABLE_INPUTS,
@@ -110,7 +111,11 @@ def router(ctx: AppContext) -> APIRouter:
                     {"name": "valueType", "kind": "select", "options": _values(ValueType), "required": True},
                     condition, value, max_value]},
                 {"type": "POSITION", "label": "In portfolio positions", "available": bool(portfolios), "fields": [
-                    {"name": "portfolioIds", "kind": "multiselect", "options": portfolios, "required": True}]},
+                    portfolio_ids]},
+                {"type": "UNREALIZED_PNL", "label": "Unrealized gain/loss", "available": bool(portfolios), "fields": [
+                    portfolio_ids,
+                    {"name": "valueType", "kind": "select", "options": _values(ValueType), "required": True},
+                    condition, value, max_value]},
             ],
         }
 

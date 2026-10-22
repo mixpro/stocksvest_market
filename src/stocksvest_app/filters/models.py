@@ -46,7 +46,7 @@ class Condition(str, Enum):
     """How a number is compared in price and price-change actions. LESS_THAN / MORE_THAN are strict;
     BETWEEN is inclusive and needs maxValue.
 
-    Used by: Comparison (SymbolPriceAction, PriceChangeAction), routes.filter_actions.
+    Used by: Comparison (SymbolPriceAction, PriceChangeAction, UnrealizedPnlAction), routes.filter_actions.
     """
 
     LESS_THAN = "LESS_THAN"  # x < value
@@ -65,9 +65,10 @@ class PriceReference(str, Enum):
 
 
 class ValueType(str, Enum):
-    """Whether PRICE_CHANGE compares the change in percent (3 = 3%) or in dollars.
+    """Whether PRICE_CHANGE / UNREALIZED_PNL compare in percent (3 = 3%) or in dollars.
 
-    Used by: PriceChangeAction.valueType, engine.Evaluator.apply, routes.filter_actions.
+    Used by: PriceChangeAction.valueType, UnrealizedPnlAction.valueType, engine.Evaluator.apply,
+    routes.filter_actions.
     """
 
     PERCENT = "PERCENT"
@@ -113,7 +114,8 @@ class FilterInput(BaseModel):
 class Comparison(BaseModel):
     """Shared fields of actions that compare a number: condition, value and (for BETWEEN) maxValue.
 
-    Used by: SymbolPriceAction, PriceChangeAction (base class); engine.Evaluator.apply (matches).
+    Used by: SymbolPriceAction, PriceChangeAction, UnrealizedPnlAction (base class); engine.Evaluator.apply
+    (matches).
     """
 
     condition: Condition
@@ -187,17 +189,13 @@ class PriceChangeAction(Comparison):
         return self
 
 
-class PositionAction(BaseModel):
-    """Keep symbols held (open position, any owner: manual or automation) in at least one of the portfolios.
+class PortfolioIds(BaseModel):
+    """`portfolioIds` of actions that look at portfolio positions: one or more portfolios, each at most once.
 
-    Attributes:
-        portfolioIds: one or more portfolios (union of their positions); each at most once.
-
-    Used by: FilterAction, engine.Evaluator.apply, engine.check_filter_refs (portfolios must exist),
+    Used by: PositionAction, UnrealizedPnlAction (base class); engine.check_filter_refs (portfolios must exist),
     filters.store.portfolio_users (portfolio delete guard).
     """
 
-    type: Literal["POSITION"]
     portfolioIds: list[str] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -208,9 +206,29 @@ class PositionAction(BaseModel):
         return self
 
 
+class PositionAction(PortfolioIds):
+    """Keep symbols held (open position, any owner: manual or automation) in at least one of the portfolios
+    (union of their positions). Used by: FilterAction, engine.Evaluator.apply.
+    """
+
+    type: Literal["POSITION"]
+
+
+class UnrealizedPnlAction(PortfolioIds, Comparison):
+    """Keep held symbols whose unrealized gain/loss matches the comparison: the shares of all the portfolios
+    (any owner) together, valued at the latest price (~16 min delayed) against their cost. PERCENT is of the cost
+    (-8 = down 8% from the buy price), ABSOLUTE in dollars. Symbols not held, or without a price, are dropped.
+
+    Used by: FilterAction, engine.Evaluator.apply (via _positions).
+    """
+
+    type: Literal["UNREALIZED_PNL"]
+    valueType: ValueType
+
+
 # Any filter action; the "type" field picks the model. Used by: FilterIn.actions, engine.Evaluator.apply.
 FilterAction = Annotated[
-    Union[SymbolTypeAction, SectorAction, SymbolPriceAction, PriceChangeAction, PositionAction],
+    Union[SymbolTypeAction, SectorAction, SymbolPriceAction, PriceChangeAction, PositionAction, UnrealizedPnlAction],
     Field(discriminator="type"),
 ]
 

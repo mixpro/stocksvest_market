@@ -12,12 +12,14 @@ from .models import (
     FilterAction,
     FilterIn,
     InputType,
+    PortfolioIds,
     PositionAction,
     PriceChangeAction,
     PriceReference,
     SectorAction,
     SymbolPriceAction,
     SymbolTypeAction,
+    UnrealizedPnlAction,
     ValueType,
 )
 
@@ -75,7 +77,7 @@ def find_cycle(conn: sqlite3.Connection, start: tuple[str, str], start_deps: lis
 
 def check_filter_refs(conn, f: FilterIn, filter_id: str | None) -> None:
     """Refuse a filter whose inputs reference missing filters/groups/portfolios or would create a cycle, or whose
-    POSITION actions name missing portfolios.
+    POSITION / UNREALIZED_PNL actions name missing portfolios.
 
     Args:
         conn: app DB connection.
@@ -102,7 +104,7 @@ def check_filter_refs(conn, f: FilterIn, filter_id: str | None) -> None:
     if filter_id and find_cycle(conn, ("F", filter_id), deps):
         raise EngineError("inputs would create a cycle (this filter would end up using itself)")
     for action in f.actions:
-        if isinstance(action, PositionAction):
+        if isinstance(action, PortfolioIds):
             for pid in action.portfolioIds:
                 if not portfolios_store.get_portfolio(conn, pid):
                     raise EngineError(f"portfolio '{pid}' does not exist")
@@ -244,6 +246,31 @@ class Evaluator:
             return snap.get("previousClose")
         return snap.get("dailyClose")
 
+    def _positions(self, portfolio_ids: list[str]) -> dict[str, dict]:
+        """Open positions (any owner) of the portfolios combined per symbol.
+
+        Args:
+            portfolio_ids: the portfolios.
+
+        Returns:
+            {symbol: {"quantity": Decimal, "costBasis": Decimal}}, only symbols with shares.
+
+        Raises:
+            EngineError: a portfolio no longer exists.
+
+        Used by: _held, apply (UNREALIZED_PNL).
+        """
+        out: dict[str, dict] = {}
+        for pid in portfolio_ids:
+            if not portfolios_store.get_portfolio(self.conn, pid):
+                raise EngineError(f"portfolio '{pid}' does not exist")
+            for p in portfolios_store.positions(self.conn, pid):
+                if p["quantity"] > 0:
+                    total = out.setdefault(p["symbol"], {"quantity": 0, "costBasis": 0})
+                    total["quantity"] += p["quantity"]
+                    total["costBasis"] += p["costBasis"]
+        return out
+
     def _held(self, portfolio_ids: list[str]) -> set[str]:
         """Symbols with an open position (any owner) in any of the portfolios.
 
@@ -255,18 +282,37 @@ class Evaluator:
 
         Used by: apply (POSITION), _input_symbols (INVESTMENT_PORTFOLIO).
         """
-        out: set[str] = set()
-        for pid in portfolio_ids:
-            if not portfolios_store.get_portfolio(self.conn, pid):
-                raise EngineError(f"portfolio '{pid}' does not exist")
-            out |= {p["symbol"] for p in portfolios_store.positions(self.conn, pid) if p["quantity"] > 0}
+        return set(self._positions(portfolio_ids))
+
+    def _unrealized_pnl(self, action: UnrealizedPnlAction, symbols: set[str]) -> set[str]:
+        """Keep the held symbols whose unrealized gain/loss at the latest price matches the action.
+
+        Args:
+            action: the UNREALIZED_PNL action.
+            symbols: the symbols still in the running.
+
+        Used by: apply.
+        """
+        held = {t: p for t, p in self._positions(action.portfolioIds).items() if t in symbols}
+        snaps = self._snaps(set(held))
+        out = set()
+        for t, p in held.items():
+            price = snaps.get(t, {}).get("latestPrice")
+            if price is None:
+                continue
+            pnl = float(p["quantity"]) * price - float(p["costBasis"])
+            if action.valueType == ValueType.PERCENT:
+                pnl = pnl / float(p["costBasis"]) * 100 if p["costBasis"] else None
+            if action.matches(pnl):
+                out.add(t)
         return out
 
     def apply(self, action: FilterAction, symbols: set[str]) -> set[str]:
         """Keep the symbols that pass one action.
 
         Args:
-            action: SymbolTypeAction, SectorAction, SymbolPriceAction, PriceChangeAction or PositionAction.
+            action: SymbolTypeAction, SectorAction, SymbolPriceAction, PriceChangeAction, PositionAction or
+                UnrealizedPnlAction.
             symbols: the symbols still in the running.
 
         Returns:
@@ -293,6 +339,8 @@ class Evaluator:
             return {t for t, c in changes.items() if action.matches(c.get(field))}
         if isinstance(action, PositionAction):
             return symbols & self._held(action.portfolioIds)
+        if isinstance(action, UnrealizedPnlAction):
+            return self._unrealized_pnl(action, symbols)
         raise EngineError(f"unknown action {action}")
 
     # -- entry points

@@ -145,7 +145,7 @@ def filter_users(conn, filter_id: str) -> list[str]:
 
 
 def portfolio_users(conn, portfolio_id: str) -> list[str]:
-    """Names of filters with this portfolio as an input or in a POSITION action.
+    """Names of filters with this portfolio as an input or in a POSITION / UNREALIZED_PNL action.
 
     Args:
         conn: app DB connection.
@@ -155,7 +155,7 @@ def portfolio_users(conn, portfolio_id: str) -> list[str]:
     """
     return [f["name"] for f in list_filters(conn)
             if any(i["type"] == "INVESTMENT_PORTFOLIO" and i.get("id") == portfolio_id for i in f["inputs"])
-            or any(a.get("type") == "POSITION" and portfolio_id in a.get("portfolioIds", []) for a in f["actions"])]
+            or any(portfolio_id in a.get("portfolioIds", []) for a in f["actions"])]
 
 
 # ------------------------------------------------------------------ groups
