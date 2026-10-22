@@ -21,6 +21,7 @@ ENDPOINTS = {
     "multi_bars": "/v1/bars",
     "snapshots": "/v1/snapshots",
     "price_change": "/v1/price-change",
+    "volume": "/v1/volume",
     "quotes": "/v1/quotes",
     "calendar": "/v1/calendar",
     "status": "/v1/status",
@@ -127,6 +128,16 @@ class MarketAPI(Protocol):
         Args:
             period_amount: how many units back.
             period_unit: "MINUTES", "HOURS", "DAYS", "WEEKS", "MONTHS" or "YEARS".
+            symbols: tickers or ids; None = every symbol.
+        """
+        ...
+
+    def volume(self, days: int, symbols: list[str] | None = None) -> dict:
+        """GET /v1/volume: {"days", "from", "to", "volumes": {ticker: {averageVolume, averageDollarVolume,
+        daysTraded}}}; averages are null when the calendar is shorter than `days`.
+
+        Args:
+            days: completed trading days averaged (days without trades count as 0).
             symbols: tickers or ids; None = every symbol.
         """
         ...
@@ -279,6 +290,15 @@ class MarketClient:
         """
         return self._get("price_change", query=_query(periodAmount=period_amount, periodUnit=period_unit,
                                                       symbols=symbols))
+
+    def volume(self, days, symbols=None) -> dict:
+        """GET /v1/volume.
+
+        Args:
+            days: trading days averaged.
+            symbols: tickers or ids; None = all.
+        """
+        return self._get("volume", query=_query(days=days, symbols=symbols))
 
     def quotes(self, symbols) -> dict:
         """GET /v1/quotes.

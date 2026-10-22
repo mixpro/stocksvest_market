@@ -196,6 +196,7 @@ const ACTION_DEFAULTS = {
   SECTOR: { sectorIds: [] },
   SYMBOL_PRICE: { priceReference: "LATEST_BAR", condition: "BETWEEN", value: 10, maxValue: 100 },
   PRICE_CHANGE: { periodAmount: 5, periodUnit: "DAYS", valueType: "PERCENT", condition: "MORE_THAN", value: 3 },
+  AVERAGE_VOLUME: { days: 20, volumeType: "DOLLARS", condition: "MORE_THAN", value: 1000000 },
   POSITION: { portfolioIds: [] },
   UNREALIZED_PNL: { portfolioIds: [], valueType: "PERCENT", condition: "LESS_THAN", value: -8 },
 };

@@ -11,6 +11,7 @@ from ..portfolios import store as portfolios_store
 from . import store
 from .models import (
     AVAILABLE_INPUTS,
+    AverageVolumeAction,
     FilterAction,
     FilterIn,
     InputType,
@@ -23,6 +24,7 @@ from .models import (
     SymbolTypeAction,
     UnrealizedPnlAction,
     ValueType,
+    VolumeType,
 )
 
 ET = ZoneInfo("America/New_York")  # Used by: Evaluator._last_close (today's date in New York)
@@ -339,8 +341,8 @@ class Evaluator:
         """Keep the symbols that pass one action.
 
         Args:
-            action: SymbolTypeAction, SectorAction, SymbolPriceAction, PriceChangeAction, PositionAction or
-                UnrealizedPnlAction.
+            action: SymbolTypeAction, SectorAction, SymbolPriceAction, PriceChangeAction, AverageVolumeAction,
+                PositionAction or UnrealizedPnlAction.
             symbols: the symbols still in the running.
 
         Returns:
@@ -365,6 +367,10 @@ class Evaluator:
             changes = self.market.price_changes(symbols, action.periodAmount, action.periodUnit.value)
             field = "changePercent" if action.valueType == ValueType.PERCENT else "change"
             return {t for t, c in changes.items() if action.matches(c.get(field))}
+        if isinstance(action, AverageVolumeAction):
+            volumes = self.market.volumes(symbols, action.days)
+            field = "averageVolume" if action.volumeType == VolumeType.SHARES else "averageDollarVolume"
+            return {t for t, v in volumes.items() if action.matches(v.get(field))}
         if isinstance(action, PositionAction):
             return symbols & self._held(action.portfolioIds)
         if isinstance(action, UnrealizedPnlAction):

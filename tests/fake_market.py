@@ -37,6 +37,11 @@ SNAPS = {
 }
 CHANGES = {"AAA": {"change": 2.0, "changePercent": 25.0}, "BBB": {"change": -5.0, "changePercent": -9.0},
            "CCC": {"change": 0.1, "changePercent": 2.0}, "DDD": {"change": None, "changePercent": None}}
+# Average daily trading (20 days); CCC barely trades, DDD has no history.
+VOLUMES = {"AAA": {"averageVolume": 500_000.0, "averageDollarVolume": 5_000_000.0, "daysTraded": 20},
+           "BBB": {"averageVolume": 40_000.0, "averageDollarVolume": 2_000_000.0, "daysTraded": 20},
+           "CCC": {"averageVolume": 300.0, "averageDollarVolume": 1_500.0, "daysTraded": 6},
+           "DDD": {"averageVolume": None, "averageDollarVolume": None, "daysTraded": None}}
 
 
 class FakeMarket:
@@ -101,6 +106,11 @@ class FakeMarket:
         self.calls.append(("price_change", period_amount, period_unit, symbols))
         return {"periodAmount": period_amount, "periodUnit": period_unit,
                 "changes": {t: CHANGES[t] for t in (symbols or CHANGES)}}
+
+    def volume(self, days, symbols=None):
+        self._check()
+        self.calls.append(("volume", days, symbols))
+        return {"days": days, "from": "f", "to": "t", "volumes": {t: VOLUMES[t] for t in (symbols or VOLUMES)}}
 
     def calendar(self, start=None, end=None):
         self._check()

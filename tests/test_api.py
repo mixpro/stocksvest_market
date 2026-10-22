@@ -159,6 +159,23 @@ def test_snapshot_previous_close_after_a_weekend(client, seeded):
     assert snap["previousClose"] == 10  # the last close before Tuesday: Friday's
 
 
+def test_volume(client, seeded):
+    # S0001 traded 1000 shares on Fri 9 (vw 10), Mon 12 (vw 11) and Tue 13 (vw 12); S0002 never.
+    add_calendar(seeded, "2026-10-08", "2026-10-09", "2026-10-12", "2099-01-02")  # 2099: not completed yet
+    seeded.execute("INSERT INTO bars_1day VALUES ('id-S0001', ?, 50, 50, 50, 50, 99999, 1, 50)", (ts(2099, 1, 2, 5),))
+    seeded.commit()
+    body = client.get("/v1/volume?days=4", headers=READ).json()
+    assert (body["from"], body["to"]) == ("2026-10-08", "2026-10-13")
+    s1 = body["volumes"]["S0001"]
+    assert s1["averageVolume"] == 750 and s1["daysTraded"] == 3  # Thu 8 had no trades: counts as 0
+    assert s1["averageDollarVolume"] == pytest.approx((10000 + 11000 + 12000) / 4)
+    assert body["volumes"]["S0002"] == {"averageVolume": 0.0, "averageDollarVolume": 0.0, "daysTraded": 0}
+    one = client.get("/v1/volume?days=1&symbols=S0001", headers=READ).json()
+    assert one["volumes"]["S0001"]["averageVolume"] == 1000 and set(one["volumes"]) == {"S0001"}
+    short = client.get("/v1/volume?days=10&symbols=S0001", headers=READ).json()
+    assert short["from"] is None and short["volumes"]["S0001"]["averageVolume"] is None
+
+
 def test_trading_days_back():
     days = ["2026-11-30", "2026-11-27", "2026-11-25", "2026-11-24"]  # Thanksgiving (26th) and the weekend closed
     assert _trading_days_back(days, "2026-11-30", 1) == "2026-11-27"  # Monday: from Friday's close

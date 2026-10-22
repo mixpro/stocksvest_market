@@ -110,6 +110,26 @@ def test_comparisons(client):
                 "condition": "LESS_THAN", "value": 0}) == {"BBB"}
 
 
+def test_average_volume(client, market):
+    def run(action):
+        r = client.post("/v1/filters/preview", headers=KEY, json=flt(actions=[action]))
+        assert r.status_code == 200, r.text
+        return tickers(r)
+
+    volume = lambda kind, cond, value, **kw: {"type": "AVERAGE_VOLUME", "volumeType": kind,  # noqa: E731
+                                              "condition": cond, "value": value, **kw}
+    assert run(volume("DOLLARS", "MORE_THAN", 1_000_000)) == {"AAA", "BBB"}  # CCC barely trades, DDD: no history
+    assert run(volume("SHARES", "LESS_THAN", 1000)) == {"CCC"}
+    assert run(volume("SHARES", "BETWEEN", 1000, maxValue=100_000, days=5)) == {"BBB"}
+    assert ("volume", 5, ["AAA", "BBB", "CCC", "DDD"]) in market.calls  # days default 20, sent as asked
+    bad = client.post("/v1/filters", headers=KEY, json=flt(actions=[volume("DOLLARS", "MORE_THAN", 1, days=0)]))
+    assert bad.status_code == 422
+    meta = next(a for a in client.get("/v1/filter-actions", headers=KEY).json()["actions"]
+                if a["type"] == "AVERAGE_VOLUME")
+    assert meta["available"] and [f["name"] for f in meta["fields"]] == [
+        "days", "volumeType", "condition", "value", "maxValue"]
+
+
 def test_last_close_uses_previous_close_while_session_is_open(settings):
     conn = app_db.connect(settings.db_path)
     app_db.init(conn)

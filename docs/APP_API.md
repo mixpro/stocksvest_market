@@ -44,6 +44,7 @@ inputs (union) ──► action 1 ──► action 2 ──► … ──► mat
    | `SECTOR` | `sectorIds`: keys from market `GET /v1/sectors` | the sector is in the list |
    | `SYMBOL_PRICE` | `priceReference`, `condition`, `value`, `maxValue` | the price matches |
    | `PRICE_CHANGE` | `periodAmount`, `periodUnit`, `valueType`, `condition`, `value`, `maxValue` | the change over the period matches |
+   | `AVERAGE_VOLUME` | `days` (default 20), `volumeType`, `condition`, `value`, `maxValue` | the average daily trading over the last `days` completed trading days matches |
    | `POSITION` | `portfolioIds`: one or more portfolio ids | the symbol is held in at least one of the portfolios (manual or automation shares) |
    | `UNREALIZED_PNL` | `portfolioIds`, `valueType`, `condition`, `value`, `maxValue` | the unrealized gain/loss of the shares held matches, e.g. `PERCENT` `LESS_THAN` `-8` = down more than 8% from the buy price (a stop-loss) |
 
@@ -63,6 +64,11 @@ inputs (union) ──► action 1 ──► action 2 ──► … ──► mat
      (`422`). Because actions only narrow what the inputs give, a held symbol that has left the halal universe
      doesn't appear with a `UNIVERSE` input. Example, "tech stocks I hold in either portfolio":
      `[{"type": "POSITION", "portfolioIds": ["pf_a", "pf_b"]}, {"type": "SECTOR", "sectorIds": ["TECHNOLOGY"]}]`
+   - **`AVERAGE_VOLUME`:** `volumeType` is `SHARES` (shares a day) or `DOLLARS` (shares × price a day). Days without
+     a single trade count as 0, and today is left out until its session has ended. Use it to keep thinly traded
+     stocks out: their price jumps on a few shares (a big "daily change" from one small trade) and their bid and ask
+     are far apart. Example, "at least $1M a day over 20 days":
+     `{"type": "AVERAGE_VOLUME", "days": 20, "volumeType": "DOLLARS", "condition": "MORE_THAN", "value": 1000000}`
    - **`UNREALIZED_PNL`:** the shares of all the listed portfolios (manual and automation) count together, valued at
      the IBKR live last trade (else the ~16 min delayed price, like the portfolio page) against what they cost. `PERCENT` is of the cost, `ABSOLUTE` in dollars.
      Symbols not held there, or without a price, are dropped. Unlike `PRICE_CHANGE`, which looks at a time window,

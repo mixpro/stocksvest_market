@@ -319,7 +319,7 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
         Raises:
             HTTPException: 404 for any unknown symbol.
 
-        Used by: multi_bars, snapshots, price_change.
+        Used by: multi_bars, snapshots, price_change, volume.
         """
         if not symbols:
             return conn.execute("SELECT * FROM symbols ORDER BY ticker").fetchall()
@@ -711,6 +711,39 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
                 "changePercent": change / base["c"] * 100 if change is not None and base["c"] else None,
             }
         return {"periodAmount": period_amount, "periodUnit": period_unit.value, "changes": out}
+
+    @app.get("/v1/volume", tags=["prices"], dependencies=read)
+    def volume(conn: Conn, days: Annotated[int, Query(ge=1, le=260)] = 20, symbols: str | None = None):
+        """Average daily trading over the last `days` completed trading days (today's is left out until its
+        extended session has ended). A trading day without a daily bar counts as 0, so stocks that often don't
+        trade at all average low. Shares and dollars (volume x volume-weighted price, else the close).
+        \f
+        Args:
+            conn: market DB connection (one per request, injected).
+            days: how many trading days.
+            symbols: comma-separated tickers/ids, or None for all.
+        """
+        now = datetime.now(timezone.utc)
+        done = [c["date"] for c in conn.execute("SELECT date, session_close FROM calendar ORDER BY date DESC")
+                if datetime.fromisoformat(c["session_close"]) <= now][:days]
+        rows = symbol_rows(conn, symbols)
+        if len(done) < days:  # the calendar doesn't reach that far back
+            return {"days": days, "from": None, "to": None,
+                    "volumes": {r["ticker"]: {"averageVolume": None, "averageDollarVolume": None, "daysTraded": None}
+                                for r in rows}}
+        # Daily bars start at midnight New York: from the first day's midnight to the day after the last one.
+        start = int(datetime.combine(date.fromisoformat(done[-1]), time(), sync.ET).timestamp())
+        end = int((datetime.combine(date.fromisoformat(done[0]), time(), sync.ET) + timedelta(days=1)).timestamp())
+        sums = {r["symbol_id"]: r for r in conn.execute(
+            "SELECT symbol_id, SUM(v) AS shares, SUM(v * COALESCE(vw, c)) AS dollars, COUNT(*) AS traded "
+            "FROM bars_1day WHERE ts >= ? AND ts < ? AND v > 0 GROUP BY symbol_id", (start, end))}
+        out = {}
+        for r in rows:
+            s = sums.get(r["id"])
+            out[r["ticker"]] = {"averageVolume": s["shares"] / days if s else 0.0,
+                                "averageDollarVolume": s["dollars"] / days if s else 0.0,
+                                "daysTraded": s["traded"] if s else 0}
+        return {"days": days, "from": done[-1], "to": done[0], "volumes": out}
 
     @app.get("/v1/calendar", tags=["calendar"], dependencies=read)
     def calendar(conn: Conn, start: date | None = None, end: date | None = None):

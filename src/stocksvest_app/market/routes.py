@@ -24,7 +24,7 @@ def _split(value: str | None) -> list[str] | None:
     Args:
         value: comma-separated query value.
 
-    Used by: symbols, multi_bars, snapshots, price_change.
+    Used by: symbols, multi_bars, snapshots, price_change, volume.
     """
     return [v.strip() for v in value.split(",") if v.strip()] if value else None
 
@@ -157,6 +157,16 @@ def router(ctx: AppContext) -> APIRouter:
             symbols: comma-separated tickers or ids; empty = all.
         """
         return call(lambda: api.price_change(period_amount, period_unit, _split(symbols)))
+
+    @r.get("/volume")
+    def volume(days: Annotated[int, Query(ge=1, le=260)] = 20, symbols: str | None = None):
+        """Average daily trading over the last completed trading days (market `GET /v1/volume`).
+        \f
+        Args:
+            days: trading days averaged.
+            symbols: comma-separated tickers or ids; empty = all.
+        """
+        return call(lambda: api.volume(days, _split(symbols)))
 
     @r.get("/quotes")
     def quotes(symbols: str):

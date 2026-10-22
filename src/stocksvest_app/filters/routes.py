@@ -23,6 +23,7 @@ from .models import (
     PriceReference,
     TimePeriodUnit,
     ValueType,
+    VolumeType,
 )
 
 
@@ -109,6 +110,10 @@ def router(ctx: AppContext) -> APIRouter:
                     {"name": "periodAmount", "kind": "integer", "required": True, "min": 1},
                     {"name": "periodUnit", "kind": "select", "options": _values(TimePeriodUnit), "required": True},
                     {"name": "valueType", "kind": "select", "options": _values(ValueType), "required": True},
+                    condition, value, max_value]},
+                {"type": "AVERAGE_VOLUME", "label": "Average daily trading", "available": True, "fields": [
+                    {"name": "days", "kind": "integer", "required": True, "min": 1, "max": 260},
+                    {"name": "volumeType", "kind": "select", "options": _values(VolumeType), "required": True},
                     condition, value, max_value]},
                 {"type": "POSITION", "label": "In portfolio positions", "available": bool(portfolios), "fields": [
                     portfolio_ids]},

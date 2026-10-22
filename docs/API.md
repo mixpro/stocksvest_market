@@ -229,6 +229,26 @@ The period counts only time the market is open:
 `fromPrice` is the last price at or before the start of the period (`fromTime` is that bar). Values are `null` when
 there is not enough history or trading calendar.
 
+### Average daily trading
+
+`GET /v1/volume?days=20&symbols=AAPL`
+
+| Param | Description |
+|---|---|
+| `days` | Completed trading days to average, 1–260 (default 20). Today counts once its extended session has ended |
+| `symbols` | Optional, comma-separated. All symbols if omitted |
+
+```json
+{
+  "days": 20, "from": "2026-09-24", "to": "2026-10-21",
+  "volumes": {"AAPL": {"averageVolume": 48210334.5, "averageDollarVolume": 16432112398.2, "daysTraded": 20}}
+}
+```
+
+A trading day without any trade counts as 0, so `averageVolume` is the total over `days`, divided by `days`.
+`averageDollarVolume` uses each day's volume-weighted price (or its close). Values are `null` when the trading
+calendar is shorter than `days`.
+
 ### Live quotes
 
 `GET /v1/quotes?symbols=AAPL,JRSH` (up to 100 symbols): the price **right now**, from Interactive Brokers when the

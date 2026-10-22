@@ -83,6 +83,25 @@ class MarketData:
         data = self.api.price_change(amount, unit, self._symbols_arg(tickers))["changes"]
         return {t: v for t, v in data.items() if t in tickers}
 
+    def volumes(self, tickers: set[str], days: int) -> dict[str, dict]:
+        """Average daily trading over the last `days` completed trading days for these tickers only (halal
+        universe only, as in snapshots).
+
+        Args:
+            tickers: tickers wanted; empty = no call.
+            days: trading days averaged.
+
+        Returns:
+            ticker -> {averageVolume, averageDollarVolume, daysTraded} (None values without enough history).
+
+        Used by: filters.engine (AVERAGE_VOLUME action).
+        """
+        tickers = tickers & self.universe().keys() if tickers else tickers
+        if not tickers:
+            return {}
+        data = self.api.volume(days, self._symbols_arg(tickers))["volumes"]
+        return {t: v for t, v in data.items() if t in tickers}
+
     def live_quotes(self, tickers: set[str]) -> dict[str, dict]:
         """Prices right now (IBKR live when the market service can get them, else its delayed price), for the few
         symbols about to be traded. Not cached: every call asks again.

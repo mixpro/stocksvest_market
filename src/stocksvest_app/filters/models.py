@@ -114,8 +114,8 @@ class FilterInput(BaseModel):
 class Comparison(BaseModel):
     """Shared fields of actions that compare a number: condition, value and (for BETWEEN) maxValue.
 
-    Used by: SymbolPriceAction, PriceChangeAction, UnrealizedPnlAction (base class); engine.Evaluator.apply
-    (matches).
+    Used by: SymbolPriceAction, PriceChangeAction, AverageVolumeAction, UnrealizedPnlAction (base class);
+    engine.Evaluator.apply (matches).
     """
 
     condition: Condition
@@ -189,6 +189,29 @@ class PriceChangeAction(Comparison):
         return self
 
 
+class VolumeType(str, Enum):
+    """What AVERAGE_VOLUME compares: shares a day, or dollars a day (shares x price).
+
+    Used by: AverageVolumeAction.volumeType, engine.Evaluator.apply, routes.filter_actions.
+    """
+
+    SHARES = "SHARES"
+    DOLLARS = "DOLLARS"
+
+
+class AverageVolumeAction(Comparison):
+    """Keep symbols whose average daily trading over the last `days` completed trading days matches the
+    comparison (days without any trade count as 0). Keeps thinly traded stocks, whose prices jump on a few shares
+    and whose bid/ask are far apart, out of a filter. Symbols without enough history are dropped.
+
+    Used by: FilterAction, engine.Evaluator.apply (via MarketData.volumes).
+    """
+
+    type: Literal["AVERAGE_VOLUME"]
+    days: int = Field(default=20, ge=1, le=260)
+    volumeType: VolumeType
+
+
 class PortfolioIds(BaseModel):
     """`portfolioIds` of actions that look at portfolio positions: one or more portfolios, each at most once.
 
@@ -229,7 +252,8 @@ class UnrealizedPnlAction(PortfolioIds, Comparison):
 
 # Any filter action; the "type" field picks the model. Used by: FilterIn.actions, engine.Evaluator.apply.
 FilterAction = Annotated[
-    Union[SymbolTypeAction, SectorAction, SymbolPriceAction, PriceChangeAction, PositionAction, UnrealizedPnlAction],
+    Union[SymbolTypeAction, SectorAction, SymbolPriceAction, PriceChangeAction, AverageVolumeAction, PositionAction,
+          UnrealizedPnlAction],
     Field(discriminator="type"),
 ]
 
