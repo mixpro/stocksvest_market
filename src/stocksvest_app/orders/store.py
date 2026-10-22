@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from datetime import datetime
 from decimal import Decimal
 
 from ..db import iso, new_id, now_iso
@@ -175,6 +176,26 @@ def list_orders(conn, portfolio_id: str | None = None, automation_id: str | None
     clause = f"WHERE {' AND '.join(where)}" if where else ""
     rows = conn.execute(f"SELECT * FROM orders {clause} ORDER BY created_at DESC, rowid DESC LIMIT ?", args + [limit])
     return [order_json(r) for r in rows]
+
+
+def last_sells(conn, budget_id: str) -> dict[str, datetime]:
+    """When this budget last sold each symbol: its newest sell order that sold shares or is still open
+    (rejected and unfilled cancelled ones don't count).
+
+    Args:
+        conn: app DB connection.
+        budget_id: the budget.
+
+    Returns:
+        symbol -> the sell order's creation time (UTC).
+
+    Used by: automations.runner.Trading.context (rebuyCooldownMinutes).
+    """
+    rows = conn.execute(
+        "SELECT symbol, MAX(created_at) AS at FROM orders WHERE budget_id = ? AND side = 'SELL' "
+        "AND (CAST(filled_quantity AS REAL) > 0 OR status IN ('PENDING', 'SUBMITTED', 'PARTIALLY_FILLED')) "
+        "GROUP BY symbol", (budget_id,))
+    return {r["symbol"]: datetime.fromisoformat(r["at"].replace("Z", "+00:00")) for r in rows}
 
 
 def insert_order(conn, **f) -> str:

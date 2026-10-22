@@ -406,6 +406,9 @@ class OrderGuards(BaseModel):
         maxSpreadPercent: skip a buy (WIDE_SPREAD) when its live quote's ask is more than this % above the bid,
             measured from the midpoint; thinly traded stocks fill at the ask, far above their value. Needs a live
             quote (symbols without one are not checked); sells are never held back by it.
+        rebuyCooldownMinutes: no buy of a symbol the budget sold (by any of its automations) less than this many
+            minutes ago (RECENTLY_SOLD); a TOP_N buy leaves them out before taking the top N. Stops a buy and a
+            sell automation from trading the same stock back and forth.
 
     Used by: AutomationIn.orderGuards, runner.Trading, planner.plan.
     """
@@ -417,6 +420,7 @@ class OrderGuards(BaseModel):
     maxDataAgeMinutes: int = Field(default=30, ge=1)
     requireLivePrice: bool = False
     maxSpreadPercent: Decimal | None = Field(default=None, gt=0, le=100)  # buys: (ask - bid) / midpoint
+    rebuyCooldownMinutes: int | None = Field(default=None, ge=1, le=43200)  # up to 30 days
 
 
 # Any automation action; the "type" field picks the model. Used by: AutomationIn.actions, runner.run_automation.

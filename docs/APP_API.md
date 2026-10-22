@@ -284,7 +284,7 @@ budget, and position caps and `skipBuyIfHeld` look at the budget's shares and op
 ```json
 {"maxOrdersPerRun": 10, "maxPositionValue": null, "maxPositionPercent": null,
  "regularHoursOnly": true, "skipBuyIfHeld": true, "maxDataAgeMinutes": 30, "requireLivePrice": false,
- "maxSpreadPercent": null}
+ "maxSpreadPercent": null, "rebuyCooldownMinutes": null}
 ```
 
 `requireLivePrice: true` places an order only when its symbol has a live quote (see below); otherwise it is skipped
@@ -294,6 +294,11 @@ budget, and position caps and `skipBuyIfHeld` look at the budget's shares and op
 (measured from the midpoint). Thinly traded stocks can quote e.g. bid $25.00 / ask $28.50 (13%): a market buy fills
 at the ask and starts that far below its value. Symbols without a live quote aren't checked, and sells are never
 held back. The check runs after the top N is chosen, so a skipped symbol leaves its rank unfilled.
+
+`rebuyCooldownMinutes` stops a **buy** of a symbol the budget sold (by any of its automations) less than that many
+minutes ago (`RECENTLY_SOLD`). Without it, a buy automation and a stop-loss sell automation in the same budget can
+trade one stock back and forth, losing the spread every time. A `TOP_N` buy leaves these symbols out **before**
+taking the top N (listed as `recentlySold` in the run), so the next best takes the place.
 
 **How a run plans orders:**
 1. **Sync:** current fills and balances are imported from each budget's broker account first. If a broker can't
@@ -317,6 +322,7 @@ held back. The check runs after the top N is chosen, so a skipped symbol leaves 
    | `NO_PRICE` | No price for the symbol |
    | `NO_LIVE_PRICE` | `requireLivePrice` is on and the symbol has no live quote |
    | `WIDE_SPREAD` | A buy whose live bid/ask spread is over `maxSpreadPercent` |
+   | `RECENTLY_SOLD` | A buy of a symbol the budget sold within `rebuyCooldownMinutes` |
    | `ZERO_QUANTITY` | The sizing comes to less than one share |
    | `NOT_SUPPORTED_BY_BROKER` | The broker doesn't support this order type, time in force or extended hours |
 

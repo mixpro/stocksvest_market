@@ -5,6 +5,7 @@ Guards are applied in rank order; the budget is spent top rank first.
 """
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
 
 from ..orders.service import PRICE_BUFFER, OrderRejected, check_request
@@ -39,6 +40,8 @@ class PlanContext:
         session: market session at run time (PRE_MARKET, REGULAR, AFTER_HOURS, CLOSED).
         data_age_minutes: how old the market data is.
         orders_planned: PLACE intents for this budget so far in this run (for maxOrdersPerRun).
+        last_sells: ticker -> when the budget last sold it (for rebuyCooldownMinutes).
+        now: the run time (for rebuyCooldownMinutes).
         budget_left: budget still unspent by planned buys (top rank first).
 
     Used by: plan; runner.Trading.context (built).
@@ -53,6 +56,8 @@ class PlanContext:
     session: str | None
     data_age_minutes: int | None
     orders_planned: int = 0  # across all order actions of the run (for maxOrdersPerRun)
+    last_sells: dict[str, datetime] = field(default_factory=dict)  # ticker -> the budget's last sell
+    now: datetime | None = None
     budget_left: Decimal = field(init=False)
 
     def __post_init__(self):
@@ -103,6 +108,22 @@ def _rank_value(key: RankingKey, ticker: str, ctx: PlanContext) -> Decimal | Non
             return value
         return (value - h.cost_basis) / h.cost_basis * 100 if h.cost_basis else None
     return Decimal(str(v)) if v is not None else None
+
+
+def _sold_recently(ticker: str, guards: OrderGuards | None, ctx: PlanContext) -> datetime | None:
+    """When the budget sold the ticker, if that is within the guards' rebuyCooldownMinutes (else None).
+
+    Args:
+        ticker: the symbol.
+        guards: the automation's OrderGuards; None = no guards.
+        ctx: PlanContext (last_sells, now).
+
+    Used by: select, size.
+    """
+    if guards is None or guards.rebuyCooldownMinutes is None or ctx.now is None:
+        return None
+    sold = ctx.last_sells.get(ticker)
+    return sold if sold and ctx.now - sold < timedelta(minutes=guards.rebuyCooldownMinutes) else None
 
 
 def _spread_percent(snap: dict) -> Decimal | None:
@@ -157,7 +178,7 @@ def select(action: PlaceOrderAction, matched: list[str], ctx: PlanContext, guard
     Sells consider only symbols the budget holds. TOP_N ranks by action.selection.rankBy (on the snapshots the
     context has: the delayed market data) and keeps the best topN; ALL_MATCHES keeps every candidate, sorted.
     A TOP_N buy with skipBuyIfHeld leaves out what the budget already holds or has a buy open for *before* taking
-    the top N, so "top 3" means the 3 best it doesn't own yet.
+    the top N, so "top 3" means the 3 best it doesn't own yet; likewise what it sold within rebuyCooldownMinutes.
 
     Args:
         action: the PLACE_ORDER action.
@@ -167,7 +188,8 @@ def select(action: PlaceOrderAction, matched: list[str], ctx: PlanContext, guard
 
     Returns:
         {"symbols": tickers in rank order, "notHeld": matches a SELL can't use,
-        "alreadyHeld": matches a TOP_N buy left out because the budget holds them}.
+        "alreadyHeld": matches a TOP_N buy left out because the budget holds them,
+        "recentlySold": matches a TOP_N buy left out because the budget sold them within the cooldown}.
 
     Used by: plan, runner._place_orders.
     """
@@ -177,12 +199,14 @@ def select(action: PlaceOrderAction, matched: list[str], ctx: PlanContext, guard
         not_held = len(matched) - len(candidates)
     else:
         candidates, not_held = list(matched), 0
-    already_held = []
-    if (action.side == "BUY" and action.selection.mode == SelectionMode.TOP_N and guards is not None
-            and guards.skipBuyIfHeld):
-        held = {t for t, h in ctx.holdings.items() if h.quantity > 0} | ctx.open_buys
-        already_held = sorted(t for t in candidates if t in held)
-        candidates = [t for t in candidates if t not in held]
+    already_held, recently_sold = [], []
+    if action.side == "BUY" and action.selection.mode == SelectionMode.TOP_N and guards is not None:
+        if guards.skipBuyIfHeld:
+            held = {t for t, h in ctx.holdings.items() if h.quantity > 0} | ctx.open_buys
+            already_held = sorted(t for t in candidates if t in held)
+            candidates = [t for t in candidates if t not in held]
+        recently_sold = sorted(t for t in candidates if _sold_recently(t, guards, ctx))
+        candidates = [t for t in candidates if t not in recently_sold]
 
     # Rank and select.
     sel = action.selection
@@ -192,7 +216,7 @@ def select(action: PlaceOrderAction, matched: list[str], ctx: PlanContext, guard
         candidates = [t for t, _ in with_value + [x for x in valued if x[1] is None]][: sel.topN]
     else:
         candidates = sorted(candidates)
-    return {"symbols": candidates, "notHeld": not_held, "alreadyHeld": already_held}
+    return {"symbols": candidates, "notHeld": not_held, "alreadyHeld": already_held, "recentlySold": recently_sold}
 
 
 def market_blocked(guards: OrderGuards, ctx: PlanContext) -> tuple[str, str] | None:
@@ -287,6 +311,11 @@ def size(action: PlaceOrderAction, guards: OrderGuards, symbols: list[str], ctx:
         if action.side == "BUY":
             if guards.skipBuyIfHeld and (held.quantity > 0 or ticker in ctx.open_buys):
                 _skip(intent, "ALREADY_HELD", "the budget already holds it or has a buy order open")
+                continue
+            sold = _sold_recently(ticker, guards, ctx)
+            if sold:
+                _skip(intent, "RECENTLY_SOLD", f"the budget sold it at {sold:%Y-%m-%d %H:%M} UTC "
+                                               f"(cooldown {guards.rebuyCooldownMinutes} min)")
                 continue
             caps = []
             if guards.maxPositionValue is not None:

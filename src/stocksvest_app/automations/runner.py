@@ -126,7 +126,9 @@ class Trading:
                 open_buys={o["symbol"] for o in open_orders if o["side"] == "BUY"}, open_sells=open_sells,
                 budget_available=Decimal(str(b["available"])) if b else Decimal(0),
                 budget_equity=Decimal(str(b["cash"] + b["invested"])) if b else Decimal(0),
-                session=session, data_age_minutes=data_age)
+                session=session, data_age_minutes=data_age,
+                last_sells=orders_store.last_sells(self.conn, bid) if self.guards.rebuyCooldownMinutes else {},
+                now=datetime.now(timezone.utc))
         return self.plan_ctx
 
 
@@ -488,6 +490,8 @@ def _place_orders(ctx, conn, automation, tradings: list[tuple[dict, "Trading | N
                    "notHeld": chosen["notHeld"]}
             if chosen["alreadyHeld"]:
                 sub["alreadyHeld"] = chosen["alreadyHeld"]  # left out of a TOP_N buy before ranking
+            if chosen["recentlySold"]:
+                sub["recentlySold"] = chosen["recentlySold"]  # likewise, sold within rebuyCooldownMinutes
         except Exception as e:  # one budget failing does not stop the others
             log.exception("automation %s: planning for budget %s failed", automation["id"], trading.budget_id)
             sub.update(status="FAILED", error=str(e))

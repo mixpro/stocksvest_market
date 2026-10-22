@@ -20,7 +20,7 @@ const ORDER_DEFAULT = {
   selection: { mode: "TOP_N", topN: 3, rankBy: "DAILY_CHANGE_PERCENT", descending: true },
   sizings: [{ mode: "CASH_AMOUNT", value: 500 }],
 };
-const GUARD_DEFAULT = { maxOrdersPerRun: 10, maxPositionValue: null, maxPositionPercent: null, regularHoursOnly: true, skipBuyIfHeld: true, maxDataAgeMinutes: 30, maxSpreadPercent: null };
+const GUARD_DEFAULT = { maxOrdersPerRun: 10, maxPositionValue: null, maxPositionPercent: null, regularHoursOnly: true, skipBuyIfHeld: true, maxDataAgeMinutes: 30, maxSpreadPercent: null, rebuyCooldownMinutes: null };
 
 // ------------------------------------------------------------------ loading
 
@@ -238,6 +238,7 @@ function guardsEditor() {
     "or %", numInput(g, "maxPositionPercent", { style: "width:60px", placeholder: "—" }),
     "max data age", numInput(g, "maxDataAgeMinutes", { style: "width:50px", min: 1 }), "min",
     "max buy spread %", numInput(g, "maxSpreadPercent", { style: "width:50px", placeholder: "—" }),
+    "no re-buy for", numInput(g, "rebuyCooldownMinutes", { style: "width:60px", placeholder: "—", min: 1 }), "min after a sell",
     check("regularHoursOnly", "regular hours only"), check("skipBuyIfHeld", "skip buy if held"));
 }
 
@@ -427,7 +428,7 @@ function showRun(run) {
     ...(r.actions || []).filter((a) => a.detail).map((a) => el("p", { class: "muted" }, `${a.index + 1}. ${a.detail}`)),
     ...(r.actions || []).flatMap((a) => (a.budgets || []).map((b) => el("div", {},
       el("h3", {}, `${a.index + 1}. ${a.side === "SELL" ? "Sell" : "Buy"} orders · ${b.name}`,
-        el("span", { class: "muted" }, ` · ${b.intents.filter((x) => x.decision === "PLACE").length} placed${b.notHeld ? ` · ${b.notHeld} matches not held` : ""}${b.alreadyHeld?.length ? ` · already held, left out: ${b.alreadyHeld.join(", ")}` : ""}`)),
+        el("span", { class: "muted" }, ` · ${b.intents.filter((x) => x.decision === "PLACE").length} placed${b.notHeld ? ` · ${b.notHeld} matches not held` : ""}${b.alreadyHeld?.length ? ` · already held, left out: ${b.alreadyHeld.join(", ")}` : ""}${b.recentlySold?.length ? ` · sold recently, left out: ${b.recentlySold.join(", ")}` : ""}`)),
       b.error ? el("div", { class: "down" }, b.error) : null,
       b.intents.length ? el("table", {},
         el("thead", {}, el("tr", {}, ...["#", "Symbol", "Qty", "Price", "Cost", "Decision", "Why"].map((h) => el("th", {}, h)))),

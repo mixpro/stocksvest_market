@@ -373,6 +373,31 @@ def test_top_n_buy_skips_what_the_budget_already_holds(client, setup, broker):
     assert intents(third) == [("BBB", 2, "PLACE", None)] and section(third)["alreadyHeld"] == ["AAA", "CCC"]
 
 
+def test_rebuy_cooldown_after_a_sell(client, setup, broker):
+    # The KELYB loop: buy AAA (top daily change), the seller sells it, the buyer must not buy it straight back.
+    action = order_action(selection={"mode": "TOP_N", "topN": 1, "rankBy": "DAILY_CHANGE_PERCENT"},
+                          sizings=[{"mode": "QUANTITY", "value": 2}])
+    buyer = make(client, setup, action, guards={"rebuyCooldownMinutes": 60})
+    assert intents(run(client, buyer)) == [("AAA", 2, "PLACE", None)]
+    fill_all(broker)
+    seller = automation(client, setup, order_action("SELL", [{"mode": "PERCENT_OF_POSITION", "value": 100}]),
+                        name="Seller")
+    client.post(f"/v1/budgets/{buyer['budget']['id']}/automations", headers=KEY, json={"automationId": seller["id"]})
+    run(client, seller)
+    fill_all(broker)
+    again = run(client, buyer)  # AAA was just sold: the next best (CCC) takes its place
+    assert intents(again) == [("CCC", 2, "PLACE", None)] and section(again)["recentlySold"] == ["AAA"]
+
+    every = make(client, setup, order_action(sizings=[{"mode": "QUANTITY", "value": 1}]),
+                 guards={"rebuyCooldownMinutes": 60}, budget=None)  # ALL_MATCHES, in the same budget
+    client.post(f"/v1/budgets/{buyer['budget']['id']}/automations", headers=KEY, json={"automationId": every["id"]})
+    by = {i["ticker"]: i for i in section(run(client, every, preview=True))["intents"]}
+    assert by["AAA"]["skipReason"] == "RECENTLY_SOLD" and "cooldown 60 min" in by["AAA"]["detail"]
+
+    off = make(client, setup, action)  # no cooldown, own budget: AAA is bought as before
+    assert intents(run(client, off, preview=True)) == [("AAA", 2, "PLACE", None)]
+
+
 def test_top_n_still_counts_held_symbols_when_skip_buy_if_held_is_off(client, setup, broker):
     action = order_action(selection={"mode": "TOP_N", "topN": 1, "rankBy": "DAILY_CHANGE_PERCENT"},
                           sizings=[{"mode": "QUANTITY", "value": 2}])
