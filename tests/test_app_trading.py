@@ -171,6 +171,9 @@ def test_manual_buy_fill_and_sync(client, portfolio, broker):
     assert pf["cash"] == pytest.approx(10000 - 100.5)  # the portfolio's own cash, from its ledger
     aaa = next(p for p in pf["positions"] if p["symbol"] == "AAA")
     assert aaa["quantity"] == 10 and aaa["averageCost"] == 10.05 and aaa["marketValue"] == 100.0
+    assert aaa["unrealizedPnL"] == pytest.approx(-0.5) and aaa["unrealizedPct"] == -0.5  # -0.50 on 100.50
+    assert (pf["positionsCost"], pf["positionsValue"], pf["unrealizedPct"]) == (100.5, 100.0, -0.5)
+    assert pf["totalReturn"] == pytest.approx(-0.5) and pf["totalReturnPct"] == -0.01  # -0.50 on 10,000 capital
     assert sync(client, portfolio)["sync"]["fillsImported"] == 0  # imported once
 
 

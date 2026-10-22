@@ -18,6 +18,7 @@ const fmt = (v, digits = 2) => (v === null || v === undefined ? "—" : Number(v
 const when = (iso) => (iso ? new Date(iso).toLocaleString() : "—");
 const money = (v) => (v === null || v === undefined ? "—" : Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const signed = (v) => (v === null || v === undefined ? "—" : `${v > 0 ? "+" : ""}${money(v)}`);
+const signedPct = (v) => (v === null || v === undefined ? "" : ` (${v > 0 ? "+" : ""}${Number(v).toFixed(2)}%)`);
 const tone = (v) => (v > 0 ? "up" : v < 0 ? "down" : "");
 
 // ------------------------------------------------------------------ API key

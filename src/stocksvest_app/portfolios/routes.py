@@ -180,7 +180,10 @@ def router(ctx: AppContext) -> APIRouter:
                 quotes = {t: q for t, q in ctx.market.live_quotes(symbols).items() if q.get("source") == "IBKR"}
             except MarketError:
                 quotes = {}
-        positions, value_total, unrealized = [], D0, D0
+        def pct(gain: Decimal, base: Decimal) -> float | None:
+            return round(float(gain / base * 100), 2) if base else None
+
+        positions, value_total, cost_total, unrealized = [], D0, D0, D0
         for x in rows:
             q = quotes.get(x["symbol"])
             # Valued at the last trade, like the broker shows it (the bid/ask midpoint drifts after the close).
@@ -189,17 +192,23 @@ def router(ctx: AppContext) -> APIRouter:
             value = x["quantity"] * Decimal(str(price)) if price is not None else None
             if value is not None:
                 value_total += value
+                cost_total += x["costBasis"]  # only priced positions, so cost and value compare like for like
                 unrealized += value - x["costBasis"]
             positions.append({"symbol": x["symbol"], "budgetId": x["budgetId"], "automationId": x["automationId"],
                               "quantity": num(x["quantity"]),
                               "averageCost": num(x["averageCost"]), "costBasis": num(x["costBasis"]),
                               "price": price, "priceSource": "IBKR" if q else "DELAYED", "marketValue": num(value),
-                              "unrealizedPnL": num(value - x["costBasis"]) if value is not None else None})
+                              "unrealizedPnL": num(value - x["costBasis"]) if value is not None else None,
+                              "unrealizedPct": pct(value - x["costBasis"], x["costBasis"]) if value is not None else None})
         manual = service.open_manual_buys(conn, p["id"])
         account = account_of(conn, p)
+        equity = Decimal(str(p["cash"])) + value_total
+        total_return = equity - Decimal(str(p["allocated"]))
         return {**p, "unallocatedCash": num(budget.unallocated_cash(conn, p, manual)), "openManualBuys": num(manual),
-                "positionsValue": num(value_total), "unrealizedPnL": num(unrealized),
-                "equity": num(Decimal(str(p["cash"])) + value_total),
+                "positionsValue": num(value_total), "positionsCost": num(cost_total), "unrealizedPnL": num(unrealized),
+                "unrealizedPct": pct(unrealized, cost_total),
+                "equity": num(equity), "totalReturn": num(total_return),
+                "totalReturnPct": pct(total_return, Decimal(str(p["allocated"]))),
                 "realizedPnL": num(store.realized_pnl(conn, p["id"])), "budgets": budget.list_budgets(conn, p["id"]),
                 "positions": positions,
                 "account": {"id": account["id"], "name": account["name"], "cash": account["cash"],

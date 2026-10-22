@@ -165,7 +165,6 @@ async function showLedger() {
 function render() {
   const p = pf.data;
   const sync = p.lastSync;
-  const totals = p.positions.reduce((t, x) => ({ value: t.value + (x.marketValue || 0), pnl: t.pnl + (x.unrealizedPnL || 0) }), { value: 0, pnl: 0 });
   setChildren($("#editor"), 
     el("div", { class: "section-head" }, el("h2", {}, p.name),
       el("button", { onclick: () => guard(async () => { const r = await api(`/v1/portfolios/${p.id}/sync`, { method: "POST" }); pf.data = r.portfolio; render(); showOrders(); drawHistory(); }) }, "Sync now")),
@@ -173,9 +172,10 @@ function render() {
       el("dt", {}, "Capital"), el("dd", {}, `${money(p.allocated)} ${p.currency} · from ${p.account.name}`),
       el("dt", {}, "Cash"), el("dd", {}, money(p.cash)),
       el("dt", {}, "Unallocated"), el("dd", {}, `${money(p.unallocatedCash)} (not in budgets)`),
-      el("dt", {}, "Equity"), el("dd", {}, money(p.equity), " · ",
-        el("span", { class: tone(p.equity - p.allocated) }, `${signed(p.equity - p.allocated)} vs capital`)),
-      el("dt", {}, "Positions"), el("dd", {}, `${money(totals.value)} · unrealized `, el("span", { class: tone(totals.pnl) }, signed(totals.pnl))),
+      el("dt", {}, "Total return"), el("dd", {}, `${money(p.allocated)} → ${money(p.equity)} · `,
+        el("span", { class: tone(p.totalReturn) }, signed(p.totalReturn) + signedPct(p.totalReturnPct)), el("span", { class: "muted" }, " capital → equity")),
+      el("dt", {}, "Open positions"), el("dd", {}, `${money(p.positionsCost)} → ${money(p.positionsValue)} · `,
+        el("span", { class: tone(p.unrealizedPnL) }, signed(p.unrealizedPnL) + signedPct(p.unrealizedPct)), el("span", { class: "muted" }, " cost → value")),
       el("dt", {}, "Realized P&L"), el("dd", { class: tone(p.realizedPnL) }, signed(p.realizedPnL)),
       el("dt", {}, "Last sync"), el("dd", {}, sync ? `${when(sync.ranAt)}${sync.error ? ` · ${sync.error}` : ""}` : "—")),
     capitalControls(p),
@@ -193,7 +193,7 @@ function render() {
         el("td", { class: "num" }, fmt(x.quantity, 0)), el("td", { class: "num" }, money(x.averageCost)),
         el("td", { class: "num" }, money(x.price), el("span", { class: "muted" }, x.priceSource === "IBKR" ? " live" : " delayed")),
         el("td", { class: "num" }, money(x.marketValue)),
-        el("td", { class: `num ${tone(x.unrealizedPnL)}` }, signed(x.unrealizedPnL)))))) : el("p", { class: "muted" }, "No positions."),
+        el("td", { class: `num ${tone(x.unrealizedPnL)}` }, signed(x.unrealizedPnL) + signedPct(x.unrealizedPct)))))) : el("p", { class: "muted" }, "No positions."),
     budgetsSection(p),
     orderForm(),
   );
