@@ -506,6 +506,9 @@ def test_manual_orders_and_positions_use_live_prices(client, portfolio, broker, 
     market.live = {"AAA": {"bid": 10.0, "ask": 11.4, "last": 10.3, "price": 10.7}}  # wide after-hours quote
     pos = client.get(f"/v1/portfolios/{portfolio['id']}", headers=KEY).json()["positions"][0]
     assert pos["price"] == 10.3  # the last trade, like the broker shows it, not the 10.7 midpoint
+    market.live = {"AAA": {"bid": 6.0, "ask": 10.2, "last": None, "price": 8.1}}  # no trade yet before the open
+    pos = client.get(f"/v1/portfolios/{portfolio['id']}", headers=KEY).json()["positions"][0]
+    assert (pos["price"], pos["priceSource"]) == (10.0, "DELAYED")  # the delayed last trade, not the midpoint
     market.live = {}
     pos = client.get(f"/v1/portfolios/{portfolio['id']}", headers=KEY).json()["positions"][0]
     assert (pos["price"], pos["priceSource"]) == (10.0, "DELAYED")

@@ -177,9 +177,13 @@ def router(ctx: AppContext) -> APIRouter:
         quotes = {}
         if live and symbols:
             try:
-                quotes = {t: q for t, q in ctx.market.live_quotes(symbols).items() if q.get("source") == "IBKR"}
+                # Only quotes with a last trade: without one (often before the open) the price is the bid/ask
+                # midpoint, which is far off on a wide spread; the delayed last trade is closer to the broker's value.
+                quotes = {t: q for t, q in ctx.market.live_quotes(symbols).items()
+                          if q.get("source") == "IBKR" and q.get("last") is not None}
             except MarketError:
                 quotes = {}
+
         def pct(gain: Decimal, base: Decimal) -> float | None:
             return round(float(gain / base * 100), 2) if base else None
 
@@ -187,8 +191,7 @@ def router(ctx: AppContext) -> APIRouter:
         for x in rows:
             q = quotes.get(x["symbol"])
             # Valued at the last trade, like the broker shows it (the bid/ask midpoint drifts after the close).
-            price = (q.get("last") if q.get("last") is not None else q["price"]) if q else \
-                snaps.get(x["symbol"], {}).get("latestPrice")
+            price = q["last"] if q else snaps.get(x["symbol"], {}).get("latestPrice")
             value = x["quantity"] * Decimal(str(price)) if price is not None else None
             if value is not None:
                 value_total += value
