@@ -317,6 +317,21 @@ def test_sells_use_the_bid_and_require_live_price_skips(client, setup, broker, m
     assert by["BBB"]["skipReason"] == "NO_LIVE_PRICE" and by["CCC"]["skipReason"] == "NO_LIVE_PRICE"
 
 
+def test_max_spread_skips_buys_with_a_wide_spread(client, setup, broker, market):
+    market.live = {"AAA": {"bid": 25.0, "ask": 28.5, "last": None, "price": 26.75},  # 13.1% spread (KELYB, 10-22)
+                   "BBB": {"bid": 49.0, "ask": 49.5, "last": 49.2, "price": 49.25}}  # 1%
+    a = make(client, setup, order_action(sizings=[{"mode": "QUANTITY", "value": 2}]), guards={"maxSpreadPercent": 5})
+    by = {i["ticker"]: i for i in section(run(client, a))["intents"]}
+    assert by["AAA"]["skipReason"] == "WIDE_SPREAD" and "13.1% spread" in by["AAA"]["detail"]
+    assert by["BBB"]["decision"] == "PLACE" and by["CCC"]["decision"] == "PLACE"  # CCC: no live quote, not checked
+    fill_all(broker)
+    seller = automation(client, setup, order_action("SELL", [{"mode": "PERCENT_OF_POSITION", "value": 100}]),
+                        guards={"maxSpreadPercent": 0.1}, name="Seller")
+    client.post(f"/v1/budgets/{a['budget']['id']}/automations", headers=KEY, json={"automationId": seller["id"]})
+    by = {i["ticker"]: i for i in section(run(client, seller))["intents"]}
+    assert by["BBB"]["decision"] == "PLACE"  # sells are never held back by the spread
+
+
 def test_live_quotes_down_falls_back_to_delayed_prices(client, setup, broker, market, monkeypatch):
     from stocksvest_app.market.client import MarketError
 

@@ -105,6 +105,21 @@ def _rank_value(key: RankingKey, ticker: str, ctx: PlanContext) -> Decimal | Non
     return Decimal(str(v)) if v is not None else None
 
 
+def _spread_percent(snap: dict) -> Decimal | None:
+    """A live quote's bid/ask spread as a % of its midpoint (None without a usable bid and ask).
+
+    Args:
+        snap: a snapshot with a live quote merged in (bid, ask).
+
+    Used by: size (maxSpreadPercent).
+    """
+    bid, ask = snap.get("bid"), snap.get("ask")
+    if bid is None or ask is None or bid <= 0 or ask < bid:
+        return None
+    bid, ask = Decimal(str(bid)), Decimal(str(ask))
+    return (ask - bid) / ((ask + bid) / 2) * 100
+
+
 def _intent(ticker, side, rank, sizing, **kw) -> dict:
     """A new intent dict (decision PLACE until a guard says otherwise).
 
@@ -240,6 +255,11 @@ def size(action: PlaceOrderAction, guards: OrderGuards, symbols: list[str], ctx:
         intent["quoteAgeSeconds"] = snap.get("quoteAgeSeconds")
         if guards.requireLivePrice and not live:
             _skip(intent, "NO_LIVE_PRICE", "no live quote right now (requireLivePrice)")
+            continue
+        spread = _spread_percent(snap) if live and action.side == "BUY" else None
+        if guards.maxSpreadPercent is not None and spread is not None and spread > guards.maxSpreadPercent:
+            _skip(intent, "WIDE_SPREAD", f"bid {snap['bid']} / ask {snap['ask']} is a {spread:.1f}% spread "
+                                         f"(max {guards.maxSpreadPercent})")
             continue
         side_price = (snap.get("ask") if action.side == "BUY" else snap.get("bid")) if live else None
         snap_price = side_price if side_price is not None else snap.get("latestPrice")

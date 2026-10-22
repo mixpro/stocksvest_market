@@ -273,11 +273,17 @@ budget, and position caps and `skipBuyIfHeld` look at the budget's shares and op
 
 ```json
 {"maxOrdersPerRun": 10, "maxPositionValue": null, "maxPositionPercent": null,
- "regularHoursOnly": true, "skipBuyIfHeld": true, "maxDataAgeMinutes": 30, "requireLivePrice": false}
+ "regularHoursOnly": true, "skipBuyIfHeld": true, "maxDataAgeMinutes": 30, "requireLivePrice": false,
+ "maxSpreadPercent": null}
 ```
 
 `requireLivePrice: true` places an order only when its symbol has a live quote (see below); otherwise it is skipped
 (`NO_LIVE_PRICE`) instead of priced at the ~16 minute delayed price.
+
+`maxSpreadPercent` skips a **buy** (`WIDE_SPREAD`) when its live quote's ask is more than this % above the bid
+(measured from the midpoint). Thinly traded stocks can quote e.g. bid $25.00 / ask $28.50 (13%): a market buy fills
+at the ask and starts that far below its value. Symbols without a live quote aren't checked, and sells are never
+held back. The check runs after the top N is chosen, so a skipped symbol leaves its rank unfilled.
 
 **How a run plans orders:**
 1. **Sync:** current fills and balances are imported from each budget's broker account first. If a broker can't
@@ -300,6 +306,7 @@ budget, and position caps and `skipBuyIfHeld` look at the budget's shares and op
    | `MAX_ORDERS_REACHED` | `maxOrdersPerRun` reached |
    | `NO_PRICE` | No price for the symbol |
    | `NO_LIVE_PRICE` | `requireLivePrice` is on and the symbol has no live quote |
+   | `WIDE_SPREAD` | A buy whose live bid/ask spread is over `maxSpreadPercent` |
    | `ZERO_QUANTITY` | The sizing comes to less than one share |
    | `NOT_SUPPORTED_BY_BROKER` | The broker doesn't support this order type, time in force or extended hours |
 
