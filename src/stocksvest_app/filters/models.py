@@ -80,7 +80,7 @@ class TimePeriodUnit(str, Enum):
     MINUTES is limited to MAX_MINUTE_LOOKBACK. Only market time counts: DAYS are trading days, MINUTES / HOURS
     market hours (04:00-20:00 New York); WEEKS / MONTHS / YEARS are calendar periods.
 
-    Used by: PriceChangeAction.periodUnit, routes.filter_actions.
+    Used by: PriceChangeAction.periodUnit, HoldingPeriodAction.periodUnit (calendar time there), routes.filter_actions.
     """
 
     MINUTES = "MINUTES"
@@ -114,8 +114,8 @@ class FilterInput(BaseModel):
 class Comparison(BaseModel):
     """Shared fields of actions that compare a number: condition, value and (for BETWEEN) maxValue.
 
-    Used by: SymbolPriceAction, PriceChangeAction, AverageVolumeAction, UnrealizedPnlAction (base class);
-    engine.Evaluator.apply (matches).
+    Used by: SymbolPriceAction, PriceChangeAction, AverageVolumeAction, UnrealizedPnlAction, HoldingPeriodAction
+    (base class); engine.Evaluator.apply (matches).
     """
 
     condition: Condition
@@ -215,7 +215,8 @@ class AverageVolumeAction(Comparison):
 class PortfolioIds(BaseModel):
     """`portfolioIds` of actions that look at portfolio positions: one or more portfolios, each at most once.
 
-    Used by: PositionAction, UnrealizedPnlAction (base class); engine.check_filter_refs (portfolios must exist),
+    Used by: PositionAction, UnrealizedPnlAction, HoldingPeriodAction (base class); engine.check_filter_refs
+    (portfolios must exist),
     filters.store.portfolio_users (portfolio delete guard).
     """
 
@@ -250,10 +251,31 @@ class UnrealizedPnlAction(PortfolioIds, Comparison):
     valueType: ValueType
 
 
+class HoldingPeriodAction(PortfolioIds, Comparison):
+    """Keep held symbols whose holding period, in `periodUnit`, matches the comparison: the time since the oldest open
+    lot of the symbol in the portfolios (any owner) was bought. Calendar time: DAYS are 24 hours (a Friday buy is 3
+    days old on Monday), MONTHS 30.4375 days, YEARS 365.25 days. Symbols not held there are dropped.
+
+    Example: {"periodUnit": "DAYS", "condition": "MORE_THAN", "value": 5} = held for more than 5 days.
+
+    Used by: FilterAction, engine.Evaluator.apply (via _opened).
+    """
+
+    type: Literal["HOLDING_PERIOD"]
+    periodUnit: TimePeriodUnit
+
+    @model_validator(mode="after")
+    def check_not_negative(self):
+        """A holding period can't be negative."""
+        if self.value < 0:
+            raise ValueError("value must be 0 or more")
+        return self
+
+
 # Any filter action; the "type" field picks the model. Used by: FilterIn.actions, engine.Evaluator.apply.
 FilterAction = Annotated[
     Union[SymbolTypeAction, SectorAction, SymbolPriceAction, PriceChangeAction, AverageVolumeAction, PositionAction,
-          UnrealizedPnlAction],
+          UnrealizedPnlAction, HoldingPeriodAction],
     Field(discriminator="type"),
 ]
 

@@ -47,6 +47,7 @@ inputs (union) ──► action 1 ──► action 2 ──► … ──► mat
    | `AVERAGE_VOLUME` | `days` (default 20), `volumeType`, `condition`, `value`, `maxValue` | the average daily trading over the last `days` completed trading days matches |
    | `POSITION` | `portfolioIds`: one or more portfolio ids | the symbol is held in at least one of the portfolios (manual or automation shares) |
    | `UNREALIZED_PNL` | `portfolioIds`, `valueType`, `condition`, `value`, `maxValue` | the unrealized gain/loss of the shares held matches, e.g. `PERCENT` `LESS_THAN` `-8` = down more than 8% from the buy price (a stop-loss) |
+   | `HOLDING_PERIOD` | `portfolioIds`, `periodUnit`, `condition`, `value`, `maxValue` | the time the symbol has been held matches, e.g. `DAYS` `MORE_THAN` `5` = held for more than 5 days |
 
    - **`priceReference`:**
      - `LATEST_BAR`: newest price: real-time for symbols a portfolio holds, else ~16 min delayed
@@ -69,6 +70,11 @@ inputs (union) ──► action 1 ──► action 2 ──► … ──► mat
      stocks out: their price jumps on a few shares (a big "daily change" from one small trade) and their bid and ask
      are far apart. Example, "at least $1M a day over 20 days":
      `{"type": "AVERAGE_VOLUME", "days": 20, "volumeType": "DOLLARS", "condition": "MORE_THAN", "value": 1000000}`
+   - **`HOLDING_PERIOD`:** counted from the oldest open lot of the symbol in the listed portfolios (manual and automation
+     shares), i.e. when the position was opened; a later buy doesn't reset it. Calendar time: `DAYS` are 24 hours (a
+     Friday buy is 3 days old on Monday), `MONTHS` 30.4375 days, `YEARS` 365.25 days. Symbols not held there are dropped.
+     Typical uses in a sell filter: a time exit ("held more than 2 weeks"), or giving a new position room ("price change
+     below −2.5% in 3 hours **and** held more than 1 day").
    - **`UNREALIZED_PNL`:** the shares of all the listed portfolios (manual and automation) count together, valued at
      the IBKR live last trade (else the ~16 min delayed price, like the portfolio page) against what they cost. `PERCENT` is of the cost, `ABSOLUTE` in dollars.
      Symbols not held there, or without a price, are dropped. Unlike `PRICE_CHANGE`, which looks at a time window,

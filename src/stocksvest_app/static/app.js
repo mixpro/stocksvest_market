@@ -199,6 +199,7 @@ const ACTION_DEFAULTS = {
   AVERAGE_VOLUME: { days: 20, volumeType: "DOLLARS", condition: "MORE_THAN", value: 1000000 },
   POSITION: { portfolioIds: [] },
   UNREALIZED_PNL: { portfolioIds: [], valueType: "PERCENT", condition: "LESS_THAN", value: -8 },
+  HOLDING_PERIOD: { portfolioIds: [], periodUnit: "DAYS", condition: "MORE_THAN", value: 5 },
 };
 
 function addActionSelect() {

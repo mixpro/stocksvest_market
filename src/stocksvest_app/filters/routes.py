@@ -77,8 +77,8 @@ def router(ctx: AppContext) -> APIRouter:
         """Everything a client needs to build the filter editor: input types and action fields.
         \f
         Sector options come from the market API (empty, and SECTOR marked unavailable, when it is down).
-        Portfolio options (POSITION, UNREALIZED_PNL, and the INVESTMENT_PORTFOLIO input) are the app's portfolios;
-        POSITION and UNREALIZED_PNL are unavailable until one exists.
+        Portfolio options (POSITION, UNREALIZED_PNL, HOLDING_PERIOD, and the INVESTMENT_PORTFOLIO input) are the app's
+        portfolios; those actions are unavailable until one exists.
 
         Args:
             conn: app DB connection (injected).
@@ -121,6 +121,10 @@ def router(ctx: AppContext) -> APIRouter:
                     portfolio_ids,
                     {"name": "valueType", "kind": "select", "options": _values(ValueType), "required": True},
                     condition, value, max_value]},
+                {"type": "HOLDING_PERIOD", "label": "Holding period", "available": bool(portfolios), "fields": [
+                    portfolio_ids,
+                    {"name": "periodUnit", "kind": "select", "options": _values(TimePeriodUnit), "required": True},
+                    condition, {**value, "min": 0}, max_value]},
             ],
         }
 

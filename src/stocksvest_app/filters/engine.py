@@ -3,6 +3,7 @@
 import logging
 import sqlite3
 from datetime import datetime, timezone
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from ..market.client import MarketError
@@ -14,6 +15,7 @@ from .models import (
     AverageVolumeAction,
     FilterAction,
     FilterIn,
+    HoldingPeriodAction,
     InputType,
     PortfolioIds,
     PositionAction,
@@ -28,6 +30,10 @@ from .models import (
 )
 
 ET = ZoneInfo("America/New_York")  # Used by: Evaluator._last_close (today's date in New York)
+# Seconds per HOLDING_PERIOD unit (calendar time; months and years as the market service counts them).
+# Used by: Evaluator.apply
+UNIT_SECONDS = {"MINUTES": 60, "HOURS": 3600, "DAYS": 86400, "WEEKS": 7 * 86400, "MONTHS": 30.4375 * 86400,
+                "YEARS": 365.25 * 86400}
 log = logging.getLogger(__name__)
 
 
@@ -82,7 +88,7 @@ def find_cycle(conn: sqlite3.Connection, start: tuple[str, str], start_deps: lis
 
 def check_filter_refs(conn, f: FilterIn, filter_id: str | None) -> None:
     """Refuse a filter whose inputs reference missing filters/groups/portfolios or would create a cycle, or whose
-    POSITION / UNREALIZED_PNL actions name missing portfolios.
+    POSITION / UNREALIZED_PNL / HOLDING_PERIOD actions name missing portfolios.
 
     Args:
         conn: app DB connection.
@@ -278,6 +284,27 @@ class Evaluator:
                     total["costBasis"] += p["costBasis"]
         return out
 
+    def _opened(self, portfolio_ids: list[str]) -> dict[str, datetime]:
+        """When each held symbol's position was opened: its oldest open lot (any owner) in any of the portfolios.
+
+        Args:
+            portfolio_ids: the portfolios.
+
+        Raises:
+            EngineError: a portfolio no longer exists.
+
+        Used by: apply (HOLDING_PERIOD).
+        """
+        out: dict[str, datetime] = {}
+        for pid in portfolio_ids:
+            if not portfolios_store.get_portfolio(self.conn, pid):
+                raise EngineError(f"portfolio '{pid}' does not exist")
+            for lot in portfolios_store.open_lots(self.conn, pid, any_owner=True):
+                at = datetime.fromisoformat(lot["opened_at"].replace("Z", "+00:00"))
+                if Decimal(lot["remaining_quantity"]) > 0 and (lot["symbol"] not in out or at < out[lot["symbol"]]):
+                    out[lot["symbol"]] = at
+        return out
+
     def _held(self, portfolio_ids: list[str]) -> set[str]:
         """Symbols with an open position (any owner) in any of the portfolios.
 
@@ -342,7 +369,7 @@ class Evaluator:
 
         Args:
             action: SymbolTypeAction, SectorAction, SymbolPriceAction, PriceChangeAction, AverageVolumeAction,
-                PositionAction or UnrealizedPnlAction.
+                PositionAction, UnrealizedPnlAction or HoldingPeriodAction.
             symbols: the symbols still in the running.
 
         Returns:
@@ -375,6 +402,11 @@ class Evaluator:
             return symbols & self._held(action.portfolioIds)
         if isinstance(action, UnrealizedPnlAction):
             return self._unrealized_pnl(action, symbols)
+        if isinstance(action, HoldingPeriodAction):
+            unit = UNIT_SECONDS[action.periodUnit.value]
+            opened = self._opened(action.portfolioIds)
+            return {t for t in symbols & set(opened)
+                    if action.matches((self.now - opened[t]).total_seconds() / unit)}
         raise EngineError(f"unknown action {action}")
 
     # -- entry points

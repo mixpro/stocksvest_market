@@ -145,7 +145,7 @@ def filter_users(conn, filter_id: str) -> list[str]:
 
 
 def portfolio_users(conn, portfolio_id: str) -> list[str]:
-    """Names of filters with this portfolio as an input or in a POSITION / UNREALIZED_PNL action.
+    """Names of filters with this portfolio as an input or in a POSITION / UNREALIZED_PNL / HOLDING_PERIOD action.
 
     Args:
         conn: app DB connection.

@@ -192,6 +192,61 @@ def test_unrealized_pnl_validation_and_metadata(client, portfolios):
         "portfolioIds", "valueType", "condition", "value", "maxValue"]
 
 
+# ------------------------------------------------------------------ HOLDING_PERIOD action
+
+
+def held_for(ids, unit, cond, value, max_value=None):
+    return {"type": "HOLDING_PERIOD", "portfolioIds": list(ids), "periodUnit": unit, "condition": cond,
+            "value": value, "maxValue": max_value}
+
+
+def test_holding_period(client, portfolios):
+    from datetime import datetime, timedelta, timezone
+
+    from stocksvest_app import db
+
+    a, b = portfolios
+    now = datetime.now(timezone.utc)
+    conn = db.connect(Settings().db_path)
+    with conn:  # AAA held 10 days, BBB 2 hours (both in A), CCC 40 days (in B)
+        for symbol, age in (("AAA", timedelta(days=10)), ("BBB", timedelta(hours=2)), ("CCC", timedelta(days=40))):
+            conn.execute("UPDATE position_lots SET opened_at = ? WHERE symbol = ?",
+                         ((now - age).isoformat(), symbol))
+    conn.close()
+    both = (a["id"], b["id"])
+    out = preview(client, [held_for(both, "DAYS", "MORE_THAN", 5)])
+    assert tickers(out) == {"AAA", "CCC"} and out["steps"][-1] == {"step": "HOLDING_PERIOD", "count": 2}
+    assert tickers(preview(client, [held_for(both, "HOURS", "LESS_THAN", 3)])) == {"BBB"}
+    assert tickers(preview(client, [held_for(both, "WEEKS", "BETWEEN", 1, 2)])) == {"AAA"}
+    assert tickers(preview(client, [held_for(both, "MONTHS", "MORE_THAN", 1)])) == {"CCC"}
+    assert tickers(preview(client, [held_for([a["id"]], "DAYS", "MORE_THAN", 5)])) == {"AAA"}  # CCC is in B
+    body = lambda actions: {"name": "F", "inputs": [{"type": "UNIVERSE"}], "actions": actions}  # noqa: E731
+    assert client.post("/v1/filters", headers=KEY, json=body([held_for([a["id"]], "DAYS", "MORE_THAN", -1)])).status_code == 422
+    r = client.post("/v1/filters", headers=KEY, json=body([held_for(["pf_missing"], "DAYS", "MORE_THAN", 1)]))
+    assert r.status_code == 422 and "pf_missing" in r.text
+    meta = next(m for m in client.get("/v1/filter-actions", headers=KEY).json()["actions"] if m["type"] == "HOLDING_PERIOD")
+    assert meta["available"] and [f["name"] for f in meta["fields"]] == [
+        "portfolioIds", "periodUnit", "condition", "value", "maxValue"]
+
+
+def test_holding_period_uses_the_oldest_lot(client, portfolios, broker):
+    from datetime import datetime, timedelta, timezone
+
+    from stocksvest_app import db
+
+    a, _ = portfolios
+    conn = db.connect(Settings().db_path)
+    with conn:
+        conn.execute("UPDATE position_lots SET opened_at = ? WHERE symbol = 'AAA'",
+                     ((datetime.now(timezone.utc) - timedelta(days=8)).isoformat(),))
+    conn.close()
+    order = client.post(f"/v1/portfolios/{a['id']}/orders", headers=KEY,
+                        json={"symbol": "AAA", "side": "BUY", "quantity": 1}).json()
+    broker.fill(order["brokerOrderId"], 1, 11)  # a second, new lot of AAA
+    client.post(f"/v1/portfolios/{a['id']}/sync", headers=KEY)
+    assert tickers(preview(client, [held_for([a["id"]], "DAYS", "MORE_THAN", 7)])) == {"AAA"}
+
+
 def test_held_symbols_get_live_bars(client, portfolios, market):
     from types import SimpleNamespace
 
