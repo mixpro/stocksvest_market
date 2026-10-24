@@ -1,0 +1,264 @@
+"""Replay a Buy and a Sell automation over history with the app's own filter engine and order planner.
+
+Every trading hour (10:00 to 15:00 New York, while the regular session is open) the Sell automation runs first, then
+the Buy automation, exactly as the live runner does them: evaluate the run targets, planner.select, put live quotes
+(modelled spreads) into the plan, planner.size, then fill each PLACE intent at once at its estimated price (the ask for
+buys, the bid for sells). Shares are kept as position lots in a scratch copy of the app database, so filters that read
+the portfolio (INVESTMENT_PORTFOLIO inputs, POSITION, UNREALIZED_PNL) see the simulated holdings.
+
+Simplifications, listed in every report: hourly steps instead of the live 1- and 15-minute schedules; market orders
+fill completely at the modelled bid/ask; no fees (Alpaca paper); today's halal universe throughout.
+
+Used by: backtest.__main__, tests.
+"""
+
+import json
+import sqlite3
+import tempfile
+from dataclasses import dataclass, field
+from datetime import date, datetime, time, timezone
+from decimal import Decimal
+from pathlib import Path
+
+from .. import db
+from ..automations import planner
+from ..automations import store as automations_store
+from ..automations.models import AutomationIn, OrderGuards
+from ..brokers.base import BrokerCapabilities
+from ..budgets import store as budget_store
+from ..filters import store as filters_store
+from ..filters.engine import Evaluator
+from ..filters.models import FilterIn
+from ..market.data import MarketData
+from ..portfolios import store as portfolios_store
+from .history import ET, HistoricalMarket
+
+STEP_HOURS = range(10, 16)  # 10:00 .. 15:00 New York. Used by: run
+
+
+class _Broker:
+    """Capabilities only (the planner's order checks); nothing is ever sent. Used by: run."""
+
+    def capabilities(self) -> BrokerCapabilities:
+        return BrokerCapabilities(order_types={"MARKET", "LIMIT", "STOP", "STOP_LIMIT", "TRAILING_STOP"},
+                                  time_in_force={"DAY", "GTC", "OPG", "CLS", "IOC", "FOK"}, fractional_shares=False,
+                                  extended_hours=True, short_selling=False, max_orders_per_minute=200)
+
+
+@dataclass
+class Book:
+    """The simulated budget: cash, trades, the cooldown's last sells and the equity curve."""
+
+    cash: Decimal
+    trades: list[dict] = field(default_factory=list)
+    last_sells: dict[str, datetime] = field(default_factory=dict)
+    equity: list[dict] = field(default_factory=list)
+
+
+def _targets(conn, ev: Evaluator, automation: dict) -> tuple[set[str], dict[str, str]]:
+    """The run targets' union, as runner._run_targets computes it, plus which filter matched each symbol first.
+
+    Args:
+        conn: app DB connection.
+        ev: the step's Evaluator.
+        automation: the automation dict.
+
+    Returns:
+        (matched tickers, ticker -> name of the first filter that matched it).
+    """
+    union, first = set(), {}
+    for target in automation["runTargets"]:
+        ids = [target["id"]] if target["type"] == "FILTER" else filters_store.get_group(conn, target["id"])["filterIds"]
+        for fid in ids:
+            f = filters_store.get_filter(conn, fid)
+            out = ev.evaluate(FilterIn.model_validate(f), (fid,))["symbols"]
+            for t in out:
+                first.setdefault(t, f["name"])
+            union |= out
+    return union, first
+
+
+def _context(conn, hist: HistoricalMarket, ev: Evaluator, book: Book, portfolio_id: str, budget_id: str,
+             matched: set[str], now: datetime) -> planner.PlanContext:
+    """The budget's PlanContext at `now`, built like runner.Trading.context."""
+    holdings = {p["symbol"]: planner.Holding(p["quantity"], p["costBasis"])
+                for p in portfolios_store.positions(conn, portfolio_id, budget_id=budget_id)}
+    snaps = ev._snaps(set(matched) | set(holdings))
+    invested = sum((h.quantity * Decimal(str(snaps.get(t, {}).get("latestPrice") or 0)) for t, h in holdings.items()),
+                   Decimal(0))
+    return planner.PlanContext(snapshots=dict(snaps), holdings=holdings, open_buys=set(), open_sells={},
+                               budget_available=book.cash, budget_equity=book.cash + invested, session="REGULAR",
+                               data_age_minutes=0, last_sells=dict(book.last_sells), now=now)
+
+
+def _run_automation(conn, hist, market, book, automation, portfolio_id, budget_id, now, broker) -> None:
+    """One run of an automation at `now`: evaluate, plan each PLACE_ORDER action, fill its PLACE intents."""
+    ev = Evaluator(conn, market, now=now)
+    matched, first = _targets(conn, ev, automation)
+    guards = OrderGuards.model_validate(automation.get("orderGuards") or {})
+    ctx = None
+    for action in AutomationIn.model_validate(automation).actions:
+        if action.type != "PLACE_ORDER":
+            continue
+        ctx = ctx or _context(conn, hist, ev, book, portfolio_id, budget_id, matched, now)
+        chosen = planner.select(action, sorted(matched), ctx, guards)
+        if not planner.market_blocked(guards, ctx):
+            quotes = hist.quotes(chosen["symbols"])["quotes"]
+            for t, q in quotes.items():
+                ctx.snapshots[t] = {**ctx.snapshots.get(t, {}), "latestPrice": q["price"], "bid": q["bid"],
+                                    "ask": q["ask"], "priceSource": "IBKR", "quoteAgeSeconds": 0}
+        for intent in planner.size(action, guards, chosen["symbols"], ctx, broker):
+            if intent["decision"] != "PLACE":
+                continue
+            _fill(conn, book, automation, portfolio_id, budget_id, intent, first.get(intent["ticker"]), now)
+
+
+def _fill(conn, book: Book, automation: dict, portfolio_id: str, budget_id: str, intent: dict, reason: str | None,
+          now: datetime) -> None:
+    """Fill a PLACE intent completely at its estimated price and book it."""
+    t, qty, price = intent["ticker"], Decimal(str(intent["quantity"])), Decimal(str(intent["estimatedPrice"]))
+    at = now.astimezone(timezone.utc).isoformat()
+    with conn:
+        if intent["side"] == "BUY":
+            portfolios_store.open_lot(conn, portfolio_id, t, automation["id"], qty, price, opened_at=at,
+                                      budget_id=budget_id)
+            book.cash -= qty * price
+            book.trades.append({"time": at, "side": "BUY", "symbol": t, "quantity": float(qty), "price": float(price),
+                                "automation": automation["name"], "filter": reason})
+        else:
+            lots = portfolios_store.open_lots(conn, portfolio_id, t, budget_id=budget_id)
+            opened = min(lot["opened_at"] for lot in lots) if lots else at
+            taken, cost, pnl = portfolios_store.close_lots_fifo(conn, portfolio_id, t, budget_id, qty, price)
+            book.cash += taken * price
+            book.last_sells[t] = now
+            book.trades.append({"time": at, "side": "SELL", "symbol": t, "quantity": float(taken), "price": float(price),
+                                "automation": automation["name"], "filter": reason, "pnl": float(pnl),
+                                "pnlPct": float(pnl / cost * 100) if cost else None,
+                                "heldHours": round((now - datetime.fromisoformat(opened)).total_seconds() / 3600, 1)})
+
+
+def _equity(conn, hist: HistoricalMarket, book: Book, portfolio_id: str, budget_id: str) -> tuple[float, float]:
+    """(equity, invested) at hist.now: cash plus every held share at the modelled bid."""
+    held = portfolios_store.positions(conn, portfolio_id, budget_id=budget_id)
+    quotes = hist.quotes([p["symbol"] for p in held])["quotes"]
+    value = sum((p["quantity"] * Decimal(str(quotes[p["symbol"]]["bid"])) for p in held if p["symbol"] in quotes),
+                Decimal(0))
+    return float(book.cash + value), float(value)
+
+
+def prepare(app_db: Path, work_dir: Path) -> Path:
+    """A scratch copy of the app database with every simulated table emptied (definitions stay, ids unchanged).
+
+    Args:
+        app_db: a COPY of app.db (e.g. the nightly backup).
+        work_dir: where to put the scratch copy.
+    """
+    work = work_dir / "backtest-app.db"
+    src, conn = sqlite3.connect(f"file:{app_db}?mode=ro", uri=True), sqlite3.connect(work)
+    src.backup(conn)  # SQLite's own copy: includes anything still in the source's write-ahead log
+    src.close()
+    conn.execute("DELETE FROM position_lots")
+    conn.commit()
+    conn.close()
+    return work
+
+
+def run(app_db: Path, market_db: Path, buy_id: str, sell_id: str, start: date, end: date, budget: float = 10_000,
+        overrides: dict | None = None, hist: HistoricalMarket | None = None, progress=None) -> dict:
+    """Backtest a Buy and a Sell automation from `start` to `end` (inclusive) on one budget.
+
+    Args:
+        app_db: a COPY of app.db holding the automations, their filters and groups, and the budget.
+        market_db: a COPY of market.db.
+        buy_id: the Buy automation's id.
+        sell_id: the Sell automation's id.
+        start: first trading day.
+        end: last trading day.
+        budget: starting cash.
+        overrides: {"buy": {...}, "sell": {...}, "filters": {filter_id: {...}}} fields merged into the stored
+            definitions before the run (e.g. {"buy": {"orderGuards": {"maxSpreadPercent": 0.5}}}).
+        hist: an already loaded HistoricalMarket (reused across runs); default loads one.
+        progress: called with each finished day ("YYYY-MM-DD", equity).
+
+    Returns:
+        {"params", "summary", "equity" (per day), "trades"}.
+    """
+    overrides = overrides or {}
+    hist = hist or HistoricalMarket(market_db, start, end)
+    with tempfile.TemporaryDirectory() as tmp:
+        conn = db.connect(prepare(app_db, Path(tmp)))
+        try:
+            for fid, patch in overrides.get("filters", {}).items():
+                f = {**filters_store.get_filter(conn, fid), **patch}
+                conn.execute("UPDATE filters SET inputs = ?, actions = ? WHERE id = ?",
+                             (json.dumps(f["inputs"]), json.dumps(f["actions"]), fid))
+            conn.commit()
+            autos = {}
+            for key, aid in (("buy", buy_id), ("sell", sell_id)):
+                a = automations_store.get_automation(conn, aid)
+                patch = overrides.get(key, {})
+                if "orderGuards" in patch:
+                    patch = {**patch, "orderGuards": {**(a.get("orderGuards") or {}), **patch["orderGuards"]}}
+                autos[key] = {**a, **patch}
+            budget_ref = budget_store.budgets_of(conn, buy_id)[0]
+            portfolio_id, budget_id = budget_ref["portfolioId"], budget_ref["id"]
+            book = Book(cash=Decimal(str(budget)))
+            market = MarketData(hist)
+            broker = _Broker()
+            days = [r["date"] for r in hist.calendar_rows if start.isoformat() <= r["date"] <= end.isoformat()]
+            for day in days:
+                close = datetime.fromisoformat(next(r["close"] for r in hist.calendar_rows if r["date"] == day))
+                for hour in STEP_HOURS:
+                    now = datetime.combine(date.fromisoformat(day), time(hour), ET)
+                    if now >= close:
+                        break
+                    hist.now = now
+                    _run_automation(conn, hist, market, book, autos["sell"], portfolio_id, budget_id, now, broker)
+                    _run_automation(conn, hist, market, book, autos["buy"], portfolio_id, budget_id, now, broker)
+                hist.now = close
+                equity, invested = _equity(conn, hist, book, portfolio_id, budget_id)
+                book.equity.append({"date": day, "equity": round(equity, 2), "invested": round(invested, 2),
+                                    "cash": round(float(book.cash), 2)})
+                if progress:
+                    progress(day, equity)
+        finally:
+            conn.close()
+    return {"params": {"start": start.isoformat(), "end": end.isoformat(), "budget": budget, "buy": autos["buy"],
+                       "sell": autos["sell"], "overrides": overrides},
+            "summary": summarize(book, budget), "equity": book.equity, "trades": book.trades}
+
+
+def summarize(book: Book, budget: float) -> dict:
+    """Headline figures: return, drawdown, daily results, round trips and what each sell filter did.
+
+    Args:
+        book: the finished Book.
+        budget: starting cash.
+    """
+    eq = [budget] + [e["equity"] for e in book.equity]
+    daily = [b - a for a, b in zip(eq, eq[1:])]
+    peak, drawdown = eq[0], 0.0
+    for v in eq:
+        peak = max(peak, v)
+        drawdown = min(drawdown, v - peak)
+    sells = [t for t in book.trades if t["side"] == "SELL"]
+    by_filter: dict[str, dict] = {}
+    for s in sells:
+        f = by_filter.setdefault(s["filter"] or "?", {"sells": 0, "pnl": 0.0, "wins": 0})
+        f["sells"] += 1
+        f["pnl"] = round(f["pnl"] + s["pnl"], 2)
+        f["wins"] += s["pnl"] > 0
+    wins = [s["pnl"] for s in sells if s["pnl"] > 0]
+    losses = [s["pnl"] for s in sells if s["pnl"] <= 0]
+    return {
+        "finalEquity": round(eq[-1], 2), "returnUsd": round(eq[-1] - budget, 2),
+        "returnPct": round((eq[-1] / budget - 1) * 100, 2), "maxDrawdownUsd": round(drawdown, 2),
+        "tradingDays": len(daily), "positiveDays": sum(1 for d in daily if d > 0),
+        "bestDayUsd": round(max(daily), 2) if daily else None, "worstDayUsd": round(min(daily), 2) if daily else None,
+        "buys": sum(1 for t in book.trades if t["side"] == "BUY"), "sells": len(sells),
+        "winRate": round(len(wins) / len(sells), 3) if sells else None,
+        "avgWinUsd": round(sum(wins) / len(wins), 2) if wins else None,
+        "avgLossUsd": round(sum(losses) / len(losses), 2) if losses else None,
+        "avgHeldHours": round(sum(s["heldHours"] for s in sells) / len(sells), 1) if sells else None,
+        "bySellFilter": by_filter,
+    }
