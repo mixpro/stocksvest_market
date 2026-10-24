@@ -20,7 +20,7 @@ const ORDER_DEFAULT = {
   selection: { mode: "TOP_N", topN: 3, rankBy: "DAILY_CHANGE_PERCENT", descending: true },
   sizings: [{ mode: "CASH_AMOUNT", value: 500 }],
 };
-const GUARD_DEFAULT = { maxOrdersPerRun: 10, maxPositionValue: null, maxPositionPercent: null, regularHoursOnly: true, skipBuyIfHeld: true, maxDataAgeMinutes: 30, maxSpreadPercent: null, rebuyCooldownMinutes: null };
+const GUARD_DEFAULT = { maxOrdersPerRun: 10, maxPositionValue: null, maxPositionPercent: null, regularHoursOnly: true, skipBuyIfHeld: true, maxDataAgeMinutes: 30, requireLivePrice: false, maxSpreadPercent: null, rebuyCooldownMinutes: null };
 
 // ------------------------------------------------------------------ loading
 
@@ -239,7 +239,8 @@ function guardsEditor() {
     "max data age", numInput(g, "maxDataAgeMinutes", { style: "width:50px", min: 1 }), "min",
     "max buy spread %", numInput(g, "maxSpreadPercent", { style: "width:50px", placeholder: "—" }),
     "no re-buy for", numInput(g, "rebuyCooldownMinutes", { style: "width:60px", placeholder: "—", min: 1 }), "min after a sell",
-    check("regularHoursOnly", "regular hours only"), check("skipBuyIfHeld", "skip buy if held"));
+    check("regularHoursOnly", "regular hours only"), check("skipBuyIfHeld", "skip buy if held"),
+    check("requireLivePrice", "require live price"));
 }
 
 function actionRow(a, i) {
