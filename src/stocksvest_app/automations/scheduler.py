@@ -166,6 +166,32 @@ def sync_brokers(ctx: AppContext, conn) -> None:
             log.warning("broker sync for account %s failed: %s", account["id"], e)
 
 
+def watch_held_symbols(ctx: AppContext, conn) -> list[str]:
+    """Ask the market service for real-time IBKR bars of every symbol a portfolio holds or has an order open for,
+    so sell filters on them (price change, unrealized gain/loss) see current prices. The watch lasts 10 minutes and
+    is renewed every minute; failures are only logged.
+
+    Args:
+        ctx: app context (market API).
+        conn: app DB connection.
+
+    Returns:
+        The symbols sent.
+
+    Used by: AutomationScheduler._loop (with each broker sync).
+    """
+    from ..market.client import MarketError
+
+    symbols = sorted(r["symbol"] for r in conn.execute(
+        "SELECT symbol FROM position_lots WHERE closed_at IS NULL UNION "
+        "SELECT symbol FROM orders WHERE status IN ('PENDING', 'SUBMITTED', 'PARTIALLY_FILLED')"))
+    try:
+        ctx.market_api.live_watch(symbols, 10)
+    except MarketError as e:
+        log.warning("asking for live bars failed: %s", e.detail)
+    return symbols
+
+
 class AutomationScheduler:
     """Background thread: every scheduler_tick_seconds, sync brokers (each minute), run due schedules and take
     history snapshots. Errors are logged, kept in last_error and recorded in the activity log.
@@ -203,6 +229,7 @@ class AutomationScheduler:
                 now = datetime.now(timezone.utc)
                 if not self._last_broker_sync or now - self._last_broker_sync >= BROKER_SYNC_EVERY:
                     sync_brokers(self.ctx, conn)  # before runs, so budgets and positions are current
+                    watch_held_symbols(self.ctx, conn)  # real-time bars for what the portfolios hold
                     self._last_broker_sync = now
                 tick(self.ctx, conn)
                 from ..performance import snapshots

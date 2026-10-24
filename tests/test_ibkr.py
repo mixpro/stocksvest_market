@@ -127,8 +127,37 @@ class FakeIB:
     def cancelMktData(self, c):
         self.cancelled.append(c.symbol)
 
+    history = {}  # symbol -> 1-minute bars returned by reqHistoricalDataAsync
+
+    async def reqHistoricalDataAsync(self, c, end, duration, size, what, useRTH, timeout):
+        assert (duration, size, what, useRTH) == ("1800 S", "1 min", "TRADES", False)
+        return FakeIB.history.get(c.symbol, [])
+
+    def reqRealTimeBars(self, c, size, what, useRTH):
+        assert (size, what, useRTH) == (5, "TRADES", False)
+        bars = RealTimeBars(c.symbol)
+        self.streams = getattr(self, "streams", {})
+        self.streams[c.symbol] = bars
+        return bars
+
+    def cancelRealTimeBars(self, bars):
+        self.cancelled_bars = getattr(self, "cancelled_bars", []) + [bars.symbol]
+
     def disconnect(self):
         self.connected = False
+
+
+class RealTimeBars(list):
+    """ib_async's RealTimeBarList: a list of bars with an updateEvent(bars, hasNewBar)."""
+
+    def __init__(self, symbol):
+        super().__init__()
+        self.symbol = symbol
+        self.updateEvent = Event()
+
+    def push(self, t, o, h, low, c, v):
+        self.append(SimpleNamespace(time=t, open_=o, high=h, low=low, close=c, volume=v))
+        self.updateEvent.emit(self, True)
 
 
 def started(settings, factory=FakeIB):
@@ -189,3 +218,92 @@ def test_quotes_when_not_connected(settings):
 
 def test_ib_symbol():
     assert ib_symbol("BRK.B") == "BRK B" and ib_symbol("AAPL") == "AAPL"
+
+
+# ------------------------------------------------------------------ live bars
+
+
+def wait_for(cond, tries=100):
+    for _ in range(tries):
+        if cond():
+            return True
+        time.sleep(0.05)
+    raise AssertionError("condition never met")
+
+
+def live_rows(settings):
+    from stocksvest_market import db
+    conn = db.connect(settings.db_path)
+    try:
+        return [tuple(r) for r in conn.execute("SELECT symbol_id, ts, o, h, l, c, v FROM bars_live_1min ORDER BY ts")]
+    finally:
+        conn.close()
+
+
+def test_live_bars_backfill_stream_and_expiry(settings, seeded, monkeypatch):  # noqa: F811
+    from dataclasses import replace
+    monkeypatch.setattr("stocksvest_market.ibkr.asyncio.sleep", _fast_sleep)
+    monkeypatch.setitem(FakeIB.book, "S0001", (12.0, 12.1, 12.05, 1))
+    monkeypatch.setitem(FakeIB.book, "S0002", (5.0, 5.1, 5.05, 1))
+    t0 = datetime(2026, 10, 26, 14, 30, tzinfo=timezone.utc)
+    monkeypatch.setattr(FakeIB, "history", {"S0001": [SimpleNamespace(date=t0, open=12.0, high=12.2, low=11.9,
+                                                                       close=12.1, volume=300)]})
+    q = started(replace(settings, ibkr_live_bars_max=1))
+    try:
+        out = q.watch(["S0001", "S0002"], ttl_seconds=60)
+        assert len(out["watching"]) == 1 and len(out["overLimit"]) == 1  # the limit holds
+        q.watch(["S0001"], ttl_seconds=60)  # renewed last: S0001 wins the only slot
+        wait_for(lambda: "S0001" in getattr(q._ib, "streams", {}))
+        wait_for(lambda: live_rows(settings))
+        assert live_rows(settings) == [("id-S0001", int(t0.timestamp()), 12.0, 12.2, 11.9, 12.1, 300.0)]  # backfill
+        bars = q._ib.streams["S0001"]
+        t1 = datetime(2026, 10, 26, 14, 31, tzinfo=timezone.utc)
+        bars.push(t1, 12.1, 12.3, 12.1, 12.25, 100)
+        bars.push(t1.replace(second=5), 12.25, 12.4, 12.0, 12.05, 50)  # same minute: rolled up
+        wait_for(lambda: len(live_rows(settings)) == 2)
+        assert live_rows(settings)[1] == ("id-S0001", int(t1.timestamp()), 12.1, 12.4, 12.0, 12.05, 150.0)
+        assert q.live_status()["streaming"] == 1 and q.live_status()["lastBarAt"] is not None
+        q._watch["S0001"] = 0  # the watch ran out: its stream stops and S0002 gets the free slot
+        wait_for(lambda: "S0001" in getattr(q._ib, "cancelled_bars", []))
+        wait_for(lambda: "S0002" in q._ib.streams)
+        assert q.live_status()["watching"] == 1 and q.live_status()["overLimit"] == 0
+    finally:
+        q.stop()
+
+
+class WatchingSource(FakeSource):
+    def __init__(self):
+        super().__init__({})
+        self.watched = []
+
+    def watch(self, tickers, ttl_seconds):
+        self.watched.append((list(tickers), ttl_seconds))
+        return {"watching": sorted(tickers), "overLimit": []}
+
+    def live_status(self):
+        return {"watching": 1, "streaming": 1, "overLimit": 0, "lastBarAt": "2026-10-26T14:31:05+00:00"}
+
+
+def test_live_minutes_make_prices_current(settings, seeded):  # noqa: F811
+    from test_api import ts
+    source = WatchingSource()
+    with client_with(settings, source) as c:
+        r = c.put("/v1/live/watch", headers=READ, json={"symbols": ["s0001", "NOPE"], "ttlMinutes": 5}).json()
+        assert r["watching"] == ["S0001"] and r["unknown"] == ["NOPE"] and source.watched == [(["S0001"], 300)]
+        assert c.get("/v1/live", headers=READ).json()["streaming"] == 1
+        assert c.get("/v1/status", headers=READ).json()["liveBars"]["enabled"] is True
+        # The newest SIP minute is Oct 13 10:00 NY (13); live minutes from IBKR are newer.
+        seeded.executemany("INSERT INTO bars_live_1min VALUES ('id-S0001', ?, ?, ?, ?, ?, 10, NULL, NULL)",
+                           [(ts(2026, 10, 13, 14, 15), 14, 14, 14, 14), (ts(2026, 10, 13, 14, 20), 12, 12, 12, 12)])
+        seeded.commit()
+        snap = c.get("/v1/snapshots?symbols=S0001", headers=READ).json()["snapshots"]["S0001"]
+        assert snap["latestPrice"] == 12 and snap["latestTime"] == "2026-10-13T14:20:00Z"
+        change = c.get("/v1/price-change?symbols=S0001&periodAmount=3&periodUnit=MINUTES", headers=READ).json()
+        assert change["changes"]["S0001"]["fromPrice"] == 14 and change["changes"]["S0001"]["toPrice"] == 12
+        assert c.put("/v1/live/watch", json={"symbols": []}).status_code == 401
+
+
+def test_live_watch_without_ibkr(settings, seeded):  # noqa: F811
+    with client_with(settings, None) as c:
+        r = c.put("/v1/live/watch", headers=READ, json={"symbols": ["S0001"]}).json()
+    assert r["watching"] == [] and r["liveBars"]["enabled"] is False

@@ -1,9 +1,15 @@
-"""Live quotes from Interactive Brokers (IB Gateway / TWS API) for the few symbols an order is about to use.
+"""Live data from Interactive Brokers (IB Gateway / TWS API): quotes for the few symbols an order is about to use, and
+real-time minute bars for watched symbols (the ones the app holds).
 
 Read-only: the connection is opened with readonly=True on its own client id, so it can't place orders. It runs on an
 asyncio loop in a background thread (ib_async needs one) and reconnects by itself, e.g. after the gateway's daily
 restart. Quotes are taken from short-lived streaming subscriptions (the account's "US Equity and Options Add-On
 Streaming Bundle"): subscribe, wait for bid/ask/last, unsubscribe, so no paid snapshots are used.
+
+Live bars: each watched symbol gets the last 30 minutes of 1-minute history (covering the ~16 minutes Alpaca's free
+SIP data lags) and then 5-second real-time bars, rolled up into minutes and written to bars_live_1min, where
+api.latest picks them up, so prices and price changes of watched symbols are current. A watch expires unless the app
+renews it.
 
 When IBKR can't answer (gateway down, not subscribed, another live session holding the data), the symbol is simply
 missing from the answer and api.quotes falls back to the delayed price.
@@ -13,8 +19,10 @@ import asyncio
 import logging
 import math
 import threading
+import time
 from datetime import datetime, timezone
 
+from . import db
 from .config import Settings
 
 log = logging.getLogger(__name__)
@@ -25,6 +33,22 @@ logging.getLogger("ib_async").setLevel(logging.WARNING)
 CHUNK = 50
 # IBKR messages that only report status. Used by: IbkrQuotes._on_error
 INFO_CODES = {2104, 2106, 2107, 2108, 2158, 2172, 300}
+# Minute history fetched when a symbol starts streaming: covers the delayed SIP gap. Used by: IbkrQuotes._reconcile
+LIVE_BACKFILL = "1800 S"
+# Live minutes kept in memory (rolling up 5-second bars) and in bars_live_1min. Used by: IbkrQuotes._flush, _write
+LIVE_MEMORY_SECONDS = 2 * 3600
+LIVE_KEEP_SECONDS = 2 * 86400
+
+
+def _epoch(t) -> int | None:
+    """Unix seconds of an IBKR bar time (an aware datetime), or None for anything else (e.g. a daily date).
+
+    Args:
+        t: the bar's date/time.
+
+    Used by: IbkrQuotes._reconcile, _on_bar.
+    """
+    return int(t.timestamp()) if isinstance(t, datetime) else None
 
 
 def _num(v) -> float | None:
@@ -58,8 +82,9 @@ class IbkrQuotes:
         connected: whether the API connection is up.
         last_error: the last connection or market data problem (shown by GET /v1/status), or None.
         last_quote_at: when the last live quote arrived.
+        last_bar_at: when the last real-time bar arrived.
 
-    Used by: api.create_app (started in lifespan when IBKR_ENABLED), api.quotes, api.status.
+    Used by: api.create_app (started in lifespan when IBKR_ENABLED), api.quotes, api.live_watch, api.status.
     """
 
     def __init__(self, settings: Settings, ib_factory=None):
@@ -76,6 +101,13 @@ class IbkrQuotes:
         self._ib = None
         self._contracts: dict[str, object] = {}
         self._lock: asyncio.Lock | None = None
+        self.last_bar_at: datetime | None = None
+        self._watch: dict[str, float] = {}  # ticker -> time.monotonic() the watch expires
+        self._watch_lock = threading.Lock()
+        self._streams: dict[str, object] = {}  # ticker -> its RealTimeBarList (None: IBKR doesn't know it)
+        self._minutes: dict[tuple[str, int], list] = {}  # (ticker, minute ts) -> [o, h, l, c, v]
+        self._dirty: set[tuple[str, int]] = set()  # minutes changed since the last write
+        self._last_prune = 0.0
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="ibkr-quotes", daemon=True)
 
@@ -116,6 +148,7 @@ class IbkrQuotes:
                     await self._ib.connectAsync(self.settings.ibkr_host, self.settings.ibkr_port,
                                                 clientId=self.settings.ibkr_client_id, readonly=True, timeout=15)
                     self._ib.reqMarketDataType(1)  # live only: never take IBKR's delayed data for live
+                    self._streams = {}  # subscriptions don't survive a reconnect: start them again
                     self.connected = True
                     self.last_error = None
                     delay = 5
@@ -127,6 +160,12 @@ class IbkrQuotes:
                     await asyncio.sleep(delay)
                     delay = min(delay * 2, 60)
                     continue
+            try:
+                await self._reconcile()
+                await self._flush()
+            except Exception as e:  # live bars never take the connection down
+                self.last_error = f"live bars: {e or type(e).__name__}"
+                log.warning("IBKR live bars failed: %s", self.last_error)
             await asyncio.sleep(2)
         if self._ib is not None and self._ib.isConnected():
             self._ib.disconnect()
@@ -218,3 +257,148 @@ class IbkrQuotes:
         if out:
             self.last_quote_at = datetime.now(timezone.utc)
         return out
+
+    # -- live bars
+
+    def watch(self, tickers: list[str], ttl_seconds: int = 600) -> dict:
+        """Stream real-time bars for these tickers until the watch expires (renew it to keep it), from any thread.
+        Beyond ibkr_live_bars_max, the most recently renewed watches win.
+
+        Args:
+            tickers: the market service's tickers.
+            ttl_seconds: how long the watch lasts without renewal.
+
+        Returns:
+            {"watching": tickers that stream, "overLimit": watched tickers left out by the limit}.
+
+        Used by: api.live_watch.
+        """
+        now = time.monotonic()
+        with self._watch_lock:
+            for t in tickers:
+                self._watch[t] = now + ttl_seconds
+        ranked = self._ranked()
+        limit = self.settings.ibkr_live_bars_max
+        return {"watching": sorted(ranked[:limit]), "overLimit": sorted(ranked[limit:])}
+
+    def _ranked(self) -> list[str]:
+        """Unexpired watched tickers, most recently renewed first (expired ones are dropped).
+
+        Used by: watch, _reconcile, live_status.
+        """
+        now = time.monotonic()
+        with self._watch_lock:
+            for t, expires in list(self._watch.items()):
+                if expires <= now:
+                    del self._watch[t]
+            return sorted(self._watch, key=lambda t: (-self._watch[t], t))
+
+    def live_status(self) -> dict:
+        """Live bars for GET /v1/live and /v1/status: watched and streaming counts, time of the last bar.
+
+        Used by: api.live_bars_status.
+        """
+        ranked = self._ranked()
+        return {"watching": len(ranked[:self.settings.ibkr_live_bars_max]),
+                "streaming": sum(1 for b in self._streams.values() if b is not None),
+                "overLimit": max(0, len(ranked) - self.settings.ibkr_live_bars_max),
+                "lastBarAt": self.last_bar_at.isoformat(timespec="seconds") if self.last_bar_at else None}
+
+    async def _reconcile(self) -> None:
+        """Start streams for newly watched tickers (after a 30-minute minute backfill) and stop expired ones.
+
+        Used by: _keep_connected (every pass while connected).
+        """
+        want = set(self._ranked()[:self.settings.ibkr_live_bars_max])
+        for t in [t for t in self._streams if t not in want]:
+            bars = self._streams.pop(t)
+            if bars is not None:
+                self._ib.cancelRealTimeBars(bars)
+        for t in sorted(want - set(self._streams)):
+            c = await self._contract(t)
+            if c is None:
+                self._streams[t] = None  # IBKR doesn't know it: don't ask again until it is watched anew
+                continue
+            try:
+                history = await self._ib.reqHistoricalDataAsync(c, "", LIVE_BACKFILL, "1 min", "TRADES", useRTH=False,
+                                                                timeout=20)
+            except Exception as e:
+                history = []
+                self.last_error = f"history {t}: {e or type(e).__name__}"
+            for b in history or []:
+                ts = _epoch(b.date)
+                if ts is not None:
+                    self._minutes[(t, ts)] = [b.open, b.high, b.low, b.close, float(b.volume or 0)]
+                    self._dirty.add((t, ts))
+            bars = self._ib.reqRealTimeBars(c, 5, "TRADES", False)
+            bars.updateEvent += lambda rows, has_new, t=t: self._on_bar(t, rows, has_new)
+            self._streams[t] = bars
+
+    def _on_bar(self, ticker: str, rows, has_new: bool) -> None:
+        """Roll a new 5-second bar into its minute.
+
+        Args:
+            ticker: the stream's ticker.
+            rows: the stream's RealTimeBarList (newest last).
+            has_new: whether a new bar arrived.
+
+        Used by: the stream's updateEvent (set in _reconcile).
+        """
+        if not has_new or not rows:
+            return
+        b = rows[-1]
+        ts = _epoch(b.time)
+        close = _num(b.close)
+        if ts is None or close is None:
+            return
+        key = (ticker, ts - ts % 60)
+        m = self._minutes.get(key)
+        if m is None:
+            self._minutes[key] = [b.open_, b.high, b.low, close, float(b.volume or 0)]
+        else:
+            m[1], m[2], m[3] = max(m[1], b.high), min(m[2], b.low), close
+            m[4] += float(b.volume or 0)
+        self._dirty.add(key)
+        self.last_bar_at = datetime.now(timezone.utc)
+
+    async def _flush(self) -> None:
+        """Write the minutes changed since the last pass to bars_live_1min, off the event loop.
+
+        Used by: _keep_connected (every pass while connected).
+        """
+        cutoff = int(time.time()) - LIVE_MEMORY_SECONDS
+        for key in [k for k in self._minutes if k[1] < cutoff]:
+            del self._minutes[key]
+        rows = [(t, ts, *self._minutes[(t, ts)]) for t, ts in self._dirty if (t, ts) in self._minutes]
+        self._dirty = set()
+        if rows:
+            prune = time.monotonic() - self._last_prune > 3600
+            if prune:
+                self._last_prune = time.monotonic()
+            await asyncio.get_running_loop().run_in_executor(None, self._write, rows, prune)
+
+    def _write(self, rows: list[tuple], prune: bool) -> None:
+        """Upsert live minutes (ticker, ts, o, h, l, c, v) and, hourly, drop ones older than LIVE_KEEP_SECONDS.
+
+        Args:
+            rows: minutes to write.
+            prune: also delete old live minutes.
+
+        Used by: _flush (in a worker thread).
+        """
+        conn = db.connect(self.settings.db_path)
+        try:
+            tickers = sorted({r[0] for r in rows})
+            marks = ",".join("?" * len(tickers))
+            ids = {r["ticker"]: r["id"]
+                   for r in conn.execute(f"SELECT id, ticker FROM symbols WHERE ticker IN ({marks})", tickers)}
+            conn.executemany(f"INSERT OR REPLACE INTO {db.LIVE_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)",
+                             [(ids[t], ts, o, h, lo, c, v) for t, ts, o, h, lo, c, v in rows if t in ids])
+            if prune:
+                conn.execute(f"DELETE FROM {db.LIVE_TABLE} WHERE ts < ?", (int(time.time()) - LIVE_KEEP_SECONDS,))
+            conn.commit()
+        except Exception as e:
+            self.last_error = f"live bars write: {e or type(e).__name__}"
+            log.warning("writing live bars failed: %s", self.last_error)
+        finally:
+            conn.close()

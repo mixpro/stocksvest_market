@@ -23,6 +23,8 @@ ENDPOINTS = {
     "price_change": "/v1/price-change",
     "volume": "/v1/volume",
     "quotes": "/v1/quotes",
+    "live_status": "/v1/live",
+    "live_watch": "/v1/live/watch",
     "calendar": "/v1/calendar",
     "status": "/v1/status",
 }
@@ -151,6 +153,20 @@ class MarketAPI(Protocol):
         """
         ...
 
+    def live_status(self) -> dict:
+        """GET /v1/live: {enabled, watching, streaming, overLimit, lastBarAt} of the real-time IBKR bars."""
+        ...
+
+    def live_watch(self, symbols: list[str], ttl_minutes: int = 10) -> dict:
+        """PUT /v1/live/watch: stream IBKR real-time bars for these symbols for ttl_minutes, so their prices and
+        price changes are current. Returns {watching, overLimit, unknown, liveBars}.
+
+        Args:
+            symbols: tickers (unknown ones are listed, not refused).
+            ttl_minutes: how long the watch lasts unless sent again.
+        """
+        ...
+
     def calendar(self, start: str | None = None, end: str | None = None) -> dict:
         """GET /v1/calendar: {"days": [{date, preMarketOpen, regularOpen, regularClose, afterHoursClose,
         isEarlyClose}]}; trading days only.
@@ -191,13 +207,15 @@ class MarketClient:
         self.session = requests.Session()
         self.session.headers["X-API-Key"] = settings.market_api_key
 
-    def _get(self, endpoint: str, path_params: dict | None = None, query: dict | None = None) -> dict:
-        """Call one market endpoint.
+    def _get(self, endpoint: str, path_params: dict | None = None, query: dict | None = None,
+             body: dict | None = None) -> dict:
+        """Call one market endpoint (a PUT with `body`, else a GET).
 
         Args:
             endpoint: key of ENDPOINTS.
             path_params: values for the path's {placeholders} (URL-encoded here).
             query: query parameters (see _query).
+            body: JSON body; makes the call a PUT.
 
         Returns:
             The decoded JSON body.
@@ -207,7 +225,10 @@ class MarketClient:
         """
         path = ENDPOINTS[endpoint].format(**{k: quote(v, safe="") for k, v in (path_params or {}).items()})
         try:
-            r = self.session.get(f"{self.base}{path}", params=query or None, timeout=60)
+            if body is not None:
+                r = self.session.put(f"{self.base}{path}", json=body, timeout=60)
+            else:
+                r = self.session.get(f"{self.base}{path}", params=query or None, timeout=60)
         except requests.RequestException as e:
             raise MarketError(502, f"market API unreachable: {e}") from e
         if r.status_code != 200:
@@ -307,6 +328,19 @@ class MarketClient:
             symbols: tickers or ids (at most 100).
         """
         return self._get("quotes", query=_query(symbols=symbols))
+
+    def live_status(self) -> dict:
+        """GET /v1/live."""
+        return self._get("live_status")
+
+    def live_watch(self, symbols, ttl_minutes=10) -> dict:
+        """PUT /v1/live/watch.
+
+        Args:
+            symbols: tickers.
+            ttl_minutes: sent as ttlMinutes.
+        """
+        return self._get("live_watch", body={"symbols": list(symbols), "ttlMinutes": ttl_minutes})
 
     def calendar(self, start=None, end=None) -> dict:
         """GET /v1/calendar.

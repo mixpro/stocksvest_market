@@ -18,7 +18,7 @@ synced from Alpaca into SQLite and served over an HTTP API.
 
 - **Every 5 minutes** from 04:00 to ~20:20 New York time on trading days: new minute, hourly and daily bars.
   On Alpaca's free plan the newest 15 minutes are not available, so data lags about 16 minutes
-  (`SIP_DELAY_MINUTES`).
+  (`SIP_DELAY_MINUTES`). Symbols the app holds get real-time minutes from IBKR on top (docs/API.md, "Live bars").
 - **Nightly** (~20:45 New York time): refresh the calendar and symbol list, fill gaps, re-download
   symbols whose history was re-adjusted by a split or dividend, and drop data older than the windows above.
 - **First start**: if the database is empty, the nightly job runs immediately and backfills everything.

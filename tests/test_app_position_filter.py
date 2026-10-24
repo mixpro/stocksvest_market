@@ -192,6 +192,22 @@ def test_unrealized_pnl_validation_and_metadata(client, portfolios):
         "portfolioIds", "valueType", "condition", "value", "maxValue"]
 
 
+def test_held_symbols_get_live_bars(client, portfolios, market):
+    from types import SimpleNamespace
+
+    from stocksvest_app import db
+    from stocksvest_app.automations.scheduler import watch_held_symbols
+
+    conn = db.connect(Settings().db_path)
+    try:
+        assert watch_held_symbols(SimpleNamespace(market_api=market), conn) == ["AAA", "BBB", "CCC"]
+        assert market.calls[-1] == ("live_watch", ["AAA", "BBB", "CCC"], 10)
+        market.fail = True  # the market service being down never breaks the scheduler pass
+        assert watch_held_symbols(SimpleNamespace(market_api=market), conn) == ["AAA", "BBB", "CCC"]
+    finally:
+        conn.close()
+
+
 # ------------------------------------------------------------------ INVESTMENT_PORTFOLIO input
 
 

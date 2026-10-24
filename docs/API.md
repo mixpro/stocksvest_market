@@ -18,7 +18,9 @@ curl -H "X-API-Key: $KEY" http://localhost:8000/v1/symbols/AAPL
 - Responses are in UTC, e.g. `2026-10-15T14:32:00Z`.
 - `start` and `end` accept a date (`2026-10-01`) or a datetime (`2026-10-01T09:30:00`). Without a time zone they are read as **New York time**.
 
-**Data freshness:** prices lag the market by about 16 minutes (Alpaca free plan).
+**Data freshness:** bars come from Alpaca's SIP feed, which the free plan only serves up to about 16 minutes ago.
+Watched symbols (see [Live bars](#live-bars)) get real-time minutes from IBKR on top, so their latest price,
+snapshot and price changes are current.
 
 **Errors** return JSON with a `detail` field:
 
@@ -272,6 +274,29 @@ service is connected to an IB Gateway (`IBKR_ENABLED=true`), otherwise the newes
 - The IBKR connection is read-only (it can't place orders) and uses its own client id. Settings: `IBKR_ENABLED`,
   `IBKR_HOST` (127.0.0.1), `IBKR_PORT` (4002 = paper login), `IBKR_CLIENT_ID` (31).
 - `GET /v1/status` shows the same `liveQuotes` block.
+
+### Live bars
+
+`PUT /v1/live/watch` with `{"symbols": ["AAPL", "CSX"], "ttlMinutes": 10}`
+
+Streams IBKR real-time bars for these symbols (for example a portfolio's holdings) until `ttlMinutes` pass; send the
+list again before then to keep them. The app does this every minute for everything its portfolios hold or have an order
+open for.
+
+- Each watched symbol first gets the last 30 minutes of 1-minute history from IBKR (covering the delayed SIP gap), then
+  5-second real-time bars, rolled up into minutes.
+- While a symbol is watched, `latestPrice` in snapshots, the latest price of `GET /v1/price-change` and the start of
+  `MINUTES` periods use these minutes, so `periodAmount=3&periodUnit=MINUTES` is the last 3 real minutes.
+- Alpaca's full SIP bars still replace older minutes as usual; the live minutes are kept 2 days.
+- At most `IBKR_LIVE_BARS_MAX` symbols stream at once (default 40; each takes one of the account's ~100 market data
+  lines). Beyond that, the most recently renewed watches win and the rest are listed in `overLimit`.
+
+```json
+{"watching": ["AAPL", "CSX"], "overLimit": [], "unknown": [],
+ "liveBars": {"enabled": true, "watching": 2, "streaming": 2, "overLimit": 0, "lastBarAt": "2026-10-26T14:31:05+00:00"}}
+```
+
+`GET /v1/live` returns the `liveBars` block alone; `GET /v1/status` includes it too.
 
 ---
 

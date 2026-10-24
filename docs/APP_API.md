@@ -49,7 +49,7 @@ inputs (union) ──► action 1 ──► action 2 ──► … ──► mat
    | `UNREALIZED_PNL` | `portfolioIds`, `valueType`, `condition`, `value`, `maxValue` | the unrealized gain/loss of the shares held matches, e.g. `PERCENT` `LESS_THAN` `-8` = down more than 8% from the buy price (a stop-loss) |
 
    - **`priceReference`:**
-     - `LATEST_BAR`: newest price (~16 min delayed)
+     - `LATEST_BAR`: newest price: real-time for symbols a portfolio holds, else ~16 min delayed
      - `LAST_CLOSE`: close of the last *completed* trading day
    - **`periodUnit`:** `MINUTES` (max 7 days), `HOURS`, `DAYS`, `WEEKS`, `MONTHS`, `YEARS`. Only time the market is
      open counts: `DAYS` are trading days (on Monday, 2 days = Friday + Monday, compared with Thursday's close),
@@ -202,7 +202,9 @@ curl -X POST -H "X-API-Key: $APP_KEY" -H "Content-Type: application/json" \
 
 **How often is useful:** runs can repeat every minute, but only live prices change that fast: `UNREALIZED_PNL`
 and order prices use IBKR quotes. `PRICE_CHANGE`, `SYMBOL_PRICE` and the ranking keys use the market service's
-bars, which are ~16 minutes delayed and refreshed every 5 minutes.
+bars, which are ~16 minutes delayed and refreshed every 5 minutes, except for symbols a portfolio holds or has an
+order open for: the scheduler asks the market service for real-time IBKR bars of those every minute, so sell filters on
+your holdings (price change, latest price) work on current prices.
 
 **All types also take:**
 - **`timezone`:** default `America/New_York`, e.g. `Asia/Jerusalem`. `MARKET` ignores it.

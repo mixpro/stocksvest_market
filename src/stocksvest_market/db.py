@@ -6,6 +6,10 @@ from pathlib import Path
 # Stored bar timeframes -> their table. Week/month/year are aggregated from 1Day on read.
 # Used by: sync (sync_bars, prune, run_incremental), api (load_bars, status, latest), aggregate callers.
 BAR_TABLES = {"1Min": "bars_1min", "1Hour": "bars_1hour", "1Day": "bars_1day"}
+# Real-time minute bars from IBKR for watched symbols, newer than Alpaca's delayed SIP data allows. Kept apart so
+# the Alpaca sync (which resumes from each symbol's newest bar in bars_1min) still fetches the full SIP bars.
+# Used by: init, ibkr.IbkrQuotes (writes), api.latest (reads).
+LIVE_TABLE = "bars_live_1min"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS symbols (
@@ -99,7 +103,7 @@ def init(conn: sqlite3.Connection) -> None:
     for name, kind in SYMBOL_COLUMNS.items():
         if name not in existing:
             conn.execute(f"ALTER TABLE symbols ADD COLUMN {name} {kind}")
-    for table in BAR_TABLES.values():
+    for table in (*BAR_TABLES.values(), LIVE_TABLE):
         conn.executescript(BAR_SCHEMA.format(table=table))
     conn.executescript(EXTRA_SCHEMA)
     conn.commit()

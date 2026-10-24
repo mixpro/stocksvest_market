@@ -107,6 +107,17 @@ class FakeMarket:
         return {"periodAmount": period_amount, "periodUnit": period_unit,
                 "changes": {t: CHANGES[t] for t in (symbols or CHANGES)}}
 
+    def live_status(self):
+        self._check()
+        return {"enabled": True, "watching": len(getattr(self, "watched", [[]])[-1]), "streaming": 0, "overLimit": 0,
+                "lastBarAt": None}
+
+    def live_watch(self, symbols, ttl_minutes=10):
+        self._check()
+        self.watched = getattr(self, "watched", []) + [list(symbols)]
+        self.calls.append(("live_watch", list(symbols), ttl_minutes))
+        return {"watching": sorted(symbols), "overLimit": [], "unknown": [], "liveBars": self.live_status()}
+
     def volume(self, days, symbols=None):
         self._check()
         self.calls.append(("volume", days, symbols))

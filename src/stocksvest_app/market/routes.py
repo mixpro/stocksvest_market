@@ -1,4 +1,5 @@
-"""/v1/market/*: read-only market endpoints for app clients, each backed by one MarketAPI function.
+"""/v1/market/*: market endpoints for app clients, each backed by one MarketAPI function (all reads, except
+live/watch, which asks the market service to stream real-time bars for some symbols).
 
 Clients only need an app key; the app calls the market API with its own key.
 """
@@ -8,6 +9,7 @@ from datetime import date
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from ..deps import AppContext
 from .client import MarketError
@@ -16,6 +18,12 @@ from .client import MarketError
 Timeframe = Literal["1Min", "1Hour", "1Day", "1Week", "1Month", "1Year"]
 Session = Literal["all", "regular"]
 PeriodUnit = Literal["MINUTES", "HOURS", "DAYS", "WEEKS", "MONTHS", "YEARS"]
+
+
+class LiveWatchIn(BaseModel):
+    """Body of PUT /v1/market/live/watch. Used by: router.live_watch."""
+    symbols: list[str] = Field(max_length=500)
+    ttlMinutes: int = Field(default=10, ge=1, le=120)
 
 
 def _split(value: str | None) -> list[str] | None:
@@ -176,6 +184,21 @@ def router(ctx: AppContext) -> APIRouter:
             symbols: comma-separated tickers or ids, at most 100.
         """
         return call(lambda: api.quotes(_split(symbols)))
+
+    @r.get("/live")
+    def live():
+        """Whether real-time IBKR bars are running for the watched symbols (market `GET /v1/live`)."""
+        return call(lambda: api.live_status())
+
+    @r.put("/live/watch")
+    def live_watch(body: LiveWatchIn):
+        """Stream real-time IBKR bars for these symbols for a while (market `PUT /v1/live/watch`). The app's scheduler
+        already sends every held symbol each minute.
+        \f
+        Args:
+            body: LiveWatchIn.
+        """
+        return call(lambda: api.live_watch(body.symbols, body.ttlMinutes))
 
     @r.get("/calendar")
     def calendar(start: date | None = None, end: date | None = None):

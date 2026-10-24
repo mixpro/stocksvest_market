@@ -13,6 +13,7 @@ from enum import Enum
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
+from pydantic import BaseModel, Field
 
 from . import aggregate, db, halal, sectors, sync
 from .alpaca import AlpacaClient
@@ -401,7 +402,47 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
             "dataDelayMinutes": settings.sip_delay_minutes,
             "sectorsEnabled": bool(settings.sec_user_agent),
             "liveQuotes": quotes_status(),
+            "liveBars": live_bars_status(),
         }
+
+    def live_bars_status() -> dict:
+        """Real-time IBKR bars: enabled, how many symbols are watched / streaming, time of the last bar.
+
+        Used by: status, live, live_watch.
+        """
+        q = state["quotes"]
+        if q is None or not hasattr(q, "live_status"):
+            return {"enabled": False, "watching": 0, "streaming": 0, "overLimit": 0, "lastBarAt": None}
+        return {"enabled": True, **q.live_status()}
+
+    class WatchIn(BaseModel):
+        """Body of PUT /v1/live/watch. Used by: live_watch."""
+        symbols: list[str] = Field(max_length=500)
+        ttlMinutes: int = Field(default=10, ge=1, le=120)
+
+    @app.put("/v1/live/watch", tags=["prices"], dependencies=read)
+    def live_watch(conn: Conn, body: WatchIn):
+        """Stream IBKR real-time bars for these symbols (e.g. a portfolio's holdings) for `ttlMinutes`; send the list
+        again before it runs out to keep them. While watched, a symbol's latest price, snapshot and price changes use
+        real-time minutes instead of the ~16 minute delayed SIP data. Unknown symbols are listed, not refused.
+        \f
+        Args:
+            conn: market DB connection (one per request, injected).
+            body: WatchIn.
+        """
+        known = {r["ticker"] for r in conn.execute("SELECT ticker FROM symbols")}
+        asked = list(dict.fromkeys(s.strip().upper() for s in body.symbols if s.strip()))
+        found = [t for t in asked if t in known]
+        unknown = sorted(set(asked) - set(found))
+        q = state["quotes"]
+        if q is None or not hasattr(q, "watch"):
+            return {"watching": [], "overLimit": [], "unknown": unknown, "liveBars": live_bars_status()}
+        return {**q.watch(found, body.ttlMinutes * 60), "unknown": unknown, "liveBars": live_bars_status()}
+
+    @app.get("/v1/live", tags=["prices"], dependencies=read)
+    def live():
+        """Whether real-time IBKR bars are running: watched and streaming symbols, time of the last bar."""
+        return live_bars_status()
 
     def quotes_status() -> dict:
         """The live quote source's state: enabled, connected, last error, time of the last live quote.
@@ -572,7 +613,8 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
         }
 
     def latest(conn, table: str, symbol_id: str, before_ts: int | None = None) -> sqlite3.Row | None:
-        """The newest bar (ts, c, v) of a symbol in a table, optionally at or before a time.
+        """The newest bar (ts, c, v) of a symbol in a table, optionally at or before a time. For minutes, IBKR's
+        real-time bars (watched symbols) count too, so the newest minute is current rather than ~16 minutes old.
 
         Args:
             conn: market DB connection.
@@ -582,14 +624,20 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
 
         Used by: latest_price, snapshots, price_change.
         """
-        if before_ts is None:
-            return conn.execute(
-                f"SELECT ts, c, v FROM {table} WHERE symbol_id = ? ORDER BY ts DESC LIMIT 1", (symbol_id,)
-            ).fetchone()
-        return conn.execute(
-            f"SELECT ts, c, v FROM {table} WHERE symbol_id = ? AND ts <= ? ORDER BY ts DESC LIMIT 1",
-            (symbol_id, before_ts),
-        ).fetchone()
+        best = None
+        for t in (table, db.LIVE_TABLE) if table == "bars_1min" else (table,):
+            if before_ts is None:
+                row = conn.execute(
+                    f"SELECT ts, c, v FROM {t} WHERE symbol_id = ? ORDER BY ts DESC LIMIT 1", (symbol_id,)
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    f"SELECT ts, c, v FROM {t} WHERE symbol_id = ? AND ts <= ? ORDER BY ts DESC LIMIT 1",
+                    (symbol_id, before_ts),
+                ).fetchone()
+            if row is not None and (best is None or row["ts"] > best["ts"]):
+                best = row
+        return best
 
     def latest_price(conn, symbol_id: str) -> sqlite3.Row | None:
         """The newest price: the latest minute bar, or the latest daily bar if it is newer (or no minute bars).

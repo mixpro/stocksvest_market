@@ -42,6 +42,7 @@ class Settings:
         ibkr_enabled: connect to IB Gateway for live quotes (IBKR_ENABLED; off by default and in tests).
         ibkr_host / ibkr_port: the gateway's API address (IBKR_HOST, IBKR_PORT; 4002 = paper login).
         ibkr_client_id: this service's own API client id, distinct from any other program (IBKR_CLIENT_ID).
+        ibkr_live_bars_max: most symbols with real-time IBKR bars at once (IBKR_LIVE_BARS_MAX).
 
     Used by: create_app (api), main (__main__), AlpacaClient, Scheduler/due_jobs, every sync function, make_client
     (sectors).
@@ -88,6 +89,9 @@ class Settings:
     ibkr_host: str = field(default_factory=lambda: os.environ.get("IBKR_HOST", "127.0.0.1"))
     ibkr_port: int = field(default_factory=lambda: int(os.environ.get("IBKR_PORT", "4002")))
     ibkr_client_id: int = field(default_factory=lambda: int(os.environ.get("IBKR_CLIENT_ID", "31")))
+    # Real-time IBKR bars for at most this many watched symbols (each takes one of ~100 market data lines; live
+    # quotes use up to 50 more).
+    ibkr_live_bars_max: int = field(default_factory=lambda: int(os.environ.get("IBKR_LIVE_BARS_MAX", "40")))
 
     @property
     def db_path(self) -> Path:

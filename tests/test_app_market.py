@@ -39,6 +39,10 @@ class Recorder:
         resp._content = __import__("json").dumps(self.body).encode()
         return resp
 
+    def put(self, url, json=None, timeout=None):
+        self.puts = getattr(self, "puts", []) + [(url, json)]
+        return self.get(url)
+
 
 def client_with(settings, **kw) -> tuple[MarketClient, Recorder]:
     c = MarketClient(settings)
@@ -71,6 +75,7 @@ def test_every_endpoint_has_a_function_and_the_fake_matches():
     (lambda m: m.price_change(5, "DAYS", ["AAPL", "MSFT"]), "/v1/price-change",
      {"periodAmount": 5, "periodUnit": "DAYS", "symbols": "AAPL,MSFT"}),
     (lambda m: m.quotes(["AAPL", "JRSH"]), "/v1/quotes", {"symbols": "AAPL,JRSH"}),
+    (lambda m: m.live_status(), "/v1/live", None),
     (lambda m: m.calendar("2026-10-16", "2026-10-16"), "/v1/calendar", {"start": "2026-10-16", "end": "2026-10-16"}),
     (lambda m: m.status(), "/v1/status", None),
 ])
@@ -79,6 +84,12 @@ def test_client_function_maps_to_market_url(settings, call, path, params):
     assert call(client) == {"ok": True}
     assert rec.requests == [(f"http://market:8000{path}", params)]
     assert rec.headers["X-API-Key"] == "market-key"
+
+
+def test_live_watch_is_a_put_with_a_body(settings):
+    client, rec = client_with(settings)
+    client.live_watch(["AAA", "BBB"], 10)
+    assert rec.puts == [("http://market:8000/v1/live/watch", {"symbols": ["AAA", "BBB"], "ttlMinutes": 10})]
 
 
 def test_client_errors(settings):
@@ -115,6 +126,9 @@ def test_market_routes_call_the_matching_function(settings):
         assert c.get("/v1/market/bars/AAA?timeframe=2Days", headers=KEY).status_code == 422  # validated by the app
         assert c.get("/v1/market/status", headers=KEY).json()["dataDelayMinutes"] == 16
         assert c.get("/v1/market/admin/halal", headers=KEY).status_code == 404  # no generic pass-through
+        r = c.put("/v1/market/live/watch", headers=KEY, json={"symbols": ["AAA"], "ttlMinutes": 3})
+        assert r.status_code == 200 and fake.calls[-1] == ("live_watch", ["AAA"], 3)
+        assert c.get("/v1/market/live", headers=KEY).json()["enabled"] is True
 
 
 def test_every_market_function_has_an_app_route(settings):
