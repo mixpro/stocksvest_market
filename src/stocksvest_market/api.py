@@ -16,7 +16,7 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Upload
 from pydantic import BaseModel, Field
 
 from . import aggregate, db, halal, sectors, sync
-from .alpaca import AlpacaClient
+from .alpaca import AlpacaClient, AlpacaQuotes
 from .config import Settings
 from .scheduler import Scheduler
 from .symbols import SymbolSyncError
@@ -213,8 +213,8 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
     Args:
         settings: service settings; default reads the environment.
         client_factory: builds the Alpaca client for admin jobs (tests pass a fake).
-        quote_source: live quotes (an object with quotes(tickers), connected, last_error); default IbkrQuotes when
-            IBKR_ENABLED, else none (tests pass a fake).
+        quote_source: live quotes (an object with quotes(tickers), connected, last_error, optional `source`);
+            default IbkrQuotes when IBKR_ENABLED, else AlpacaQuotes when Alpaca keys are set (tests pass a fake).
 
     Returns:
         The FastAPI app.
@@ -226,6 +226,8 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
     if owns_quotes:
         from .ibkr import IbkrQuotes
         quote_source = IbkrQuotes(settings)
+    elif quote_source is None and settings.alpaca_key:  # real-time SIP quotes on the paid data plan
+        quote_source = AlpacaQuotes(settings)
     state: dict = {"scheduler": None, "quotes": quote_source}
 
     @asynccontextmanager
@@ -458,8 +460,8 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
 
     @app.get("/v1/quotes", tags=["prices"], dependencies=read)
     def quotes(conn: Conn, symbols: Annotated[str, Query(description="Comma-separated tickers/ids, up to 100")]):
-        """Live price per symbol right now: bid, ask and last from IBKR (`source: IBKR`), or, when IBKR can't
-        answer, the newest minute bar (`source: DELAYED`; real-time SIP on the paid plan, about 16 minutes old on the
+        """Live price per symbol right now: bid, ask and last from the live source (`source: ALPACA`, real-time SIP,
+        or `IBKR` when the IB Gateway is used), or, when it can't answer, the newest minute bar (`source: DELAYED`; real-time SIP on the paid plan, about 16 minutes old on the
         free one). `price` is the bid/ask midpoint (or the last trade); `ageSeconds` says how old it is.
         \f
         Args:
@@ -478,7 +480,7 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
             if q:
                 bid, ask, last = q.get("bid"), q.get("ask"), q.get("last")
                 at = datetime.fromisoformat(q["time"])
-                out[r["ticker"]] = {"source": "IBKR", "bid": bid, "ask": ask, "last": last,
+                out[r["ticker"]] = {"source": getattr(source, "source", "IBKR"), "bid": bid, "ask": ask, "last": last,
                                     "price": round((bid + ask) / 2, 4) if bid is not None and ask is not None else last,
                                     "time": _iso(int(at.timestamp())),
                                     "ageSeconds": max(0, int((now - at).total_seconds()))}

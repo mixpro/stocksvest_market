@@ -311,9 +311,11 @@ def test_sells_use_the_bid_and_require_live_price_skips(client, setup, broker, m
                         guards={"requireLivePrice": True}, name="Seller")
     client.post(f"/v1/budgets/{a['budget']['id']}/automations", headers=KEY, json={"automationId": seller["id"]})
     market.live = {"AAA": {"bid": 9.5, "ask": 9.7, "last": 9.6, "price": 9.6}}
+    market.live_source = "ALPACA"  # Alpaca's real-time quotes count as live, like IBKR's
     r = run(client, seller)
     by = {i["ticker"]: i for i in section(r)["intents"]}
     assert (by["AAA"]["decision"], by["AAA"]["estimatedPrice"]) == ("PLACE", 9.5)  # sold at the bid
+    assert by["AAA"]["priceSource"] == "ALPACA"
     assert by["BBB"]["skipReason"] == "NO_LIVE_PRICE" and by["CCC"]["skipReason"] == "NO_LIVE_PRICE"
 
 

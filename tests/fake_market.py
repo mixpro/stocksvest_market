@@ -94,7 +94,7 @@ class FakeMarket:
         out = {}
         for t in symbols:
             if t in live:
-                out[t] = {"source": "IBKR", "ageSeconds": 1, "time": "t", **live[t]}
+                out[t] = {"source": getattr(self, "live_source", "IBKR"), "ageSeconds": 1, "time": "t", **live[t]}
             else:
                 p = SNAPS[t]["latestPrice"]
                 out[t] = {"source": "DELAYED", "bid": None, "ask": None, "last": p, "price": p, "time": "t",

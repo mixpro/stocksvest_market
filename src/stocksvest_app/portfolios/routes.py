@@ -13,7 +13,7 @@ from ..brokers.base import BrokerError
 from ..db import immediate
 from ..filters import store as filters_store
 from ..deps import AppContext
-from ..market.client import MarketError
+from ..market.client import LIVE_SOURCES, MarketError
 from ..orders import service, store as orders_store
 from . import store
 from .store import D0, num
@@ -180,7 +180,7 @@ def router(ctx: AppContext) -> APIRouter:
                 # Only quotes with a last trade: without one (often before the open) the price is the bid/ask
                 # midpoint, which is far off on a wide spread; the delayed last trade is closer to the broker's value.
                 quotes = {t: q for t, q in ctx.market.live_quotes(symbols).items()
-                          if q.get("source") == "IBKR" and q.get("last") is not None}
+                          if q.get("source") in LIVE_SOURCES and q.get("last") is not None}
             except MarketError:
                 quotes = {}
 
@@ -200,7 +200,7 @@ def router(ctx: AppContext) -> APIRouter:
             positions.append({"symbol": x["symbol"], "budgetId": x["budgetId"], "automationId": x["automationId"],
                               "quantity": num(x["quantity"]),
                               "averageCost": num(x["averageCost"]), "costBasis": num(x["costBasis"]),
-                              "price": price, "priceSource": "IBKR" if q else "DELAYED", "marketValue": num(value),
+                              "price": price, "priceSource": q["source"] if q else "DELAYED", "marketValue": num(value),
                               "unrealizedPnL": num(value - x["costBasis"]) if value is not None else None,
                               "unrealizedPct": pct(value - x["costBasis"], x["costBasis"]) if value is not None else None})
         manual = service.open_manual_buys(conn, p["id"])
@@ -418,7 +418,7 @@ def router(ctx: AppContext) -> APIRouter:
         except MarketError as e:
             raise HTTPException(502, e.detail)
         estimate = snap.get("latestPrice")
-        if quote.get("source") == "IBKR":  # live: buys at the ask, sells at the bid
+        if quote.get("source") in LIVE_SOURCES:  # live: buys at the ask, sells at the bid
             estimate = (quote.get("ask") if body.side == "BUY" else quote.get("bid")) or quote.get("price")
         if body.budgetId:
             b = budget.get_budget(conn, body.budgetId)

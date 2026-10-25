@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
 
+from ..market.client import LIVE_SOURCES
 from ..orders.service import PRICE_BUFFER, OrderRejected, check_request
 from .models import OrderGuards, PlaceOrderAction, RankingKey, SelectionMode, SizingMode
 
@@ -31,7 +32,7 @@ class PlanContext:
 
     Attributes:
         snapshots: ticker -> market snapshot (latestPrice, dailyChangePercent, dailyVolume), plus bid, ask,
-            priceSource ("IBKR") and quoteAgeSeconds when the runner merged a live quote in.
+            priceSource ("ALPACA" or "IBKR") and quoteAgeSeconds when the runner merged a live quote in.
         holdings: ticker -> Holding (the budget's shares).
         open_buys: tickers with an open buy order paid from the budget (for skipBuyIfHeld).
         open_sells: ticker -> the budget's shares already being sold.
@@ -303,8 +304,8 @@ def size(action: PlaceOrderAction, guards: OrderGuards, symbols: list[str], ctx:
 
         # Price: a live quote when the runner got one (buys at the ask, sells at the bid), else the delayed price.
         snap = ctx.snapshots.get(ticker, {})
-        live = snap.get("priceSource") == "IBKR"
-        intent["priceSource"] = "IBKR" if live else "DELAYED"
+        live = snap.get("priceSource") in LIVE_SOURCES
+        intent["priceSource"] = snap["priceSource"] if live else "DELAYED"
         intent["quoteAgeSeconds"] = snap.get("quoteAgeSeconds")
         if guards.requireLivePrice and not live:
             _skip(intent, "NO_LIVE_PRICE", "no live quote right now (requireLivePrice)")

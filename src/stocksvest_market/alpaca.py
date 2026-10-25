@@ -147,3 +147,62 @@ class AlpacaClient:
             if not token:
                 return
             params["page_token"] = token
+
+
+def _alpaca_time(t: str) -> datetime:
+    """An Alpaca timestamp (nanoseconds, "Z") as an aware datetime. Used by: AlpacaQuotes.quotes."""
+    head, _, frac = t.rstrip("Z").partition(".")
+    return datetime.fromisoformat(f"{head}.{(frac + '000000')[:6]}+00:00")
+
+
+class AlpacaQuotes:
+    """Live quotes from Alpaca's real-time SIP snapshots (paid data plan): latest bid/ask and last trade.
+    Same interface as ibkr.IbkrQuotes' quotes, so api.quotes uses whichever is configured.
+
+    Attributes:
+        source: "ALPACA", the quotes' `source` in GET /v1/quotes.
+        connected: the last request worked.
+        last_error / last_quote_at: shown by GET /v1/status.
+
+    Used by: api.create_app (when IBKR is off and Alpaca keys are set).
+    """
+
+    source = "ALPACA"
+
+    def __init__(self, settings: Settings, client: AlpacaClient | None = None):
+        self.settings = settings
+        self.client = client or AlpacaClient(settings)
+        self.connected = True
+        self.last_error: str | None = None
+        self.last_quote_at: datetime | None = None
+
+    def quotes(self, tickers: list[str]) -> dict[str, dict]:
+        """ticker -> {bid, ask, last, time (ISO)} from one snapshots request; {} when Alpaca fails. A one-sided,
+        crossed or empty quote keeps only the last trade (bid and ask None).
+
+        Args:
+            tickers: the market service's tickers (Alpaca's own symbols).
+        """
+        if not tickers:
+            return {}
+        try:
+            data = self.client._get(f"{self.settings.alpaca_data_url}/v2/stocks/snapshots",
+                                    {"symbols": ",".join(tickers), "feed": self.settings.alpaca_feed})
+        except (AlpacaError, requests.RequestException) as e:
+            self.connected, self.last_error = False, f"snapshots: {e}"
+            log.warning("Alpaca quotes failed: %s", e)
+            return {}
+        self.connected, self.last_error = True, None
+        out = {}
+        for t, snap in (data or {}).items():
+            q, tr = (snap or {}).get("latestQuote") or {}, (snap or {}).get("latestTrade") or {}
+            bid, ask = q.get("bp") or None, q.get("ap") or None
+            if bid is None or ask is None or ask < bid:
+                bid = ask = None
+            stamp = q.get("t") if bid is not None else tr.get("t")
+            if not stamp or (bid is None and tr.get("p") is None):
+                continue
+            at = _alpaca_time(stamp)
+            out[t] = {"bid": bid, "ask": ask, "last": tr.get("p"), "time": at.isoformat()}
+            self.last_quote_at = max(self.last_quote_at or at, at)
+        return out

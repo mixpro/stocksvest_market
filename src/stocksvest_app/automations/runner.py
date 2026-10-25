@@ -21,7 +21,7 @@ from .models import OrderGuards, PlaceOrderAction
 from ..filters import store as filters_store
 from ..filters.engine import EngineError, Evaluator
 from ..filters.models import FilterIn
-from ..market.client import MarketError
+from ..market.client import LIVE_SOURCES, MarketError
 from ..runs import store as runs_store
 from . import store
 from .timing import ET
@@ -396,7 +396,7 @@ class LiveQuotes:
     """Live quotes for one run: asked once per symbol, shared by every budget and order action.
 
     Attributes:
-        quotes: ticker -> quote from MarketData.live_quotes (source IBKR or DELAYED).
+        quotes: ticker -> quote from MarketData.live_quotes (source ALPACA / IBKR = live, or DELAYED).
         asked: tickers asked for so far.
         error: the market service's error, if the last request failed (orders then use the delayed price).
 
@@ -429,13 +429,13 @@ class LiveQuotes:
                 log.warning("live quotes unavailable, using delayed prices: %s", e.detail)
         for t in tickers:
             q = self.quotes.get(t)
-            if q and q.get("source") == "IBKR":
+            if q and q.get("source") in LIVE_SOURCES:
                 snapshots[t] = {**snapshots.get(t, {}), "latestPrice": q["price"], "bid": q["bid"], "ask": q["ask"],
-                                "priceSource": "IBKR", "quoteAgeSeconds": q.get("ageSeconds")}
+                                "priceSource": q["source"], "quoteAgeSeconds": q.get("ageSeconds")}
 
     def summary(self) -> dict:
         """For the run record: how many symbols got a live quote, the error if any, and each quote used."""
-        live = {t: q for t, q in self.quotes.items() if q.get("source") == "IBKR"}
+        live = {t: q for t, q in self.quotes.items() if q.get("source") in LIVE_SOURCES}
         return {"asked": len(self.asked), "live": len(live), "error": self.error,
                 "quotes": {t: {k: q.get(k) for k in ("source", "bid", "ask", "last", "time", "ageSeconds")}
                            for t, q in sorted(self.quotes.items())}}

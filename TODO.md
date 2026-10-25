@@ -71,7 +71,7 @@ Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 →
   - Option 2: IEX feed top-up (free, real-time, thinner coverage).
   - Held symbols are already live via IBKR (done).
 
-- [ ] **DATA-5: Alpaca real-time quotes as backup for IBKR**
+- [x] **DATA-5: Alpaca real-time quotes as backup for IBKR**: became the main source on 2026-10-25, when the IBKR data subscription was cancelled. `IBKR_ENABLED=false` in production; quotes come from Alpaca SIP snapshots (`source: ALPACA`)
   - The paid plan includes real-time bid/ask. Today bid/ask come only from the IB Gateway: if it's down, orders with `requireLivePrice` (5B Buy) skip with NO_LIVE_PRICE.
   - Use Alpaca's latest quote when IBKR has none (or as the main source).
 

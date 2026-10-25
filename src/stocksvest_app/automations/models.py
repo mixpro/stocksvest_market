@@ -404,7 +404,7 @@ class OrderGuards(BaseModel):
         regularHoursOnly: place nothing outside the regular session.
         skipBuyIfHeld: no buy when the budget holds the symbol or has a buy open (from any of its automations).
         maxDataAgeMinutes: place nothing when the market data is older than this.
-        requireLivePrice: place an order only with a live quote (IBKR) for its symbol; otherwise skip it
+        requireLivePrice: place an order only with a live quote (Alpaca or IBKR) for its symbol; otherwise skip it
             (NO_LIVE_PRICE) instead of using the newest minute bar.
         maxSpreadPercent: skip a buy (WIDE_SPREAD) when its live quote's ask is more than this % above the bid,
             measured from the midpoint; thinly traded stocks fill at the ask, far above their value. Needs a live

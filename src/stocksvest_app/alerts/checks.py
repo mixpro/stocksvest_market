@@ -221,9 +221,9 @@ def check(ctx, conn, now: datetime | None = None) -> None:
               f"No sync since {synced or 'ever'} during the regular session." if stale else None, now)
     live = status.get("liveQuotes") or {}
     ibkr_down = in_session and live.get("enabled") and not live.get("connected")
-    condition(conn, mailer, "market:ibkr", "Live prices (IBKR)",
-              f"Not connected to the IB Gateway ({live.get('lastError') or 'no detail'}). Orders use the newest "
-              f"minute bar meanwhile." if ibkr_down else None, now, GRACE)
+    condition(conn, mailer, "market:ibkr", "Live prices",
+              f"The live quote source fails ({live.get('lastError') or 'no detail'}). Orders use the newest "
+              f"minute bar meanwhile, and requireLivePrice orders are skipped." if ibkr_down else None, now, GRACE)
 
     # The daily summary, once per trading day after the close.
     if day and now >= datetime.fromisoformat(day["regularClose"]) + SUMMARY_AFTER:

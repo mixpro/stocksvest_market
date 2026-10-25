@@ -320,7 +320,7 @@ taking the top N (listed as `recentlySold` in the run), so the next best takes t
    fetched once per run (IBKR, through the market service's `/v1/quotes`) and used to price and size them: **buys at
    the ask, sells at the bid**. Nothing is fetched when the market is closed or the data too old (nothing can be
    placed then). Symbols without a live quote, or when live quotes fail, use the newest minute bar. Each intent
-   has `priceSource` (`IBKR` or `DELAYED`) and `quoteAgeSeconds`.
+   has `priceSource` (`ALPACA` or `IBKR` = live, or `DELAYED`) and `quoteAgeSeconds`.
 4. **Guards:** applied in rank order. Each symbol becomes an intent: `PLACE`, or `SKIP` with a reason:
 
    | `skipReason` | Meaning |

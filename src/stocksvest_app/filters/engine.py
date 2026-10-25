@@ -7,7 +7,7 @@ from decimal import Decimal
 from statistics import median
 from zoneinfo import ZoneInfo
 
-from ..market.client import MarketError
+from ..market.client import LIVE_SOURCES, MarketError
 from ..market.data import MarketData
 from ..portfolios import store as portfolios_store
 from . import store
@@ -338,7 +338,7 @@ class Evaluator:
                 log.warning("live quotes unavailable for filters, using delayed prices: %s", e.detail)
                 quotes = {}
             self._live.update({t: q["last"] for t, q in quotes.items()
-                               if q.get("source") == "IBKR" and q.get("last") is not None})
+                               if q.get("source") in LIVE_SOURCES and q.get("last") is not None})
         return {t: self._live[t] for t in tickers if t in self._live}
 
     def _unrealized_pnl(self, action: UnrealizedPnlAction, symbols: set[str]) -> set[str]:

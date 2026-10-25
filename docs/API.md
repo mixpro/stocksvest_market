@@ -253,8 +253,10 @@ calendar is shorter than `days`.
 
 ### Live quotes
 
-`GET /v1/quotes?symbols=AAPL,JRSH` (up to 100 symbols): the price **right now**, from Interactive Brokers when the
-service is connected to an IB Gateway (`IBKR_ENABLED=true`), otherwise the newest minute bar (`DELAYED`).
+`GET /v1/quotes?symbols=AAPL,JRSH` (up to 100 symbols): the price **right now**: real-time bid/ask and last trade
+from Alpaca's SIP snapshots (`source: ALPACA`, paid data plan; used whenever Alpaca keys are set and IBKR is off), or
+from Interactive Brokers when `IBKR_ENABLED=true` (`source: IBKR`). Without either, the newest minute bar
+(`DELAYED`). A one-sided or crossed Alpaca quote keeps only the last trade (`bid`/`ask` null).
 
 ```json
 {
@@ -279,7 +281,8 @@ service is connected to an IB Gateway (`IBKR_ENABLED=true`), otherwise the newes
 
 `PUT /v1/live/watch` with `{"symbols": ["AAPL", "CSX"], "ttlMinutes": 10}`
 
-Streams IBKR real-time bars for these symbols (for example a portfolio's holdings) until `ttlMinutes` pass; send the
+Only with `IBKR_ENABLED=true` (off in production since 2026-10-25: the minute bars are real-time and synced every
+minute, so it isn't needed). Streams IBKR real-time bars for these symbols (for example a portfolio's holdings) until `ttlMinutes` pass; send the
 list again before then to keep them. The app does this every minute for everything its portfolios hold or have an order
 open for.
 

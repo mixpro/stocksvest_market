@@ -30,6 +30,11 @@ ENDPOINTS = {
 }
 
 
+# Quote sources that are live (market GET /v1/quotes `source`); DELAYED is the newest minute bar.
+# Used by: runner.LiveQuotes, planner.size, filters.engine, portfolios.routes, backtest
+LIVE_SOURCES = {"ALPACA", "IBKR"}
+
+
 class MarketError(RuntimeError):
     """The market API failed or refused a call.
 

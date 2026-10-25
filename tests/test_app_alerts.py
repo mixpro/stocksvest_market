@@ -99,11 +99,11 @@ def test_ibkr_down_during_the_session(env, monkeypatch):
     checks.check(ctx, conn, at(11))
     status["lastIncrementalAt"] = at(11, 10).isoformat()
     checks.check(ctx, conn, at(11, 11))
-    assert mailer.subjects() == ["Problem: Live prices (IBKR)"] and "competing live session" in mailer.sent[0][1]
+    assert mailer.subjects() == ["Problem: Live prices"] and "competing live session" in mailer.sent[0][1]
     status["liveQuotes"]["connected"] = True
     status["lastIncrementalAt"] = at(11, 20).isoformat()
     checks.check(ctx, conn, at(11, 22))
-    assert mailer.subjects()[-1] == "Resolved: Live prices (IBKR)"
+    assert mailer.subjects()[-1] == "Resolved: Live prices"
 
 
 def test_stale_market_data_only_during_the_session(env):

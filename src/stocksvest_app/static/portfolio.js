@@ -207,7 +207,7 @@ function render() {
       el("tbody", {}, ...p.positions.map((x) => el("tr", {},
         el("td", {}, el("b", {}, x.symbol)), el("td", {}, budgetName(x.budgetId)), el("td", {}, ownerName(x.automationId)),
         el("td", { class: "num" }, fmt(x.quantity, 0)), el("td", { class: "num" }, money(x.averageCost)),
-        el("td", { class: "num" }, money(x.price), el("span", { class: "muted" }, x.priceSource === "IBKR" ? " live" : " bar")),
+        el("td", { class: "num" }, money(x.price), el("span", { class: "muted" }, ["ALPACA", "IBKR"].includes(x.priceSource) ? " live" : " bar")),
         el("td", { class: "num" }, money(x.marketValue)),
         el("td", { class: `num ${tone(x.unrealizedPnL)}` }, signed(x.unrealizedPnL) + signedPct(x.unrealizedPct)))))) : el("p", { class: "muted" }, "No positions."),
     budgetsSection(p),
