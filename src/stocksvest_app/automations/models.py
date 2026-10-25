@@ -412,6 +412,10 @@ class OrderGuards(BaseModel):
         rebuyCooldownMinutes: no buy of a symbol the budget sold (by any of its automations) less than this many
             minutes ago (RECENTLY_SOLD); a TOP_N buy leaves them out before taking the top N. Stops a buy and a
             sell automation from trading the same stock back and forth.
+        maxSectorPercent: cap on one sector's share of the budget's equity (its holdings plus this run's buys).
+            A TOP_N buy leaves out stocks of full sectors before taking the top N (sectorFull), counting each
+            planned buy at maxPositionPercent; a buy that would still cross the cap shrinks or skips (SECTOR_FULL).
+            Stocks without a sector are not capped. Holdings that grew past the cap are not sold.
 
     Used by: AutomationIn.orderGuards, runner.Trading, planner.plan.
     """
@@ -424,6 +428,7 @@ class OrderGuards(BaseModel):
     requireLivePrice: bool = False
     maxSpreadPercent: Decimal | None = Field(default=None, gt=0, le=100)  # buys: (ask - bid) / midpoint
     rebuyCooldownMinutes: int | None = Field(default=None, ge=1, le=43200)  # up to 30 days
+    maxSectorPercent: Decimal | None = Field(default=None, gt=0, le=100)  # of the budget's equity
 
 
 # Any automation action; the "type" field picks the model. Used by: AutomationIn.actions, runner.run_automation.

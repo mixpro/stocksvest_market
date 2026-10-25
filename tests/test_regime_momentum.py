@@ -1,9 +1,11 @@
-"""MARKET_CHANGE (market regime gate) and the momentum ranking keys."""
+"""MARKET_CHANGE (market regime gate), the momentum ranking keys and the sector cap."""
 
 from decimal import Decimal
 
+from fake_broker import FakeBroker
+
 from stocksvest_app.automations import planner
-from stocksvest_app.automations.models import PlaceOrderAction
+from stocksvest_app.automations.models import OrderGuards, PlaceOrderAction
 from stocksvest_app.filters.engine import Evaluator
 from stocksvest_app.filters.models import MarketChangeAction
 
@@ -42,3 +44,26 @@ def test_momentum_ranks_12_months_to_1_month_ago():
                               budget_available=Decimal(1000), budget_equity=Decimal(1000), session="REGULAR",
                               data_age_minutes=0)
     assert planner.select(action, ["A", "B", "C"], ctx, None)["symbols"] == ["A", "B"]  # C (no data) ranks last
+
+
+def test_sector_cap_skips_full_sectors_before_the_top_n():
+    action = PlaceOrderAction.model_validate({
+        "type": "PLACE_ORDER", "side": "BUY", "sizings": [{"mode": "CASH_AMOUNT", "value": 100000}],
+        "selection": {"mode": "TOP_N", "topN": 3, "rankBy": "LAST_PRICE"}})
+    guards = OrderGuards(maxPositionPercent=10, maxSectorPercent=25, maxOrdersPerRun=10)
+    prices = {"T1": 50, "T2": 40, "T3": 30, "T4": 20, "E1": 10}  # ranked by price: T1 > T2 > T3 > T4 > E1
+    snaps = {t: {"latestPrice": p, "priceSource": "ALPACA", "bid": p, "ask": p} for t, p in prices.items()}
+    snaps["H"] = {"latestPrice": 10}
+    ctx = planner.PlanContext(snapshots=snaps, holdings={"H": planner.Holding(Decimal(50), Decimal(500))},
+                              open_buys=set(), open_sells={}, budget_available=Decimal(9500),
+                              budget_equity=Decimal(10000), session="REGULAR", data_age_minutes=0,
+                              sectors={"T1": "TECH", "T2": "TECH", "T3": "TECH", "T4": "TECH", "E1": "ENERGY",
+                                       "H": "TECH"})
+    chosen = planner.select(action, list(prices), ctx, guards)
+    # TECH holds $500; a cap of $2,500 fits two $1,000 buys (T1, T2), then T3 and T4 are left out for E1.
+    assert chosen["symbols"] == ["T1", "T2", "E1"] and chosen["sectorFull"] == ["T3", "T4"]
+    intents = planner.size(action, guards, chosen["symbols"], ctx, FakeBroker())
+    assert [(i["ticker"], i["decision"], i["quantity"]) for i in intents] == [
+        ("T1", "PLACE", 20), ("T2", "PLACE", 25), ("E1", "PLACE", 100)]
+    ctx.sector_planned["TECH"] += Decimal(900)  # e.g. an earlier action of the run bought more TECH
+    assert planner.size(action, guards, ["T3"], ctx, FakeBroker())[0]["skipReason"] == "SECTOR_FULL"

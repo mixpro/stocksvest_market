@@ -43,6 +43,7 @@ class PlanContext:
         orders_planned: PLACE intents for this budget so far in this run (for maxOrdersPerRun).
         last_sells: ticker -> when the budget last sold it (for rebuyCooldownMinutes).
         now: the run time (for rebuyCooldownMinutes).
+        sectors: ticker -> sector key (for maxSectorPercent).
         budget_left: budget still unspent by planned buys (top rank first).
 
     Used by: plan; runner.Trading.context (built).
@@ -59,7 +60,9 @@ class PlanContext:
     orders_planned: int = 0  # across all order actions of the run (for maxOrdersPerRun)
     last_sells: dict[str, datetime] = field(default_factory=dict)  # ticker -> the budget's last sell
     now: datetime | None = None
+    sectors: dict[str, str | None] = field(default_factory=dict)  # ticker -> sector key (for maxSectorPercent)
     budget_left: Decimal = field(init=False)
+    sector_planned: dict[str, Decimal] = field(init=False, default_factory=dict)  # this run's buys per sector
 
     def __post_init__(self):
         """Start the run with the whole available budget unspent."""
@@ -171,6 +174,19 @@ def _spread_percent(snap: dict) -> Decimal | None:
     return (ask - bid) / ((ask + bid) / 2) * 100
 
 
+def _sector_values(ctx: PlanContext) -> dict[str, Decimal]:
+    """The budget's holdings value per sector (at the snapshot prices), plus this run's planned buys.
+
+    Used by: select, size (maxSectorPercent).
+    """
+    out: dict[str, Decimal] = dict(ctx.sector_planned)
+    for t, h in ctx.holdings.items():
+        sector, price = ctx.sectors.get(t), ctx.snapshots.get(t, {}).get("latestPrice")
+        if sector and h.quantity > 0 and price is not None:
+            out[sector] = out.get(sector, D0) + h.quantity * Decimal(str(price))
+    return out
+
+
 def _intent(ticker, side, rank, sizing, **kw) -> dict:
     """A new intent dict (decision PLACE until a guard says otherwise).
 
@@ -219,7 +235,8 @@ def select(action: PlaceOrderAction, matched: list[str], ctx: PlanContext, guard
     Returns:
         {"symbols": tickers in rank order, "notHeld": matches a SELL can't use,
         "alreadyHeld": matches a TOP_N buy left out because the budget holds them,
-        "recentlySold": matches a TOP_N buy left out because the budget sold them within the cooldown}.
+        "recentlySold": matches a TOP_N buy left out because the budget sold them within the cooldown,
+        "sectorFull": matches a TOP_N buy left out because their sector would cross maxSectorPercent}.
 
     Used by: plan, runner._place_orders.
     """
@@ -229,7 +246,7 @@ def select(action: PlaceOrderAction, matched: list[str], ctx: PlanContext, guard
         not_held = len(matched) - len(candidates)
     else:
         candidates, not_held = list(matched), 0
-    already_held, recently_sold = [], []
+    already_held, recently_sold, sector_full = [], [], []
     if action.side == "BUY" and action.selection.mode == SelectionMode.TOP_N and guards is not None:
         if guards.skipBuyIfHeld:
             held = {t for t, h in ctx.holdings.items() if h.quantity > 0} | ctx.open_buys
@@ -243,10 +260,28 @@ def select(action: PlaceOrderAction, matched: list[str], ctx: PlanContext, guard
     if sel.mode == SelectionMode.TOP_N:
         valued = [(t, _rank_value(sel.rankBy, t, ctx)) for t in candidates]
         with_value = sorted([x for x in valued if x[1] is not None], key=lambda x: x[1], reverse=sel.descending)
-        candidates = [t for t, _ in with_value + [x for x in valued if x[1] is None]][: sel.topN]
+        ranked = [t for t, _ in with_value + [x for x in valued if x[1] is None]]
+        if action.side == "BUY" and guards is not None and guards.maxSectorPercent is not None:
+            cap = ctx.budget_equity * guards.maxSectorPercent / 100
+            each = ctx.budget_equity * (guards.maxPositionPercent or 0) / 100  # one planned buy
+            used, kept = _sector_values(ctx), []
+            for t in ranked:
+                sector = ctx.sectors.get(t)
+                if sector and used.get(sector, D0) + each > cap:
+                    sector_full.append(t)
+                    continue
+                kept.append(t)
+                if sector:
+                    used[sector] = used.get(sector, D0) + each
+                if len(kept) == sel.topN:
+                    break
+            sector_full.sort()
+            ranked = kept
+        candidates = ranked[: sel.topN]
     else:
         candidates = sorted(candidates)
-    return {"symbols": candidates, "notHeld": not_held, "alreadyHeld": already_held, "recentlySold": recently_sold}
+    return {"symbols": candidates, "notHeld": not_held, "alreadyHeld": already_held, "recentlySold": recently_sold,
+            "sectorFull": sector_full}
 
 
 def market_blocked(guards: OrderGuards, ctx: PlanContext) -> tuple[str, str] | None:
@@ -361,6 +396,17 @@ def size(action: PlaceOrderAction, guards: OrderGuards, symbols: list[str], ctx:
                         continue
                     intent["detail"] = f"reduced from {qty} to {fit} shares by the position limit"
                     qty = fit
+            sector = ctx.sectors.get(ticker)
+            if guards.maxSectorPercent is not None and sector:
+                cap = ctx.budget_equity * guards.maxSectorPercent / 100
+                room = cap - _sector_values(ctx).get(sector, D0)
+                fit = (room / price).quantize(Decimal(1), rounding=ROUND_DOWN) if room > 0 else D0
+                if fit < qty:
+                    if fit <= 0:
+                        _skip(intent, "SECTOR_FULL", f"{sector} is at its limit of {cap:.2f}")
+                        continue
+                    intent["detail"] = f"reduced from {qty} to {fit} shares by the sector limit"
+                    qty = fit
 
         if qty <= 0:
             _skip(intent, "ZERO_QUANTITY", "the sizing comes to less than one share")
@@ -401,6 +447,9 @@ def size(action: PlaceOrderAction, guards: OrderGuards, symbols: list[str], ctx:
         ctx.orders_planned += 1
         if action.side == "BUY":
             ctx.budget_left -= cost
+            if ctx.sectors.get(ticker):
+                s = ctx.sectors[ticker]
+                ctx.sector_planned[s] = ctx.sector_planned.get(s, D0) + qty * price
     return intents
 
 

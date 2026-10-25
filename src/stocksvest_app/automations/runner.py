@@ -128,7 +128,9 @@ class Trading:
                 budget_equity=Decimal(str(b["cash"] + b["invested"])) if b else Decimal(0),
                 session=session, data_age_minutes=data_age,
                 last_sells=orders_store.last_sells(self.conn, bid) if self.guards.rebuyCooldownMinutes else {},
-                now=datetime.now(timezone.utc))
+                now=datetime.now(timezone.utc),
+                sectors=({t: s.get("sector") for t, s in self.ctx.market.universe().items()}
+                         if self.guards.maxSectorPercent is not None else {}))
         return self.plan_ctx
 
 
@@ -493,6 +495,8 @@ def _place_orders(ctx, conn, automation, tradings: list[tuple[dict, "Trading | N
                 sub["alreadyHeld"] = chosen["alreadyHeld"]  # left out of a TOP_N buy before ranking
             if chosen["recentlySold"]:
                 sub["recentlySold"] = chosen["recentlySold"]  # likewise, sold within rebuyCooldownMinutes
+            if chosen["sectorFull"]:
+                sub["sectorFull"] = chosen["sectorFull"]  # likewise, their sector is at maxSectorPercent
         except Exception as e:  # one budget failing does not stop the others
             log.exception("automation %s: planning for budget %s failed", automation["id"], trading.budget_id)
             sub.update(status="FAILED", error=str(e))

@@ -296,7 +296,7 @@ budget, and position caps and `skipBuyIfHeld` look at the budget's shares and op
 ```json
 {"maxOrdersPerRun": 10, "maxPositionValue": null, "maxPositionPercent": null,
  "regularHoursOnly": true, "skipBuyIfHeld": true, "maxDataAgeMinutes": 30, "requireLivePrice": false,
- "maxSpreadPercent": null, "rebuyCooldownMinutes": null}
+ "maxSpreadPercent": null, "rebuyCooldownMinutes": null, "maxSectorPercent": null}
 ```
 
 `requireLivePrice: true` places an order only when its symbol has a live quote (see below); otherwise it is skipped
@@ -311,6 +311,12 @@ held back. The check runs after the top N is chosen, so a skipped symbol leaves 
 minutes ago (`RECENTLY_SOLD`). Without it, a buy automation and a stop-loss sell automation in the same budget can
 trade one stock back and forth, losing the spread every time. A `TOP_N` buy leaves these symbols out **before**
 taking the top N (listed as `recentlySold` in the run), so the next best takes the place.
+
+`maxSectorPercent` caps one sector's share of the budget's equity: what the budget holds in it plus this run's buys.
+A `TOP_N` buy leaves out stocks whose sector would cross it **before** taking the top N (listed as `sectorFull`),
+counting each planned buy at `maxPositionPercent`, so lower-ranked stocks of other sectors take the places. A buy
+that would still cross it shrinks, or skips (`SECTOR_FULL`). Stocks without a sector aren't capped, and holdings
+that grew past the cap are not sold. Example: 5% positions with a 30% cap hold at most 6 buys of one sector.
 
 **How a run plans orders:**
 1. **Sync:** current fills and balances are imported from each budget's broker account first. If a broker can't
@@ -335,6 +341,7 @@ taking the top N (listed as `recentlySold` in the run), so the next best takes t
    | `NO_LIVE_PRICE` | `requireLivePrice` is on and the symbol has no live quote |
    | `WIDE_SPREAD` | A buy whose live bid/ask spread is over `maxSpreadPercent` |
    | `RECENTLY_SOLD` | A buy of a symbol the budget sold within `rebuyCooldownMinutes` |
+   | `SECTOR_FULL` | A buy whose sector is already at `maxSectorPercent` of the budget's equity |
    | `ZERO_QUANTITY` | The sizing comes to less than one share |
    | `NOT_SUPPORTED_BY_BROKER` | The broker doesn't support this order type, time in force or extended hours |
 

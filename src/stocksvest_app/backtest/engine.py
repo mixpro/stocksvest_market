@@ -101,7 +101,8 @@ def _context(conn, hist: HistoricalMarket, ev: Evaluator, book: Book, portfolio_
                    Decimal(0))
     return planner.PlanContext(snapshots=dict(snaps), holdings=holdings, open_buys=set(), open_sells={},
                                budget_available=book.cash, budget_equity=book.cash + invested, session="REGULAR",
-                               data_age_minutes=0, last_sells=dict(book.last_sells), now=now)
+                               data_age_minutes=0, last_sells=dict(book.last_sells), now=now,
+                               sectors={t: s.get("sector") for t, s in ev.market.universe().items()})
 
 
 def _fire_times(automation: dict, day: date, calendar: timing.CalendarFn, created: datetime) -> list[datetime]:
