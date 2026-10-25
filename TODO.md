@@ -3,6 +3,8 @@
 Each item has a permanent ID. IDs are never reused or renumbered; finished items move to **Done** with their ID.
 Status: `[ ]` open · `[~]` in progress · `[x]` done · `[-]` dropped.
 
+Longer write-ups for an item can go in `todos/` (e.g. `todos/001-sec-user-agent-for-sectors.md`).
+
 Prefixes: **BT** backtester · **DATA** market data · **STRAT** strategies to test · **FEAT** new filter/automation features · **OPS** production and fixes · **IDEA** parked ideas.
 
 Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 → rest.
@@ -11,9 +13,11 @@ Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 →
 
 ## BT: Backtester accuracy
 
-- [ ] **BT-1: Fill at the next price, not the signal's own close**
+- [x] **BT-1: Fill at the next price, not the signal's own close**
   - Today a buy is filled at the same hourly close the filter just saw, so results look better than reality.
   - Fix: fill at the next bar's open (or next hour's close) ± spread.
+  - Done 2026-10-25: default `--fill NEXT_VWAP` (next hour's VWAP ± spread); `SAME_CLOSE` kept for comparison.
+  - Result on the live setup (2025-10-24..2026-10-23): −85.6% same close vs −86.2% next VWAP. The bias was small.
 - [ ] **BT-2: Schedule timing in the engine**
   - The engine steps hourly 10:00–15:00 ET every day. Real automations run on their own schedule.
   - Needed for STRAT-1 (weekly at 11:00) and STRAT-2 (daily at 11:00).
@@ -111,6 +115,7 @@ Shared base: price > $10, 20-day dollar volume > $50M, max spread 0.30%, buy at 
 
 ## Done
 
+- [x] todos/001: SEC contact so sectors sync (2026-10-17)
 - [x] Stop-loss on buy price (UNREALIZED_PNL step)
 - [x] Spread guard (`maxSpreadPercent`), re-buy cooldown (`rebuyCooldownMinutes`)
 - [x] Average volume filter step (AVERAGE_VOLUME)

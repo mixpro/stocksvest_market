@@ -135,3 +135,18 @@ def test_overrides_change_the_run(market_path, app_db):
     capped = engine.run(path, market_path, ids["Buy"], ids["Sell"], date(2026, 10, 5), date(2026, 10, 7),
                         overrides={"buy": {"orderGuards": {"maxSpreadPercent": 0.0001}}})
     assert base["summary"]["buys"] > 0 and capped["summary"]["buys"] == 0  # every spread is over the cap
+
+
+def test_next_vwap_fills_after_the_signal(market_path, app_db):
+    path, ids = app_db
+    m = HistoricalMarket(market_path, date(2026, 10, 5), date(2026, 10, 7))
+    m.now = at("2026-10-06", 10)
+    half = spread_for(m.avg_dollar_volume("UP")) / 200
+    assert m.next_fill("UP", "BUY") == pytest.approx(hourly_close("2026-10-06", 10, 1.01) * (1 + half), rel=1e-6)
+    m.now = at("2026-10-06", 20)  # nothing trades after the extended close
+    assert m.next_fill("UP", "BUY") is None
+    nxt = engine.run(path, market_path, ids["Buy"], ids["Sell"], date(2026, 10, 5), date(2026, 10, 5))
+    same = engine.run(path, market_path, ids["Buy"], ids["Sell"], date(2026, 10, 5), date(2026, 10, 5),
+                      fill="SAME_CLOSE")
+    up = [next(t for t in r["trades"] if t["symbol"] == "UP") for r in (nxt, same)]
+    assert up[0]["price"] == pytest.approx(up[1]["price"] * 1.01, rel=1e-6)  # one hour later on a +1%/hour stock

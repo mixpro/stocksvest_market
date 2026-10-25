@@ -2,12 +2,14 @@
 
 Every trading hour (10:00 to 15:00 New York, while the regular session is open) the Sell automation runs first, then
 the Buy automation, exactly as the live runner does them: evaluate the run targets, planner.select, put live quotes
-(modelled spreads) into the plan, planner.size, then fill each PLACE intent at once at its estimated price (the ask for
-buys, the bid for sells). Shares are kept as position lots in a scratch copy of the app database, so filters that read
+(modelled spreads) into the plan, planner.size, then fill each PLACE intent. Fill modes: NEXT_VWAP (default) fills at
+the next hour's VWAP at the modelled ask/bid, so a signal never trades at the very print that triggered it; SAME_CLOSE
+fills at once at the planner's estimated price (the old, optimistic way, kept for comparison). Shares are kept as position lots in a scratch copy of the app database, so filters that read
 the portfolio (INVESTMENT_PORTFOLIO inputs, POSITION, UNREALIZED_PNL) see the simulated holdings.
 
 Simplifications, listed in every report: hourly steps instead of the live 1- and 15-minute schedules; market orders
-fill completely at the modelled bid/ask; no fees (Alpaca paper); today's halal universe throughout.
+fill completely at the modelled bid/ask (a buy shrinks to the cash there is); no fees (Alpaca paper);
+today's halal universe throughout.
 
 Used by: backtest.__main__, tests.
 """
@@ -34,6 +36,7 @@ from ..portfolios import store as portfolios_store
 from .history import ET, HistoricalMarket
 
 STEP_HOURS = range(10, 16)  # 10:00 .. 15:00 New York. Used by: run
+FILL_MODES = ("NEXT_VWAP", "SAME_CLOSE")  # see the module docstring. Used by: run, __main__
 
 
 class _Broker:
@@ -91,7 +94,7 @@ def _context(conn, hist: HistoricalMarket, ev: Evaluator, book: Book, portfolio_
                                data_age_minutes=0, last_sells=dict(book.last_sells), now=now)
 
 
-def _run_automation(conn, hist, market, book, automation, portfolio_id, budget_id, now, broker) -> None:
+def _run_automation(conn, hist, market, book, automation, portfolio_id, budget_id, now, broker, fill) -> None:
     """One run of an automation at `now`: evaluate, plan each PLACE_ORDER action, fill its PLACE intents."""
     ev = Evaluator(conn, market, now=now)
     matched, first = _targets(conn, ev, automation)
@@ -110,14 +113,24 @@ def _run_automation(conn, hist, market, book, automation, portfolio_id, budget_i
         for intent in planner.size(action, guards, chosen["symbols"], ctx, broker):
             if intent["decision"] != "PLACE":
                 continue
-            _fill(conn, book, automation, portfolio_id, budget_id, intent, first.get(intent["ticker"]), now)
+            price = Decimal(str(intent["estimatedPrice"]))
+            if fill == "NEXT_VWAP":
+                nxt = hist.next_fill(intent["ticker"], intent["side"])
+                if nxt is None:
+                    continue  # no trade left today: the order would expire unfilled
+                price = Decimal(str(nxt))
+            _fill(conn, book, automation, portfolio_id, budget_id, intent, first.get(intent["ticker"]), now, price)
 
 
 def _fill(conn, book: Book, automation: dict, portfolio_id: str, budget_id: str, intent: dict, reason: str | None,
-          now: datetime) -> None:
-    """Fill a PLACE intent completely at its estimated price and book it."""
-    t, qty, price = intent["ticker"], Decimal(str(intent["quantity"])), Decimal(str(intent["estimatedPrice"]))
+          now: datetime, price: Decimal) -> None:
+    """Fill a PLACE intent completely at `price` and book it (a buy shrinks to whole shares the cash pays for)."""
+    t, qty = intent["ticker"], Decimal(str(intent["quantity"]))
     at = now.astimezone(timezone.utc).isoformat()
+    if intent["side"] == "BUY":
+        qty = min(qty, (book.cash / price).to_integral_value(rounding="ROUND_FLOOR"))
+        if qty <= 0:
+            return
     with conn:
         if intent["side"] == "BUY":
             portfolios_store.open_lot(conn, portfolio_id, t, automation["id"], qty, price, opened_at=at,
@@ -164,7 +177,8 @@ def prepare(app_db: Path, work_dir: Path) -> Path:
 
 
 def run(app_db: Path, market_db: Path, buy_id: str, sell_id: str, start: date, end: date, budget: float = 10_000,
-        overrides: dict | None = None, hist: HistoricalMarket | None = None, progress=None) -> dict:
+        overrides: dict | None = None, hist: HistoricalMarket | None = None, progress=None,
+        fill: str = "NEXT_VWAP") -> dict:
     """Backtest a Buy and a Sell automation from `start` to `end` (inclusive) on one budget.
 
     Args:
@@ -179,10 +193,13 @@ def run(app_db: Path, market_db: Path, buy_id: str, sell_id: str, start: date, e
             definitions before the run (e.g. {"buy": {"orderGuards": {"maxSpreadPercent": 0.5}}}).
         hist: an already loaded HistoricalMarket (reused across runs); default loads one.
         progress: called with each finished day ("YYYY-MM-DD", equity).
+        fill: NEXT_VWAP or SAME_CLOSE (see the module docstring).
 
     Returns:
         {"params", "summary", "equity" (per day), "trades"}.
     """
+    if fill not in FILL_MODES:
+        raise ValueError(f"fill must be one of {FILL_MODES}")
     overrides = overrides or {}
     hist = hist or HistoricalMarket(market_db, start, end)
     with tempfile.TemporaryDirectory() as tmp:
@@ -213,8 +230,10 @@ def run(app_db: Path, market_db: Path, buy_id: str, sell_id: str, start: date, e
                     if now >= close:
                         break
                     hist.now = now
-                    _run_automation(conn, hist, market, book, autos["sell"], portfolio_id, budget_id, now, broker)
-                    _run_automation(conn, hist, market, book, autos["buy"], portfolio_id, budget_id, now, broker)
+                    _run_automation(conn, hist, market, book, autos["sell"], portfolio_id, budget_id, now, broker,
+                                    fill)
+                    _run_automation(conn, hist, market, book, autos["buy"], portfolio_id, budget_id, now, broker,
+                                    fill)
                 hist.now = close
                 equity, invested = _equity(conn, hist, book, portfolio_id, budget_id)
                 book.equity.append({"date": day, "equity": round(equity, 2), "invested": round(invested, 2),
@@ -223,7 +242,8 @@ def run(app_db: Path, market_db: Path, buy_id: str, sell_id: str, start: date, e
                     progress(day, equity)
         finally:
             conn.close()
-    return {"params": {"start": start.isoformat(), "end": end.isoformat(), "budget": budget, "buy": autos["buy"],
+    return {"params": {"start": start.isoformat(), "end": end.isoformat(), "budget": budget, "fill": fill,
+                       "buy": autos["buy"],
                        "sell": autos["sell"], "overrides": overrides},
             "summary": summarize(book, budget), "equity": book.equity, "trades": book.trades}
 

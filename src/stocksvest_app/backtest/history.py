@@ -276,6 +276,23 @@ class HistoricalMarket:
                       "last": last[1], "price": last[1], "time": self.now.isoformat(), "ageSeconds": 0}
         return {"quotes": out, "liveQuotes": {"enabled": True, "connected": True}}
 
+    def next_fill(self, ticker: str, side: str) -> float | None:
+        """Price a market order sent at `now` gets: the VWAP of the next hourly bar that started at or after `now`
+        on the same day, at the modelled ask (BUY) or bid (SELL). None when the stock didn't trade again that day.
+
+        Used by: engine._fill (fill mode NEXT_VWAP).
+        """
+        s = self.hourly.get(ticker)
+        if not s:
+            return None
+        ts = self._now_ts()
+        i = bisect_right(s.ts, ts - 1)
+        day_end = self.day_close.get(self.now.astimezone(ET).date().isoformat(), ts + 86400)
+        if i >= len(s.ts) or s.ts[i] >= day_end:
+            return None
+        half = spread_for(self.avg_dollar_volume(ticker)) / 200
+        return round(s.vw[i] * (1 + half if side == "BUY" else 1 - half), 4)
+
     def calendar(self, start=None, end=None) -> dict:
         start = start or self.now.astimezone(ET).date().isoformat()
         end = end or (date.fromisoformat(start) + timedelta(days=30)).isoformat()

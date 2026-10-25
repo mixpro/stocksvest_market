@@ -11,7 +11,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from .engine import run
+from .engine import FILL_MODES, run
 
 
 def main(argv=None) -> None:
@@ -25,10 +25,12 @@ def main(argv=None) -> None:
     p.add_argument("--end", type=date.fromisoformat, required=True)
     p.add_argument("--budget", type=float, default=10_000)
     p.add_argument("--overrides", type=json.loads, default=None, help="JSON merged into the definitions")
+    p.add_argument("--fill", choices=FILL_MODES, default="NEXT_VWAP",
+                   help="NEXT_VWAP: next hour's VWAP at ask/bid (default); SAME_CLOSE: the signal's own price")
     p.add_argument("--out", type=Path, help="write the full result (equity per day, every trade) as JSON")
     a = p.parse_args(argv)
     result = run(a.app_db, a.market_db, a.buy, a.sell, a.start, a.end, a.budget, a.overrides,
-                 progress=lambda day, eq: print(f"{day}  equity ${eq:,.2f}", file=sys.stderr))
+                 progress=lambda day, eq: print(f"{day}  equity ${eq:,.2f}", file=sys.stderr), fill=a.fill)
     if a.out:
         a.out.write_text(json.dumps(result, indent=1, default=str))
     print(json.dumps(result["summary"], indent=1))
