@@ -83,6 +83,33 @@ def _round_price(price: Decimal) -> Decimal:
     return price.quantize(_price_tick(price))
 
 
+# Momentum ranking keys -> (months back, the snapshot field add_rank_data fills). Used by: add_rank_data, _rank_value
+MOMENTUM = {RankingKey.MOMENTUM_12_1: (12, "momentum12_1"), RankingKey.MOMENTUM_6_1: (6, "momentum6_1")}
+
+
+def add_rank_data(action: PlaceOrderAction, tickers: list[str], snapshots: dict[str, dict], market) -> None:
+    """Put the ranking value market snapshots don't carry into the snapshots, in place: for a momentum TOP_N, each
+    ticker's % change from N months ago to 1 month ago (None without both prices).
+
+    Args:
+        action: the order action (nothing to do unless it ranks by momentum).
+        tickers: the candidates.
+        snapshots: ticker -> snapshot (the PlanContext's).
+        market: MarketData (price_changes).
+
+    Used by: runner._place_orders, backtest.engine._run_automation (before select).
+    """
+    sel = action.selection
+    if sel.mode != SelectionMode.TOP_N or sel.rankBy not in MOMENTUM or not tickers:
+        return
+    months, field_name = MOMENTUM[sel.rankBy]
+    recent = market.price_changes(set(tickers), 1, "MONTHS")
+    old = market.price_changes(set(tickers), months, "MONTHS")
+    for t in tickers:
+        a, b = recent.get(t, {}).get("fromPrice"), old.get(t, {}).get("fromPrice")
+        snapshots[t] = {**snapshots.get(t, {}), field_name: (a / b - 1) * 100 if a and b else None}
+
+
 def _rank_value(key: RankingKey, ticker: str, ctx: PlanContext) -> Decimal | None:
     """The value a symbol is ranked by (None = no data, ranked last).
 
@@ -99,6 +126,8 @@ def _rank_value(key: RankingKey, ticker: str, ctx: PlanContext) -> Decimal | Non
         v = snap.get("dailyChangePercent")
     elif key == RankingKey.DAILY_VOLUME:
         v = snap.get("dailyVolume")
+    elif key in MOMENTUM:
+        v = snap.get(MOMENTUM[key][1])
     else:
         h = ctx.holdings.get(ticker)
         if not h or not h.quantity or price is None:

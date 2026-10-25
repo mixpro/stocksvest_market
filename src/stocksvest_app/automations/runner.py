@@ -483,6 +483,7 @@ def _place_orders(ctx, conn, automation, tradings: list[tuple[dict, "Trading | N
             for t, s in snapshots.items():
                 plan_ctx.snapshots.setdefault(t, s)  # the context may come from an earlier action
             # Select which symbols to act on, quote exactly those live, then price, size and check them.
+            planner.add_rank_data(action, tickers, plan_ctx.snapshots, ctx.market)
             chosen = planner.select(action, tickers, plan_ctx, trading.guards)
             if live is not None and not planner.market_blocked(trading.guards, plan_ctx):
                 live.merge_into(plan_ctx.snapshots, chosen["symbols"][:100])

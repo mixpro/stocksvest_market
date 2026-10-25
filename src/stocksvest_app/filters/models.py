@@ -189,6 +189,21 @@ class PriceChangeAction(Comparison):
         return self
 
 
+class MarketChangeAction(PriceChangeAction):
+    """Market regime gate: keeps every symbol when the median percent price change of the whole universe over
+    periodAmount x periodUnit matches the comparison, and none otherwise. The median of ~880 stocks is the "typical
+    stock", so a few huge movers don't decide it.
+
+    Example in a sell filter: {"periodAmount": 6, "periodUnit": "MONTHS", "condition": "LESS_THAN", "value": 0} =
+    every held symbol passes while the typical stock is down over 6 months.
+
+    Used by: FilterAction, engine.Evaluator.apply (via _market_change).
+    """
+
+    type: Literal["MARKET_CHANGE"]
+    valueType: Literal[ValueType.PERCENT] = ValueType.PERCENT
+
+
 class VolumeType(str, Enum):
     """What AVERAGE_VOLUME compares: shares a day, or dollars a day (shares x price).
 
@@ -274,8 +289,8 @@ class HoldingPeriodAction(PortfolioIds, Comparison):
 
 # Any filter action; the "type" field picks the model. Used by: FilterIn.actions, engine.Evaluator.apply.
 FilterAction = Annotated[
-    Union[SymbolTypeAction, SectorAction, SymbolPriceAction, PriceChangeAction, AverageVolumeAction, PositionAction,
-          UnrealizedPnlAction, HoldingPeriodAction],
+    Union[SymbolTypeAction, SectorAction, SymbolPriceAction, PriceChangeAction, MarketChangeAction,
+          AverageVolumeAction, PositionAction, UnrealizedPnlAction, HoldingPeriodAction],
     Field(discriminator="type"),
 ]
 

@@ -44,6 +44,7 @@ inputs (union) ──► action 1 ──► action 2 ──► … ──► mat
    | `SECTOR` | `sectorIds`: keys from market `GET /v1/sectors` | the sector is in the list |
    | `SYMBOL_PRICE` | `priceReference`, `condition`, `value`, `maxValue` | the price matches |
    | `PRICE_CHANGE` | `periodAmount`, `periodUnit`, `valueType`, `condition`, `value`, `maxValue` | the change over the period matches |
+   | `MARKET_CHANGE` | `periodAmount`, `periodUnit`, `condition`, `value`, `maxValue` | market regime gate: **every** symbol passes when the median % change of the whole universe over the period matches, **none** otherwise |
    | `AVERAGE_VOLUME` | `days` (default 20), `volumeType`, `condition`, `value`, `maxValue` | the average daily trading over the last `days` completed trading days matches |
    | `POSITION` | `portfolioIds`: one or more portfolio ids | the symbol is held in at least one of the portfolios (manual or automation shares) |
    | `UNREALIZED_PNL` | `portfolioIds`, `valueType`, `condition`, `value`, `maxValue` | the unrealized gain/loss of the shares held matches, e.g. `PERCENT` `LESS_THAN` `-8` = down more than 8% from the buy price (a stop-loss) |
@@ -65,6 +66,9 @@ inputs (union) ──► action 1 ──► action 2 ──► … ──► mat
      (`422`). Because actions only narrow what the inputs give, a held symbol that has left the halal universe
      doesn't appear with a `UNIVERSE` input. Example, "tech stocks I hold in either portfolio":
      `[{"type": "POSITION", "portfolioIds": ["pf_a", "pf_b"]}, {"type": "SECTOR", "sectorIds": ["TECHNOLOGY"]}]`
+   - **`MARKET_CHANGE`:** the median of all ~880 stocks is the "typical stock", so a few big movers don't decide it.
+     In a sell filter, `{"type": "MARKET_CHANGE", "periodAmount": 6, "periodUnit": "MONTHS", "condition": "LESS_THAN", "value": 0}`
+     sells everything while the typical stock is down over 6 months.
    - **`AVERAGE_VOLUME`:** `volumeType` is `SHARES` (shares a day) or `DOLLARS` (shares × price a day). Days without
      a single trade count as 0, and today is left out until its session has ended. Use it to keep thinly traded
      stocks out: their price jumps on a few shares (a big "daily change" from one small trade) and their bid and ask
@@ -275,7 +279,7 @@ your holdings (price change, latest price) work on current prices.
 | `trailPercent` | For `TRAILING_STOP` |
 | `timeInForce` | `DAY`, `GTC`, `IOC`, `FOK`, `OPG`, `CLS` (whatever the broker supports) |
 | `extendedHours` | Only with `LIMIT` + `DAY` |
-| `selection` | `ALL_MATCHES`, or `TOP_N` with `topN` and `rankBy`: `DAILY_CHANGE_PERCENT`, `LAST_PRICE`, `DAILY_VOLUME`, `POSITION_VALUE`, `UNREALIZED_PNL_PERCENT`. A `TOP_N` buy with `skipBuyIfHeld` leaves out what the budget holds or has a buy open for **before** taking the top N ("top 3" = the 3 best it doesn't own yet); they are listed as `alreadyHeld` in the run |
+| `selection` | `ALL_MATCHES`, or `TOP_N` with `topN` and `rankBy`: `DAILY_CHANGE_PERCENT`, `LAST_PRICE`, `DAILY_VOLUME`, `POSITION_VALUE`, `UNREALIZED_PNL_PERCENT`, `MOMENTUM_12_1`, `MOMENTUM_6_1` (% change from 12 or 6 months ago to 1 month ago; the latest month is left out because it tends to reverse). A `TOP_N` buy with `skipBuyIfHeld` leaves out what the budget holds or has a buy open for **before** taking the top N ("top 3" = the 3 best it doesn't own yet); they are listed as `alreadyHeld` in the run |
 | `sizings` | One sizing for every symbol, or (`TOP_N`) one per rank. Buy: `QUANTITY`, `CASH_AMOUNT`, `PERCENT_OF_BUDGET`. Sell: `QUANTITY`, `PERCENT_OF_POSITION` |
 
 **Rules:**

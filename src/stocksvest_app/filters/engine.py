@@ -4,6 +4,7 @@ import logging
 import sqlite3
 from datetime import datetime, timezone
 from decimal import Decimal
+from statistics import median
 from zoneinfo import ZoneInfo
 
 from ..market.client import MarketError
@@ -16,6 +17,7 @@ from .models import (
     FilterAction,
     FilterIn,
     HoldingPeriodAction,
+    MarketChangeAction,
     InputType,
     PortfolioIds,
     PositionAction,
@@ -364,6 +366,15 @@ class Evaluator:
                 out.add(t)
         return out
 
+    def _market_change(self, amount: int, unit: str) -> float | None:
+        """Median percent price change of the whole universe over the period (None without data).
+
+        Used by: apply (MARKET_CHANGE).
+        """
+        changes = self.market.price_changes(set(self.market.universe()), amount, unit)
+        values = [c["changePercent"] for c in changes.values() if c.get("changePercent") is not None]
+        return median(values) if values else None
+
     def apply(self, action: FilterAction, symbols: set[str]) -> set[str]:
         """Keep the symbols that pass one action.
 
@@ -390,6 +401,8 @@ class Evaluator:
             if action.priceReference == PriceReference.LATEST_BAR:
                 return {t for t, s in snaps.items() if action.matches(s.get("latestPrice"))}
             return {t for t, s in snaps.items() if action.matches(self._last_close(s))}
+        if isinstance(action, MarketChangeAction):  # before PriceChangeAction: it is one
+            return symbols if action.matches(self._market_change(action.periodAmount, action.periodUnit.value)) else set()
         if isinstance(action, PriceChangeAction):
             changes = self.market.price_changes(symbols, action.periodAmount, action.periodUnit.value)
             field = "changePercent" if action.valueType == ValueType.PERCENT else "change"
