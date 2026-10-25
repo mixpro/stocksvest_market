@@ -52,9 +52,20 @@ Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 →
   - Done 2026-10-25: `DAILY_HISTORY_DAYS=3650` in tinkergw `.env`, one-time full daily re-download (1.74M bars from 2016-10-28; 521 symbols in 2016 → 881 today). DB 671 → 784 MB. Hourly stays 2 years; backtests before 2024 fill at the day's VWAP.
 - [ ] **DATA-2: Keep more minute bars** (only if BT-6 is wanted)
   - Check DB size impact first.
-- [ ] **DATA-4: Delisted stocks for the backtests (survivorship bias)**
+- [x] **DATA-4: Delisted stocks for the backtests (survivorship bias)**
   - The biggest doubt on every result: the universe is today's list, so stocks that collapsed or delisted are missing.
   - Check whether Alpaca serves bars for inactive assets; if so, add the ones that were halal-eligible and rerun STRAT-5B.
+  - Done 2026-10-25: Alpaca has bars for 1,172 delisted NASDAQ/NYSE stocks (2016–2026), merged into a scratch copy only (2,083 stocks). No halal record exists for them, so all are in: an upper bound of the bias.
+  - Backtester: a held stock without bars for 5 trading days is sold at its last close; the benchmark counts delisted stocks at their last close.
+  - 2017-11..2026-10:
+
+    | | Today's stocks only | With delisted stocks |
+    |---|---|---|
+    | STRAT-5B | +409% (19.9%/yr) | +357% (18.4%/yr), max drawdown −45% |
+    | Buy-and-hold, liquid | +345% (18.1%/yr) | +264% (15.5%/yr) |
+    | Buy-and-hold, all | +330% | +146% |
+
+  - The bias flattered buy-and-hold far more than 5B: its edge grows from ~1.8 to ~2.9 points a year. 5B's 27 delisted positions made +$2,826 (22 wins: mostly buyouts at a premium).
 - [x] **DATA-3: Buy side is still 16 min delayed**: Alpaca Algo Trader Plus ($99/month) since 2026-10-25. Defaults now `SIP_DELAY_MINUTES=0`, `SYNC_INTERVAL_MINUTES=1`, `ALPACA_RPM=1000`
   - Option 1: Alpaca paid plan (real-time SIP).
   - Option 2: IEX feed top-up (free, real-time, thinner coverage).
