@@ -42,6 +42,7 @@ inputs (union) ──► action 1 ──► action 2 ──► … ──► mat
    |---|---|---|
    | `SYMBOL_TYPE` | `assetTypes`: `COMMON_STOCK`, `ADR` | the asset type is in the list |
    | `SECTOR` | `sectorIds`: keys from market `GET /v1/sectors` | the sector is in the list |
+   | `EXCLUDE_SYMBOLS` | `tickers`: list of tickers (case-insensitive) | the ticker is not in the list |
    | `SYMBOL_PRICE` | `priceReference`, `condition`, `value`, `maxValue` | the price matches |
    | `PRICE_CHANGE` | `periodAmount`, `periodUnit`, `valueType`, `condition`, `value`, `maxValue` | the change over the period matches |
    | `MARKET_CHANGE` | `periodAmount`, `periodUnit`, `condition`, `value`, `maxValue` | market regime gate: **every** symbol passes when the median % change of the whole universe over the period matches, **none** otherwise |

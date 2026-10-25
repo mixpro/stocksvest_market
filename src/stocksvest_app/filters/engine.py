@@ -23,6 +23,7 @@ from .models import (
     PositionAction,
     PriceChangeAction,
     PriceReference,
+    ExcludeSymbolsAction,
     SectorAction,
     SymbolPriceAction,
     SymbolTypeAction,
@@ -396,6 +397,8 @@ class Evaluator:
             allowed = set(action.sectorIds)
             universe = self.market.universe()
             return {t for t in symbols if universe.get(t, {}).get("sector") in allowed}
+        if isinstance(action, ExcludeSymbolsAction):
+            return symbols - set(action.tickers)
         if isinstance(action, SymbolPriceAction):
             snaps = self._snaps(symbols)
             if action.priceReference == PriceReference.LATEST_BAR:

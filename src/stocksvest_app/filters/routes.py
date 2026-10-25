@@ -103,6 +103,8 @@ def router(ctx: AppContext) -> APIRouter:
                     {"name": "assetTypes", "kind": "multiselect", "options": _values(AssetType), "required": True}]},
                 {"type": "SECTOR", "label": "Sector", "available": bool(sectors), "fields": [
                     {"name": "sectorIds", "kind": "multiselect", "options": sectors, "required": True}]},
+                {"type": "EXCLUDE_SYMBOLS", "label": "Exclude symbols", "available": True, "fields": [
+                    {"name": "tickers", "kind": "symbols", "required": True}]},
                 {"type": "SYMBOL_PRICE", "label": "Price", "available": True, "fields": [
                     {"name": "priceReference", "kind": "select", "options": _values(PriceReference), "required": True},
                     condition, value, max_value]},

@@ -164,6 +164,22 @@ class SectorAction(BaseModel):
     sectorIds: list[str] = Field(min_length=1)
 
 
+class ExcludeSymbolsAction(BaseModel):
+    """Drop the listed tickers (e.g. one share class of a company listed twice, like GOOG next to GOOGL).
+    Used by: FilterAction, engine.Evaluator.apply."""
+
+    type: Literal["EXCLUDE_SYMBOLS"]
+    tickers: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def upper(self):
+        """Tickers are matched in upper case, without spaces."""
+        self.tickers = [t.strip().upper() for t in self.tickers if t.strip()]
+        if not self.tickers:
+            raise ValueError("tickers is empty")
+        return self
+
+
 class SymbolPriceAction(Comparison):
     """Keep symbols whose price (priceReference) matches the comparison.
     Used by: FilterAction, engine.Evaluator.apply."""
@@ -289,7 +305,7 @@ class HoldingPeriodAction(PortfolioIds, Comparison):
 
 # Any filter action; the "type" field picks the model. Used by: FilterIn.actions, engine.Evaluator.apply.
 FilterAction = Annotated[
-    Union[SymbolTypeAction, SectorAction, SymbolPriceAction, PriceChangeAction, MarketChangeAction,
+    Union[SymbolTypeAction, SectorAction, ExcludeSymbolsAction, SymbolPriceAction, PriceChangeAction, MarketChangeAction,
           AverageVolumeAction, PositionAction, UnrealizedPnlAction, HoldingPeriodAction],
     Field(discriminator="type"),
 ]

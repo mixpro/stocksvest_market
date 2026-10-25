@@ -106,6 +106,7 @@ def test_comparisons(client):
     assert run({"type": "SYMBOL_PRICE", "priceReference": "LATEST_BAR", "condition": "LESS_THAN", "value": 10}) == {"CCC"}
     assert run({"type": "SYMBOL_PRICE", "priceReference": "LATEST_BAR", "condition": "MORE_THAN", "value": 10}) == {"BBB"}
     assert run(PRICE_10_TO_50) == {"AAA", "BBB"}  # inclusive; DDD has no price
+    assert run({"type": "EXCLUDE_SYMBOLS", "tickers": [" aaa", "ZZZ"]}) == {"BBB", "CCC", "DDD"}
     assert run({"type": "PRICE_CHANGE", "periodAmount": 1, "periodUnit": "WEEKS", "valueType": "ABSOLUTE",
                 "condition": "LESS_THAN", "value": 0}) == {"BBB"}
 

@@ -180,6 +180,12 @@ function fieldInput(action, f) {
         },
       }), o.label)));
   }
+  if (f.kind === "symbols") {
+    return el("input", {
+      type: "text", title: f.name, placeholder: "GOOG, ...", value: (action[f.name] || []).join(", "),
+      oninput: (e) => { action[f.name] = e.target.value.split(/[\s,]+/).filter(Boolean).map((t) => t.toUpperCase()); },
+    });
+  }
   const isInt = f.kind === "integer";
   return el("input", {
     type: "number", title: f.name, placeholder: f.name, step: isInt ? 1 : "any", min: f.min,
@@ -194,6 +200,7 @@ function fieldInput(action, f) {
 const ACTION_DEFAULTS = {
   SYMBOL_TYPE: { assetTypes: ["COMMON_STOCK"] },
   SECTOR: { sectorIds: [] },
+  EXCLUDE_SYMBOLS: { tickers: [] },
   SYMBOL_PRICE: { priceReference: "LATEST_BAR", condition: "BETWEEN", value: 10, maxValue: 100 },
   PRICE_CHANGE: { periodAmount: 5, periodUnit: "DAYS", valueType: "PERCENT", condition: "MORE_THAN", value: 3 },
   MARKET_CHANGE: { periodAmount: 6, periodUnit: "MONTHS", condition: "MORE_THAN", value: 0 },
