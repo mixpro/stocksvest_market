@@ -117,9 +117,26 @@ Shared base: price > $10, 20-day dollar volume > $50M, max spread 0.30%, buy at 
 
   - The regime exit sells low and buys back late: it cost far more than it saved in 2022.
   - 5B beats buy-and-hold by ~1.7%/year (19.8% vs 18.1%). Caveats: survivorship bias likely flatters momentum most; best of 4 variants picked after seeing results; 2021 was a −12% year (momentum crash).
-- [ ] **STRAT-6: Robustness of STRAT-5B before any live use** (BT-5)
+- [x] **STRAT-6: Robustness of STRAT-5B before any live use** (BT-5)
   - 2× spread cost; top 10 / 30 instead of 20; Wednesday instead of Monday; MOMENTUM_6_1.
   - If it holds: paper-trade it on its own budget next to (or instead of) the live setup.
+  - Results 2017-11..2026-10 (buy-and-hold +345%, ~18.1%/year):
+
+    | Run | Total | Per year | Max drawdown |
+    |---|---|---|---|
+    | 5B as built | +409% | 19.9% | −38% |
+    | Spreads ×2 | +577% | 23.7% | −38% |
+    | Spreads ×3 | +247% | 14.9% | −38% |
+    | ~10 positions (10% each) | +535% | 22.9% | −42% |
+    | ~30 positions (3.3% each) | +344% | 18.1% | −38% |
+    | Buy Wednesday | +283% | 16.1% | −43% |
+    | MOMENTUM_6_1 | +497% | 22.0% | −39% |
+
+  - 4 of 7 beat buy-and-hold, median +409%. But noise is as big as the edge: Monday vs Wednesday alone moves it 126 points, and ×2 spreads "beat" ×1 (the spread guard changed which stocks were picked).
+  - Verdict: about as good as buy-and-hold, maybe slightly better, same drawdowns. Not a proven edge. Same pattern every run: big in 2020/2024/2026, lags in 2021/2023.
+- [ ] **STRAT-7: Paper-trade STRAT-5B** (your decision)
+  - Own budget on the Alpaca paper account, next to or instead of the live setup (which lost every year in 9).
+  - Goal: check live fills/spreads vs the backtest, not to prove the edge (months of paper can't).
 - [ ] **STRAT-4: Decide what to do with the live setup**
   - Backtest verdict so far: live setup −71%, spike-chasing rules removed −9%, benchmark +20%.
   - After STRAT-1..3: replace, keep paper-testing, or turn off.
