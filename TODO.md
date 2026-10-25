@@ -45,10 +45,11 @@ Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 →
 
 ## DATA: Market data
 
-- [ ] **DATA-1: Keep ~10 years of daily bars**
+- [x] **DATA-1: Keep ~10 years of daily bars**
   - Today `DAILY_HISTORY_DAYS=730` (2 years), so a 1-year rule has only 1 year to be tested on.
   - Alpaca's free plan serves daily bars back to 2016. Change the setting, re-sync, check DB size.
   - Caveat: survivorship bias. The universe is today's halal list, so stocks that died or delisted are missing.
+  - Done 2026-10-25: `DAILY_HISTORY_DAYS=3650` in tinkergw `.env`, one-time full daily re-download (1.74M bars from 2016-10-28; 521 symbols in 2016 → 881 today). DB 671 → 784 MB. Hourly stays 2 years; backtests before 2024 fill at the day's VWAP.
 - [ ] **DATA-2: Keep more minute bars** (only if BT-6 is wanted)
   - Check DB size impact first.
 - [ ] **DATA-3: Buy side is still 16 min delayed** (deferred by you)
@@ -68,6 +69,26 @@ Built by `scripts/backtest_strategies.py`. Results 2025-10-24..2026-10-23 (liqui
 
 One year of a rising market only: needs DATA-1 (10 years, incl. 2022) before trusting any of it.
 
+**9 years, 2017-11-01..2026-10-23** ($10k each; buy-and-hold of liquid stocks, equal weight, no costs):
+
+| Year | STRAT-1 | STRAT-2 | STRAT-3 | Live setup | Buy-and-hold |
+|---|---|---|---|---|---|
+| 2017 (Nov–Dec) | −0.4% | −0.8% | +0.5% | −13.0% | +4.1% |
+| 2018 | +1.2% | −4.4% | −2.8% | −60.1% | −4.7% |
+| 2019 | +17.4% | +4.3% | −1.0% | −52.9% | +36.2% |
+| 2020 | +24.2% | +40.5% | +5.8% | −58.7% | +36.0% |
+| 2021 | +9.3% | +4.9% | +4.2% | −50.3% | +26.9% |
+| 2022 | −5.1% | −2.2% | +0.3% | −29.6% | −17.9% |
+| 2023 | +0.3% | +7.4% | +5.0% | −44.6% | +31.6% |
+| 2024 | +12.5% | +12.9% | −0.6% | −28.2% | +15.1% |
+| 2025 | +1.2% | +16.1% | +5.6% | −43.4% | +20.6% |
+| 2026 (to Oct 23) | +17.8% | +10.7% | +0.8% | −22.8% | +15.5% |
+| **Total** | **+105%** | **+122%** | **+19%** | **−99.6%** | **+345%** |
+
+- None beats holding. STRAT-2's one-year win was luck of the window. Their only edge: small losses in 2022 (mostly in cash).
+- Buy-and-hold is inflated by survivorship bias (today's universe; only 542 of them had data in 2017).
+- Live setup lost money every single year.
+
 Shared base: price > $10, 20-day dollar volume > $50M, max spread 0.30%, buy at 11:00 ET, $500 per position, max 5% per position.
 
 - [x] **STRAT-1: Slow momentum** (Kimi's top pick): +9.2%, trails buy-and-hold
@@ -81,6 +102,9 @@ Shared base: price > $10, 20-day dollar volume > $50M, max spread 0.30%, buy at 
   - Only very liquid: price > $20, > $100M/day, spread ≤ 0.2%.
   - Buy: 1-day −5%..−2%, 5-day −12%..−4%. Half-size positions.
   - Sell: held > 7 days or unrealized < −10%.
+- [ ] **STRAT-5: Hold liquid stocks, step aside in crashes**
+  - From the 9-year result: staying invested beats every rule set; the strategies only helped by being in cash in 2022.
+  - Test: buy-and-hold of liquid stocks plus a market-regime exit (needs FEAT-7) and a momentum ranking (FEAT-1).
 - [ ] **STRAT-4: Decide what to do with the live setup**
   - Backtest verdict so far: live setup −71%, spike-chasing rules removed −9%, benchmark +20%.
   - After STRAT-1..3: replace, keep paper-testing, or turn off.
