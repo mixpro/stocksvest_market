@@ -1,4 +1,4 @@
-"""Build Kimi's three strategies (STRAT-1..3) in a fresh scratch app DB. Prints {strategy: {buy, sell}} ids as JSON.
+"""Build the researched strategies (STRAT-1..3 from Kimi, STRAT-5 variants) in a fresh scratch app DB. Prints {strategy: {buy, sell}} ids as JSON.
 
 Run from the repo root: DATA_DIR=<scratch dir> PYTHONPATH=tests uv run python scripts/backtest_strategies.py
 then backtest each pair: python -m stocksvest_app.backtest --app-db <scratch dir>/app.db --buy <buy> --sell <sell> ...
@@ -41,6 +41,20 @@ def pnl(pf, below):
             "value": below}
 
 
+def market(months, cond, value=0):
+    return {"type": "MARKET_CHANGE", "periodAmount": months, "periodUnit": "MONTHS", "condition": cond, "value": value}
+
+
+# STRAT-5: liquid stocks ranked by 12-1 momentum, each buy 5% of equity (cash capped by maxPositionPercent), weekly.
+def strat5(regime_months=None, stock_exit=True):
+    regime = [market(regime_months, "MORE_THAN")] if regime_months else []
+    sells = ([[market(regime_months, "LESS_THAN")]] if regime_months else [])
+    return dict(buy=gate(10, 50e6) + regime + [pc(6, "MONTHS", "MORE_THAN", 0)],
+                sells=lambda pf: sells + ([[held(pf, 30), pc(6, "MONTHS", "LESS_THAN", 0)]] if stock_exit else []),
+                buy_schedule=MONDAY_11, top=20, cash=100000, pct=5, spread=0.3, cooldown=10080,
+                rank="MOMENTUM_12_1", descending=True)
+
+
 AT_11 = [{"type": "MARKET", "anchor": "REGULAR_OPEN", "offsetMinutes": 90}]
 MONDAY_11 = [{"type": "WEEKLY", "onDays": ["MON"], "atTimes": ["11:00:00"]}]
 
@@ -64,6 +78,10 @@ STRATS = {
                                pc(1, "MONTHS", "BETWEEN", -15, 10)],
         sells=lambda pf: [[held(pf, 7)], [pnl(pf, -10)]],
         buy_schedule=AT_11, top=2, cash=250, pct=2.5, spread=0.2, cooldown=10080),
+    "STRAT-5A": strat5(regime_months=6),  # regime 6 months + stock trend exit
+    "STRAT-5B": strat5(),  # no regime (does the regime help?)
+    "STRAT-5C": strat5(regime_months=3),  # faster regime
+    "STRAT-5H": strat5(regime_months=6, stock_exit=False),  # hold, sell only when the market turns
 }
 
 
@@ -87,8 +105,8 @@ def main():
                 "name": f"{name} Buy", "runTargets": [{"type": "FILTER", "id": buy_f["id"]}],
                 "schedules": s["buy_schedule"],
                 "actions": [{"type": "PLACE_ORDER", "side": "BUY",
-                             "selection": {"mode": "TOP_N", "topN": s["top"], "rankBy": "DAILY_CHANGE_PERCENT",
-                                           "descending": False},
+                             "selection": {"mode": "TOP_N", "topN": s["top"], "rankBy": s.get("rank", "DAILY_CHANGE_PERCENT"),
+                                           "descending": s.get("descending", False)},
                              "sizings": [{"mode": "CASH_AMOUNT", "value": s["cash"]}]}],
                 "orderGuards": {"maxOrdersPerRun": s["top"], "maxPositionPercent": s["pct"],
                                 "requireLivePrice": True, "maxSpreadPercent": s["spread"],

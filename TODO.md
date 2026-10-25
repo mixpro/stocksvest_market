@@ -102,9 +102,24 @@ Shared base: price > $10, 20-day dollar volume > $50M, max spread 0.30%, buy at 
   - Only very liquid: price > $20, > $100M/day, spread ≤ 0.2%.
   - Buy: 1-day −5%..−2%, 5-day −12%..−4%. Half-size positions.
   - Sell: held > 7 days or unrealized < −10%.
-- [ ] **STRAT-5: Hold liquid stocks, step aside in crashes**
+- [x] **STRAT-5: Hold liquid stocks, step aside in crashes**
   - From the 9-year result: staying invested beats every rule set; the strategies only helped by being in cash in 2022.
   - Test: buy-and-hold of liquid stocks plus a market-regime exit (needs FEAT-7) and a momentum ranking (FEAT-1).
+  - Built: liquid gate + stock 6-month > 0, weekly Monday 11:00, top 20 by MOMENTUM_12_1, 5% of equity per buy.
+  - 9 years (2017-11..2026-10), buy-and-hold +345%:
+
+    | Variant | Total | Per year | Max drawdown | Avg invested |
+    |---|---|---|---|---|
+    | **5B: no regime, sell when held > 30 days and own 6-month < 0** | **+409%** | ~19.8% | −38% | 97% |
+    | 5A: + sell all when market 6-month < 0 | +107% | | −39% | 67% |
+    | 5C: + market 3-month regime | +37% | | −46% | 59% |
+    | 5H: market regime exit only | +42% | | −41% | 68% |
+
+  - The regime exit sells low and buys back late: it cost far more than it saved in 2022.
+  - 5B beats buy-and-hold by ~1.7%/year (19.8% vs 18.1%). Caveats: survivorship bias likely flatters momentum most; best of 4 variants picked after seeing results; 2021 was a −12% year (momentum crash).
+- [ ] **STRAT-6: Robustness of STRAT-5B before any live use** (BT-5)
+  - 2× spread cost; top 10 / 30 instead of 20; Wednesday instead of Monday; MOMENTUM_6_1.
+  - If it holds: paper-trade it on its own budget next to (or instead of) the live setup.
 - [ ] **STRAT-4: Decide what to do with the live setup**
   - Backtest verdict so far: live setup −71%, spike-chasing rules removed −9%, benchmark +20%.
   - After STRAT-1..3: replace, keep paper-testing, or turn off.
@@ -112,7 +127,7 @@ Shared base: price > $10, 20-day dollar volume > $50M, max spread 0.30%, buy at 
 
 ## FEAT: New features (ranked by value for effort)
 
-- [ ] **FEAT-1: Momentum ranking key (12-1 and 6-1)**
+- [x] **FEAT-1: Momentum ranking key (12-1 and 6-1)**: `rankBy` `MOMENTUM_12_1` / `MOMENTUM_6_1` (2026-10-25)
   - Return over the last 12 (or 6) months, skipping the latest month. Strongest known selection signal.
   - Today `rankBy` only has daily change, price, volume.
 - [ ] **FEAT-2: Volatility (ATR)**
@@ -125,7 +140,7 @@ Shared base: price > $10, 20-day dollar volume > $50M, max spread 0.30%, buy at 
   - Stock's change vs. its sector's average over the same period.
 - [ ] **FEAT-6: Earnings calendar**
   - Skip buys N days before earnings; needs a data source.
-- [ ] **FEAT-7: Market regime**
+- [x] **FEAT-7: Market regime**: `MARKET_CHANGE` filter step, median % change of the whole universe (2026-10-25). Backtests: it hurt (see STRAT-5)
   - Only buy when the broad market is above its 200-day average (or similar).
 - [ ] **FEAT-8: Quality fundamentals**
   - Profitability, debt. Needs a data source.
