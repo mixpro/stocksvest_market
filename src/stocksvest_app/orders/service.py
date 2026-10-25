@@ -27,6 +27,9 @@ from . import store
 PRICE_BUFFER = Decimal("0.01")
 # A PENDING order the broker has never heard of after this long is treated as rejected. Used by: sync_account
 PENDING_TIMEOUT = timedelta(minutes=5)
+# Alpaca lists a fill a few seconds after the order status and balances show it. For this long after the broker's
+# last change to an order, a fill it reports but hasn't listed yet defers the order update and the comparison.
+FILL_LAG = timedelta(minutes=10)  # Used by: sync_account
 
 
 class OrderRejected(ValueError):
@@ -542,6 +545,7 @@ def sync_account(conn, broker: Broker, account: dict) -> dict:
                               "description": fee.description, "chargedTo": charged})
 
     orders_updated = 0
+    awaiting_fills = []  # symbols whose fills the broker reported but hasn't listed yet
     now = datetime.now(timezone.utc)
     for p in portfolios:
         for o in store.list_orders(conn, portfolio_id=p["id"], open_only=True, limit=1000):
@@ -555,9 +559,14 @@ def sync_account(conn, broker: Broker, account: dict) -> dict:
                         finalize(conn, store.get_order_row(conn, id=row["id"]))
                         orders_updated += 1
                     continue
+                if (bo.filled_quantity > store.imported_quantity(conn, row["id"])
+                        and bo.updated_at and now - bo.updated_at < FILL_LAG):
+                    awaiting_fills.append(row["symbol"])  # the next sync imports the fill, then updates the order
+                    continue
                 orders_updated += apply_order_update(conn, row, bo)
 
-    # Compare: the broker holds the app's shares plus unassigned ones; it can never hold fewer.
+    # Compare: the broker holds the app's shares plus unassigned ones; it can never hold fewer. Skipped while fills
+    # are still to come: the broker's cash and positions already include them, the app's not yet.
     app_positions: dict[str, Decimal] = {}
     for p in portfolios:
         for x in pf.positions(conn, p["id"]):
@@ -568,11 +577,11 @@ def sync_account(conn, broker: Broker, account: dict) -> dict:
         a, b = app_positions.get(symbol, D0), broker_positions.get(symbol, D0)
         if b > a:
             unassigned_shares[symbol] = float(b - a)
-        elif a > b:
+        elif a > b and not awaiting_fills:
             mismatches.append({"kind": "POSITION_QUANTITY", "symbol": symbol, "appValue": float(a),
                                "brokerValue": float(b), "detail": "portfolios hold more shares than the broker"})
     assigned = pf.assigned_cash(conn, account["id"])
-    if assigned > snap.cash:
+    if assigned > snap.cash and not awaiting_fills:
         mismatches.append({"kind": "CASH", "appValue": float(assigned), "brokerValue": float(snap.cash),
                            "detail": "portfolios hold more cash than the broker account"})
     unassigned = {"cash": float(max(snap.cash - assigned, D0)), "shares": unassigned_shares}

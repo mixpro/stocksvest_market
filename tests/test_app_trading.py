@@ -207,6 +207,20 @@ def test_unreachable_broker_leaves_order_pending_then_sync_finds_it(client, port
     assert client.get(f"/v1/orders/{order['id']}", headers=KEY).json()["status"] == "SUBMITTED"
 
 
+def test_a_fill_listed_late_is_not_a_mismatch(client, portfolio, broker):
+    order = buy(client, portfolio, quantity=10).json()
+    broker.fill(order["brokerOrderId"], 10, 10)
+    late = broker.fills.pop()  # Alpaca's balances and order status already show it, its fill list not yet
+    out = sync(client, portfolio)["sync"]
+    assert out["mismatches"] == [] and out["fillsImported"] == 0
+    assert client.get(f"/v1/orders/{order['id']}", headers=KEY).json()["status"] == "SUBMITTED"  # waits for the fill
+    broker.fills.append(late)
+    out = sync(client, portfolio)
+    assert out["sync"]["fillsImported"] == 1 and out["sync"]["mismatches"] == []
+    assert client.get(f"/v1/orders/{order['id']}", headers=KEY).json()["status"] == "FILLED"
+    assert out["portfolio"]["cash"] == 9900
+
+
 def test_outside_trades_are_unassigned_and_real_gaps_are_mismatches(client, portfolio, broker):
     broker.held["CCC"] = (Decimal(3), Decimal(5))  # bought outside the app
     out = sync(client, portfolio)["sync"]

@@ -379,6 +379,15 @@ def last_fill_time(conn, account_id: str) -> str | None:
     return r["t"]
 
 
+def imported_quantity(conn, order_id: str) -> Decimal:
+    """Shares of the order's fills the app has imported.
+
+    Used by: service.sync_account (fills the broker reported but not yet listed).
+    """
+    return sum((Decimal(r[0]) for r in conn.execute("SELECT quantity FROM fills WHERE order_id = ?", (order_id,))),
+               Decimal(0))
+
+
 def list_fills(conn, portfolio_id: str, order_id: str | None = None, limit: int = 200) -> list[dict]:
     """A portfolio's fills, newest first.
 
