@@ -45,6 +45,7 @@ STEP_HOURS = range(10, 16)  # 10:00 .. 15:00 New York. Used by: run
 FILL_MODES = ("NEXT_VWAP", "SAME_CLOSE")  # see the module docstring. Used by: run, __main__
 STEP_MODES = ("SCHEDULE", "HOURLY")  # see the module docstring. Used by: run, __main__
 SCHEDULES = TypeAdapter(list[Schedule])  # Used by: _fire_times
+LIQUID_DOLLARS = 50e6  # the liquid benchmark's minimum 20-day average dollar volume. Used by: run
 
 
 class _Broker:
@@ -275,10 +276,33 @@ def run(app_db: Path, market_db: Path, buy_id: str, sell_id: str, start: date, e
                     progress(day, equity)
         finally:
             conn.close()
-    return {"params": {"start": start.isoformat(), "end": end.isoformat(), "budget": budget, "fill": fill, "steps": steps,
+    summary = summarize(book, budget)
+    summary["buyHold"] = {"allPct": buy_and_hold(hist, days), "liquidPct": buy_and_hold(hist, days, LIQUID_DOLLARS)}
+    return {"params": {"start": start.isoformat(), "end": end.isoformat(), "budget": budget, "fill": fill,
+                       "steps": steps,
                        "buy": autos["buy"],
                        "sell": autos["sell"], "overrides": overrides},
-            "summary": summarize(book, budget), "equity": book.equity, "trades": book.trades}
+            "summary": summary, "equity": book.equity, "trades": book.trades}
+
+
+def buy_and_hold(hist: HistoricalMarket, days: list[str], min_dollars: float = 0.0) -> float | None:
+    """Benchmark return in percent: equal dollars in every symbol with a close on the first and the last day (and,
+    with min_dollars, a 20-day average dollar volume above it before the first day), bought and held, no costs.
+
+    Args:
+        hist: the loaded market.
+        days: the backtest's trading days.
+        min_dollars: liquidity floor; 0 = the whole universe.
+    """
+    if not days:
+        return None
+    hist.now = datetime.combine(date.fromisoformat(days[0]), time(9), ET)  # volume of the days before the start
+    ratios = []
+    for t in hist.by_ticker:
+        a, b = hist._daily_on(t, days[0]), hist._daily_on(t, days[-1])
+        if a and b and (not min_dollars or (hist.avg_dollar_volume(t) or 0) > min_dollars):
+            ratios.append(b / a)
+    return round((sum(ratios) / len(ratios) - 1) * 100, 2) if ratios else None
 
 
 def summarize(book: Book, budget: float) -> dict:

@@ -127,6 +127,8 @@ def test_replay_buys_sells_and_respects_the_cooldown(market_path, app_db):
     s = out["summary"]
     assert s["tradingDays"] == 3 and len(out["equity"]) == 3 and s["bySellFilter"]["Stop"]["wins"] == 0
     assert out["equity"][-1]["equity"] == pytest.approx(s["finalEquity"])
+    up, down = 1.01 ** 32, 0.99 ** 32  # Mon close -> Wed close, 16 bars a day: (UP + DOWN) / 2 - 1
+    assert s["buyHold"]["allPct"] == pytest.approx(((up + down) / 2 - 1) * 100, abs=0.01)
 
 
 def test_overrides_change_the_run(market_path, app_db):

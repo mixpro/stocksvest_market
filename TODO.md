@@ -24,9 +24,11 @@ Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 →
   - Option: read each automation's schedule and only run it when it would fire.
   - Done 2026-10-25: default `--steps SCHEDULE` runs each automation once in every hour its schedule fires in (a 09:30 fire runs at 09:00, since bars are hourly). `HOURLY` kept for comparison.
   - Live setup on its real schedules: −90.0% (3,542 buys, win rate 29%) vs −86.2% hourly 10–15. The extra 09:00–10:00 runs hurt.
-- [ ] **BT-3: True buy-and-hold benchmark**
+- [x] **BT-3: True buy-and-hold benchmark**
   - The current benchmark rebalances daily to equal weight, so it's an active strategy itself.
   - Add: buy the universe (or SPY-like proxy) once on day 1, hold to the end.
+  - Done 2026-10-25: `summary.buyHold` = whole universe and liquid (> $50M/day) equal-weight buy-and-hold.
+  - 2025-10-24..2026-10-23: all +15.6%, > $50M/day +18.7%, > $100M/day +19.7%.
 - [ ] **BT-4: Test entries and exits separately**
   - Entries: average forward 1/5/20/60-day return of what each buy rule picks, vs. the universe.
   - Exits: same entries, different sell rules. Also what a stock did 1/5/20 days after we sold it.
@@ -56,16 +58,26 @@ Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 →
 
 ## STRAT: Strategies to backtest (from Kimi)
 
+Built by `scripts/backtest_strategies.py`. Results 2025-10-24..2026-10-23 (liquid buy-and-hold +18.7%, live setup −90%):
+
+| | Return | Max drawdown | Trades | Win rate | Avg invested |
+|---|---|---|---|---|---|
+| STRAT-1 | +9.2% | −$2,332 | 116 buys | 37% | $10.1k |
+| STRAT-2 | **+23.5%** | −$1,475 | 396 buys | 47% | $8.0k |
+| STRAT-3 | +0.6% | −$384 | 318 buys | 47% | $1.4k |
+
+One year of a rising market only: needs DATA-1 (10 years, incl. 2022) before trusting any of it.
+
 Shared base: price > $10, 20-day dollar volume > $50M, max spread 0.30%, buy at 11:00 ET, $500 per position, max 5% per position.
 
-- [ ] **STRAT-1: Slow momentum** (Kimi's top pick) — needs BT-2
+- [x] **STRAT-1: Slow momentum** (Kimi's top pick): +9.2%, trails buy-and-hold
   - Buy, weekly: 1-year > +20%, 6-month > +10%, 3-month > 0, 1-month −5%..+12%, 1-day −3%..+2%.
   - Top 5 by daily change ascending. Re-buy cooldown 30 days.
   - Sell, daily: held > 30 days and (3-month < 0 or 6-month < 0), or unrealized < −15% and 1-month < −8%. No take-profit.
-- [ ] **STRAT-2: Pullback in an uptrend** — needs BT-2
+- [x] **STRAT-2: Pullback in an uptrend**: +23.5%, best so far
   - Buy, daily: 1-year > +30%, 6-month > +15%, 1-month > +5%, 5-day −8%..−2%, 1-day −4%..+1%. Top 3 by daily change ascending.
   - Sell: held > 21 days, or 3-month < 0, or unrealized < −12%.
-- [ ] **STRAT-3: Short-term rebound** (low conviction)
+- [x] **STRAT-3: Short-term rebound** (low conviction): +0.6%, mostly in cash
   - Only very liquid: price > $20, > $100M/day, spread ≤ 0.2%.
   - Buy: 1-day −5%..−2%, 5-day −12%..−4%. Half-size positions.
   - Sell: held > 7 days or unrealized < −10%.
