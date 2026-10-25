@@ -23,6 +23,7 @@ ENDPOINTS = {
     "price_change": "/v1/price-change",
     "volume": "/v1/volume",
     "indicators": "/v1/indicators",
+    "returns": "/v1/returns",
     "quotes": "/v1/quotes",
     "live_status": "/v1/live",
     "live_watch": "/v1/live/watch",
@@ -155,6 +156,15 @@ class MarketAPI(Protocol):
         priceVsSma50Percent, priceVsSma200Percent, high52w, fromHigh52wPercent}}} from completed daily bars.
 
         Args:
+            symbols: tickers or ids; None = every symbol.
+        """
+        ...
+
+    def returns(self, days: int, symbols: list[str] | None = None) -> dict:
+        """GET /v1/returns: {"days": [day of each return], "returns": {ticker: [daily return or null, oldest first]}}.
+
+        Args:
+            days: completed trading days (days - 1 returns).
             symbols: tickers or ids; None = every symbol.
         """
         ...
@@ -343,6 +353,15 @@ class MarketClient:
             symbols: tickers or ids; None = all.
         """
         return self._get("indicators", query=_query(symbols=symbols))
+
+    def returns(self, days, symbols=None) -> dict:
+        """GET /v1/returns.
+
+        Args:
+            days: completed trading days.
+            symbols: tickers or ids; None = all.
+        """
+        return self._get("returns", query=_query(days=days, symbols=symbols))
 
     def quotes(self, symbols) -> dict:
         """GET /v1/quotes.

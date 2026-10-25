@@ -44,9 +44,39 @@ def compute(closes: list[float], highs: list[float], lows: list[float]) -> dict:
     return out
 
 
+def daily_returns(days: list[str], bars: dict[str, float]) -> list[float | None]:
+    """Close-to-close returns on consecutive trading days (oldest first); None where either day has no bar.
+
+    Args:
+        days: trading days, oldest first.
+        bars: day -> close.
+
+    Used by: api (GET /v1/returns), history.HistoricalMarket.returns.
+    """
+    return [bars[b] / bars[a] - 1 if bars.get(a) and bars.get(b) else None for a, b in zip(days, days[1:])]
+
+
+def correlation(x: list[float | None], y: list[float | None], min_points: int = 40) -> float | None:
+    """Pearson correlation of two aligned return series over the points both have; None below `min_points`.
+
+    Used by: stocksvest_app.automations.planner.select (maxCorrelation).
+    """
+    pairs = [(a, b) for a, b in zip(x, y) if a is not None and b is not None]
+    if len(pairs) < min_points:
+        return None
+    mx, my = fmean(a for a, _ in pairs), fmean(b for _, b in pairs)
+    sxy = sum((a - mx) * (b - my) for a, b in pairs)
+    sxx, syy = sum((a - mx) ** 2 for a, _ in pairs), sum((b - my) ** 2 for _, b in pairs)
+    return sxy / sqrt(sxx * syy) if sxx and syy else None
+
+
 if __name__ == "__main__":  # self-check
     c = [100.0 * 1.01 ** i for i in range(260)]
     r = compute(c, [x * 1.01 for x in c], [x * 0.99 for x in c])
     assert r["volatility20"] < 1e-6 and abs(r["fromHigh52wPercent"] + 0.99) < 0.01 and r["priceVsSma200Percent"] > 100
     assert compute([10.0], [10.0], [10.0])["volatility20"] is None
+    a = [0.01 * (-1) ** i for i in range(60)]
+    assert abs(correlation(a, a) - 1) < 1e-9 and abs(correlation(a, [-v for v in a]) + 1) < 1e-9
+    assert correlation(a[:10], a[:10]) is None
+    assert daily_returns(["d1", "d2", "d3"], {"d1": 10, "d2": 11}) == [0.10000000000000009, None]
     print("ok")

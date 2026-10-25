@@ -186,6 +186,17 @@ def test_indicators(client, seeded):
     assert body["S0002"]["close"] is None
 
 
+def test_returns(client, seeded):
+    add_calendar(seeded, "2026-10-08", "2026-10-09", "2026-10-12")
+    seeded.commit()
+    body = client.get("/v1/returns?days=4&symbols=S0001", headers=READ).json()
+    closes = {b["t"][:10]: b["c"] for b in client.get("/v1/bars/S0001?timeframe=1Day", headers=READ).json()["bars"]}
+    assert body["days"] == ["2026-10-09", "2026-10-12", "2026-10-13"]
+    r = body["returns"]["S0001"]
+    assert r[0] is None  # no bar on Thu 8
+    assert r[1] == pytest.approx(closes["2026-10-12"] / closes["2026-10-09"] - 1)
+
+
 def test_trading_days_back():
     days = ["2026-11-30", "2026-11-27", "2026-11-25", "2026-11-24"]  # Thanksgiving (26th) and the weekend closed
     assert _trading_days_back(days, "2026-11-30", 1) == "2026-11-27"  # Monday: from Friday's close

@@ -105,3 +105,27 @@ def test_volatility_scaled_buys_and_max_open_positions():
     intents = planner.size(action, guards, chosen["symbols"], ctx, FakeBroker())
     assert [(i["ticker"], i["quantity"]) for i in intents[:2]] == [("A", 75), ("C", 50)]
     assert intents[2]["skipReason"] == "MAX_POSITIONS"  # H + A + C = 3 symbols
+
+
+def test_max_correlation_skips_stocks_that_move_with_a_holding_or_an_earlier_pick():
+    wave = [0.01 * ((i % 7) - 3) for i in range(119)]
+    other = [0.01 * ((i % 5) - 2) for i in range(119)]
+
+    class RetMarket(Market):
+        def returns(self, tickers, days):
+            series = {"H": wave, "A": [x * 2 for x in wave], "B": other, "C": [x + 0.001 for x in other], "D": wave[::-1]}
+            return {t: series[t] for t in tickers if t in series}
+
+    action = PlaceOrderAction.model_validate({
+        "type": "PLACE_ORDER", "side": "BUY", "sizings": [{"mode": "CASH_AMOUNT", "value": 100}],
+        "selection": {"mode": "TOP_N", "topN": 2, "rankBy": "LAST_PRICE"}})
+    guards = OrderGuards(maxCorrelation=0.7)
+    snaps = {t: {"latestPrice": p} for t, p in {"A": 4, "B": 3, "C": 2, "D": 1}.items()}
+    holdings = {"H": planner.Holding(Decimal(1), Decimal(1))}
+    planner.add_rank_data(action, list("ABCD"), snaps, RetMarket(), guards, held=holdings)
+    ctx = planner.PlanContext(snapshots=snaps, holdings=holdings, open_buys=set(), open_sells={},
+                              budget_available=Decimal(1000), budget_equity=Decimal(1000), session="REGULAR",
+                              data_age_minutes=0)
+    chosen = planner.select(action, list("ABCD"), ctx, guards)
+    # A mirrors the holding H, C mirrors the earlier pick B; D is H backwards (uncorrelated enough).
+    assert chosen["symbols"] == ["B", "D"] and chosen["tooCorrelated"] == ["A", "C"]

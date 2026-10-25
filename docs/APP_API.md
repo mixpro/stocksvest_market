@@ -300,7 +300,7 @@ budget, and position caps and `skipBuyIfHeld` look at the budget's shares and op
 {"maxOrdersPerRun": 10, "maxPositionValue": null, "maxPositionPercent": null,
  "regularHoursOnly": true, "skipBuyIfHeld": true, "maxDataAgeMinutes": 30, "requireLivePrice": false,
  "maxSpreadPercent": null, "rebuyCooldownMinutes": null, "maxSectorPercent": null,
- "targetVolatilityPercent": null, "maxOpenPositions": null}
+ "targetVolatilityPercent": null, "maxOpenPositions": null, "maxCorrelation": null}
 ```
 
 `requireLivePrice: true` places an order only when its symbol has a live quote (see below); otherwise it is skipped
@@ -325,6 +325,10 @@ that grew past the cap are not sold. Example: 5% positions with a 30% cap hold a
 `targetVolatilityPercent` sizes buys by risk: each buy and its position caps are multiplied by target ÷ the stock's
 20-day annualised volatility, kept within 0.5–1.5. With 40 and `maxPositionPercent` 5, a stock moving 20% a year
 gets 7.5%, one moving 80% gets 2.5%. Stocks without enough history are not scaled.
+
+`maxCorrelation` (0–1) diversifies: a `TOP_N` buy leaves out a stock whose daily returns over the last 120 trading days
+correlate above it with a stock the budget holds or one this run already picked (listed as `tooCorrelated`), so the
+next ranked stock takes the place. Market `GET /v1/returns` supplies the returns.
 
 `maxOpenPositions` limits how many symbols the budget holds at once (holdings, open buys and this run's buys). A buy
 of a new symbol beyond it skips (`MAX_POSITIONS`); adding to a held symbol is not limited.

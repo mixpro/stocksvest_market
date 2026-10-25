@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
 
+from stocksvest_market.indicators import correlation
+
 from ..market.client import LIVE_SOURCES
 from ..orders.service import PRICE_BUFFER, OrderRejected, check_request
 from .models import OrderGuards, PlaceOrderAction, RankingKey, SelectionMode, SizingMode
@@ -93,6 +95,7 @@ MOMENTUM = {RankingKey.MOMENTUM_12_1: (12, "momentum12_1"), RankingKey.MOMENTUM_
 DOLLAR_VOLUME_FIELD = "averageDollarVolume20"  # snapshot field for AVERAGE_DOLLAR_VOLUME_20. Used by: same
 # Ranking keys read from market GET /v1/indicators -> its field (copied into the snapshots). Used by: same
 INDICATOR_KEYS = {RankingKey.VOLATILITY_20: "volatility20", RankingKey.FROM_52W_HIGH: "fromHigh52wPercent"}
+CORRELATION_DAYS = 120  # trading days of returns behind maxCorrelation. Used by: add_rank_data
 VOL_SCALE = (Decimal("0.5"), Decimal("1.5"))  # targetVolatilityPercent scale limits. Used by: _vol_scale
 
 
@@ -109,7 +112,7 @@ def _vol_scale(guards: OrderGuards, snap: dict) -> Decimal:
 
 
 def add_rank_data(action: PlaceOrderAction, tickers: list[str], snapshots: dict[str, dict], market,
-                  guards: OrderGuards | None = None) -> None:
+                  guards: OrderGuards | None = None, held=()) -> None:
     """Put the ranking and sizing values market snapshots don't carry into the snapshots, in place: for a momentum
     TOP_N, each ticker's % change from N months ago to 1 month ago (None without both prices); for
     AVERAGE_DOLLAR_VOLUME_20, its 20-day average dollar volume; for VOLATILITY_20 / FROM_52W_HIGH or a buy with
@@ -120,7 +123,8 @@ def add_rank_data(action: PlaceOrderAction, tickers: list[str], snapshots: dict[
         tickers: the candidates.
         snapshots: ticker -> snapshot (the PlanContext's).
         market: MarketData (price_changes, volumes, indicators).
-        guards: the automation's OrderGuards (targetVolatilityPercent).
+        guards: the automation's OrderGuards (targetVolatilityPercent, maxCorrelation).
+        held: the budget's symbols (maxCorrelation compares candidates with them too; their daily returns are added).
 
     Used by: runner._place_orders, backtest.engine._run_automation (before select).
     """
@@ -133,6 +137,10 @@ def add_rank_data(action: PlaceOrderAction, tickers: list[str], snapshots: dict[
             snapshots[t] = {**snapshots.get(t, {}), **{f: data.get(t, {}).get(f) for f in INDICATOR_KEYS.values()}}
     if sel.mode != SelectionMode.TOP_N:
         return
+    if action.side == "BUY" and guards and guards.maxCorrelation is not None:
+        rets = market.returns(set(tickers) | set(held), CORRELATION_DAYS)
+        for t, r in rets.items():
+            snapshots[t] = {**snapshots.get(t, {}), "returns": r}
     if sel.rankBy == RankingKey.AVERAGE_DOLLAR_VOLUME_20:
         volumes = market.volumes(set(tickers), 20)
         for t in tickers:
@@ -275,7 +283,9 @@ def select(action: PlaceOrderAction, matched: list[str], ctx: PlanContext, guard
         {"symbols": tickers in rank order, "notHeld": matches a SELL can't use,
         "alreadyHeld": matches a TOP_N buy left out because the budget holds them,
         "recentlySold": matches a TOP_N buy left out because the budget sold them within the cooldown,
-        "sectorFull": matches a TOP_N buy left out because their sector would cross maxSectorPercent}.
+        "sectorFull": matches a TOP_N buy left out because their sector would cross maxSectorPercent,
+        "tooCorrelated": matches a TOP_N buy left out because they correlate above maxCorrelation with a holding or
+        an earlier pick}.
 
     Used by: plan, runner._place_orders.
     """
@@ -285,7 +295,7 @@ def select(action: PlaceOrderAction, matched: list[str], ctx: PlanContext, guard
         not_held = len(matched) - len(candidates)
     else:
         candidates, not_held = list(matched), 0
-    already_held, recently_sold, sector_full = [], [], []
+    already_held, recently_sold, sector_full, too_correlated = [], [], [], []
     if action.side == "BUY" and action.selection.mode == SelectionMode.TOP_N and guards is not None:
         if guards.skipBuyIfHeld:
             held = {t for t, h in ctx.holdings.items() if h.quantity > 0} | ctx.open_buys
@@ -300,27 +310,37 @@ def select(action: PlaceOrderAction, matched: list[str], ctx: PlanContext, guard
         valued = [(t, _rank_value(sel.rankBy, t, ctx)) for t in candidates]
         with_value = sorted([x for x in valued if x[1] is not None], key=lambda x: x[1], reverse=sel.descending)
         ranked = [t for t, _ in with_value + [x for x in valued if x[1] is None]]
-        if action.side == "BUY" and guards is not None and guards.maxSectorPercent is not None:
-            cap = ctx.budget_equity * guards.maxSectorPercent / 100
+        capped = guards is not None and action.side == "BUY"
+        if capped and (guards.maxSectorPercent is not None or guards.maxCorrelation is not None):
+            cap = ctx.budget_equity * (guards.maxSectorPercent or 0) / 100
             each = ctx.budget_equity * (guards.maxPositionPercent or 0) / 100  # one planned buy
             used, kept = _sector_values(ctx), []
+            peers = [t for t, h in ctx.holdings.items() if h.quantity > 0]  # what a candidate must not mirror
             for t in ranked:
                 sector = ctx.sectors.get(t)
-                if sector and used.get(sector, D0) + each > cap:
+                if guards.maxSectorPercent is not None and sector and used.get(sector, D0) + each > cap:
                     sector_full.append(t)
                     continue
+                if guards.maxCorrelation is not None:
+                    mine = ctx.snapshots.get(t, {}).get("returns") or []
+                    rho = [correlation(mine, ctx.snapshots.get(p, {}).get("returns") or []) for p in peers]
+                    if any(r is not None and r > guards.maxCorrelation for r in rho):
+                        too_correlated.append(t)
+                        continue
                 kept.append(t)
+                peers.append(t)
                 if sector:
                     used[sector] = used.get(sector, D0) + each
                 if len(kept) == sel.topN:
                     break
             sector_full.sort()
+            too_correlated.sort()
             ranked = kept
         candidates = ranked[: sel.topN]
     else:
         candidates = sorted(candidates)
     return {"symbols": candidates, "notHeld": not_held, "alreadyHeld": already_held, "recentlySold": recently_sold,
-            "sectorFull": sector_full}
+            "sectorFull": sector_full, "tooCorrelated": too_correlated}
 
 
 def market_blocked(guards: OrderGuards, ctx: PlanContext) -> tuple[str, str] | None:

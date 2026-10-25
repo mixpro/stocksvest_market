@@ -121,6 +121,22 @@ class MarketData:
         data = self.api.indicators(self._symbols_arg(tickers))["indicators"]
         return {t: v for t, v in data.items() if t in tickers}
 
+    def returns(self, tickers: set[str], days: int) -> dict[str, list]:
+        """Daily returns over the last `days` completed trading days (market GET /v1/returns) for these tickers only
+        (halal universe only, as in snapshots).
+
+        Args:
+            tickers: tickers wanted; empty = no call.
+            days: completed trading days.
+
+        Used by: automations.planner.add_rank_data (maxCorrelation).
+        """
+        tickers = tickers & self.universe().keys() if tickers else tickers
+        if not tickers:
+            return {}
+        data = self.api.returns(days, self._symbols_arg(tickers))["returns"]
+        return {t: v for t, v in data.items() if t in tickers}
+
     def live_quotes(self, tickers: set[str]) -> dict[str, dict]:
         """Prices right now (IBKR live when the market service can get them, else its delayed price), for the few
         symbols about to be traded. Not cached: every call asks again.

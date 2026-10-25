@@ -297,6 +297,24 @@ class HistoricalMarket:
             out[t] = self._ind[key]
         return {"indicators": out}
 
+    def returns(self, days, symbols=None) -> dict:
+        """Market GET /v1/returns as of `now`: daily returns over the last `days` trading days that had ended."""
+        ts = self._now_ts()
+        done = [d for d in self.trading_days_desc if self.day_close.get(d, 0) <= ts][:days][::-1]
+        out = {}
+        for t in symbols or self.by_ticker:
+            s = self.daily.get(t)
+            closes = {}
+            if s and done:
+                lo = int(datetime.combine(date.fromisoformat(done[0]), time(), ET).timestamp()) if done else 0
+                for i in range(bisect_right(s.ts, lo - 1), len(s.ts)):
+                    day = datetime.fromtimestamp(s.ts[i], ET).date().isoformat()
+                    if day > done[-1]:
+                        break
+                    closes[day] = s.c[i]
+            out[t] = ind.daily_returns(done, closes)
+        return {"days": done[1:], "returns": out}
+
     def quotes(self, symbols) -> dict:
         out = {}
         for t in symbols:

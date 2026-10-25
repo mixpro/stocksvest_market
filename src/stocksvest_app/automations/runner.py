@@ -485,7 +485,8 @@ def _place_orders(ctx, conn, automation, tradings: list[tuple[dict, "Trading | N
             for t, s in snapshots.items():
                 plan_ctx.snapshots.setdefault(t, s)  # the context may come from an earlier action
             # Select which symbols to act on, quote exactly those live, then price, size and check them.
-            planner.add_rank_data(action, tickers, plan_ctx.snapshots, ctx.market, trading.guards)
+            planner.add_rank_data(action, tickers, plan_ctx.snapshots, ctx.market, trading.guards,
+                                  held=plan_ctx.holdings)
             chosen = planner.select(action, tickers, plan_ctx, trading.guards)
             if live is not None and not planner.market_blocked(trading.guards, plan_ctx):
                 live.merge_into(plan_ctx.snapshots, chosen["symbols"][:100])
@@ -497,6 +498,8 @@ def _place_orders(ctx, conn, automation, tradings: list[tuple[dict, "Trading | N
                 sub["recentlySold"] = chosen["recentlySold"]  # likewise, sold within rebuyCooldownMinutes
             if chosen["sectorFull"]:
                 sub["sectorFull"] = chosen["sectorFull"]  # likewise, their sector is at maxSectorPercent
+            if chosen["tooCorrelated"]:
+                sub["tooCorrelated"] = chosen["tooCorrelated"]  # they move with a holding or an earlier pick
         except Exception as e:  # one budget failing does not stop the others
             log.exception("automation %s: planning for budget %s failed", automation["id"], trading.budget_id)
             sub.update(status="FAILED", error=str(e))

@@ -266,6 +266,17 @@ From completed daily bars (today's counts once its extended session has ended); 
 | `atr14Percent` | 14-day average true range as % of the close (15 bars) |
 | `sma50`, `sma200` / `priceVsSma50Percent`, `priceVsSma200Percent` | Averages of the closes and the close's distance from them, % |
 | `high52w` / `fromHigh52wPercent` | Highest high of the last 252 bars and the close vs it, % (0 = at the high) |
+
+### Daily returns
+
+`GET /v1/returns?days=120&symbols=AAPL,MSFT` (2–260 days, default 120; all symbols if omitted)
+
+Close-to-close returns over the last `days` completed trading days: `days − 1` values per symbol, oldest first, `null`
+where the stock has no bar on either day. For correlations between stocks.
+
+```json
+{"days": ["2026-05-07", "...", "2026-10-23"], "returns": {"AAPL": [0.0042, -0.0113, null, "..."]}}
+```
 `averageDollarVolume` uses each day's volume-weighted price (or its close). Values are `null` when the trading
 calendar is shorter than `days`.
 

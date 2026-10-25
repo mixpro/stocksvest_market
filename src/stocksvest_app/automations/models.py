@@ -425,6 +425,9 @@ class OrderGuards(BaseModel):
             target / the stock's 20-day annualised volatility, kept within 0.5-1.5 (calm stocks get bigger
             positions, jumpy ones smaller). 40 with maxPositionPercent 5 = 2.5-7.5% per stock. Stocks without
             enough history are not scaled.
+        maxCorrelation: diversification: a TOP_N buy leaves out a stock whose daily returns over the last 120
+            trading days correlate above this (0-1, e.g. 0.7) with a stock the budget holds or this run already picked
+            (listed as tooCorrelated); the next ranked stock takes its place. Stops buying the same bet twice.
         maxOpenPositions: most symbols the budget may hold at once (holdings, open buys and this run's buys); a
             buy of a new symbol beyond it skips (MAX_POSITIONS). Adding to a held symbol is not limited.
 
@@ -442,6 +445,7 @@ class OrderGuards(BaseModel):
     maxSectorPercent: Decimal | None = Field(default=None, gt=0, le=100)  # of the budget's equity
     targetVolatilityPercent: Decimal | None = Field(default=None, gt=0, le=200)  # annualised, %
     maxOpenPositions: int | None = Field(default=None, ge=1, le=1000)
+    maxCorrelation: Decimal | None = Field(default=None, gt=0, lt=1)
 
 
 # Any automation action; the "type" field picks the model. Used by: AutomationIn.actions, runner.run_automation.

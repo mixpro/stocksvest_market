@@ -106,6 +106,11 @@ STRATS = {
                                "condition": "MORE_THAN", "value": 0}]),
     "5B-LOWVOL60": strat5(extra=[ind("VOLATILITY_20", "LESS_THAN", 60)]),
     "5B-MAXPOS20": strat5(guards={"maxOpenPositions": 20}),
+    # FEAT-9: correlation limit; combinations of the best of the batch.
+    "5B-CORR70": strat5(guards={"maxCorrelation": 0.7}),
+    "5B-CORR50": strat5(guards={"maxCorrelation": 0.5}),
+    "5B-VOL60-CORR70": strat5(guards={"targetVolatilityPercent": 60, "maxCorrelation": 0.7}),
+    "5B-VOL60-NOMIN": strat5(guards={"targetVolatilityPercent": 60}, exits=lambda pf: [[pc(6, "MONTHS", "LESS_THAN", 0)]]),
     # RISK-3 Core 40: the 40 most-traded liquid stocks, equal weight; every 13 weeks sell all (10:30) and rebuy (11:00).
     "CORE-40": dict(
         buy=gate(10, 50e6), sells=lambda pf: [[]],

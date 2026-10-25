@@ -840,6 +840,24 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
             out[r["ticker"]] = ind.compute([b["c"] for b in bars], [b["h"] for b in bars], [b["l"] for b in bars])
         return {"indicators": out}
 
+    @app.get("/v1/returns", tags=["prices"], dependencies=read)
+    def returns(conn: Conn, days: Annotated[int, Query(ge=2, le=260)] = 120, symbols: str | None = None):
+        """Daily close-to-close returns over the last `days` completed trading days (days - 1 returns, oldest first;
+        null where the stock has no bar on either day). For correlations between stocks.
+        \f
+        Args:
+            conn: market DB connection (one per request, injected).
+            days: completed trading days.
+            symbols: comma-separated tickers/ids, or None for all.
+        """
+        rows, series = daily_series(conn, symbols, days)
+        done = sorted(completed_days(conn, days))
+        out = {}
+        for r in rows:
+            closes = {datetime.fromtimestamp(b["ts"], sync.ET).date().isoformat(): b["c"] for b in series.get(r["id"], [])}
+            out[r["ticker"]] = ind.daily_returns(done, closes)
+        return {"days": done[1:], "returns": out}
+
     @app.get("/v1/calendar", tags=["calendar"], dependencies=read)
     def calendar(conn: Conn, start: date | None = None, end: date | None = None):
         """Trading days with session times (New York time). Matches TradingCalendar / SessionTimes in Scheduling.mmd;

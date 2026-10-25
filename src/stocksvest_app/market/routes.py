@@ -186,6 +186,16 @@ def router(ctx: AppContext) -> APIRouter:
         """
         return call(lambda: api.indicators(_split(symbols)))
 
+    @r.get("/returns")
+    def returns(days: Annotated[int, Query(ge=2, le=260)] = 120, symbols: str | None = None):
+        """Daily returns over the last completed trading days, for correlations (market `GET /v1/returns`).
+        \f
+        Args:
+            days: completed trading days.
+            symbols: comma-separated tickers or ids; empty = all.
+        """
+        return call(lambda: api.returns(days, _split(symbols)))
+
     @r.get("/quotes")
     def quotes(symbols: str):
         """Prices right now: IBKR live bid/ask/last when available, else the delayed price (market `GET /v1/quotes`).

@@ -139,6 +139,11 @@ class FakeMarket:
         self.calls.append(("indicators", symbols))
         return {"indicators": {t: INDICATORS[t] for t in (symbols or INDICATORS)}}
 
+    def returns(self, days, symbols=None):
+        self._check()
+        self.calls.append(("returns", days, symbols))
+        return {"days": [], "returns": {t: [] for t in (symbols or UNIVERSE)}}
+
     def calendar(self, start=None, end=None):
         self._check()
         self.calls.append(("calendar", start, end))

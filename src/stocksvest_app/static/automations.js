@@ -21,7 +21,7 @@ const ORDER_DEFAULT = {
   selection: { mode: "TOP_N", topN: 3, rankBy: "DAILY_CHANGE_PERCENT", descending: true },
   sizings: [{ mode: "CASH_AMOUNT", value: 500 }],
 };
-const GUARD_DEFAULT = { maxOrdersPerRun: 10, maxPositionValue: null, maxPositionPercent: null, regularHoursOnly: true, skipBuyIfHeld: true, maxDataAgeMinutes: 30, requireLivePrice: false, maxSpreadPercent: null, rebuyCooldownMinutes: null, maxSectorPercent: null, targetVolatilityPercent: null, maxOpenPositions: null };
+const GUARD_DEFAULT = { maxOrdersPerRun: 10, maxPositionValue: null, maxPositionPercent: null, regularHoursOnly: true, skipBuyIfHeld: true, maxDataAgeMinutes: 30, requireLivePrice: false, maxSpreadPercent: null, rebuyCooldownMinutes: null, maxSectorPercent: null, targetVolatilityPercent: null, maxOpenPositions: null, maxCorrelation: null };
 
 // ------------------------------------------------------------------ loading
 
@@ -238,6 +238,7 @@ function guardsEditor() {
     "max per symbol $", numInput(g, "maxPositionValue", { style: "width:80px", placeholder: "—" }),
     "or %", numInput(g, "maxPositionPercent", { style: "width:60px", placeholder: "—" }),
     "max per sector %", numInput(g, "maxSectorPercent", { style: "width:50px", placeholder: "—" }),
+    "max correlation", numInput(g, "maxCorrelation", { style: "width:50px", placeholder: "—", step: 0.05 }),
     "max positions", numInput(g, "maxOpenPositions", { style: "width:50px", placeholder: "—", min: 1 }),
     "size by volatility, target %", numInput(g, "targetVolatilityPercent", { style: "width:50px", placeholder: "—" }),
     "max data age", numInput(g, "maxDataAgeMinutes", { style: "width:50px", min: 1 }), "min",
@@ -433,7 +434,7 @@ function showRun(run) {
     ...(r.actions || []).filter((a) => a.detail).map((a) => el("p", { class: "muted" }, `${a.index + 1}. ${a.detail}`)),
     ...(r.actions || []).flatMap((a) => (a.budgets || []).map((b) => el("div", {},
       el("h3", {}, `${a.index + 1}. ${a.side === "SELL" ? "Sell" : "Buy"} orders · ${b.name}`,
-        el("span", { class: "muted" }, ` · ${b.intents.filter((x) => x.decision === "PLACE").length} placed${b.notHeld ? ` · ${b.notHeld} matches not held` : ""}${b.alreadyHeld?.length ? ` · already held, left out: ${b.alreadyHeld.join(", ")}` : ""}${b.recentlySold?.length ? ` · sold recently, left out: ${b.recentlySold.join(", ")}` : ""}${b.sectorFull?.length ? ` · sector full, left out: ${b.sectorFull.join(", ")}` : ""}`)),
+        el("span", { class: "muted" }, ` · ${b.intents.filter((x) => x.decision === "PLACE").length} placed${b.notHeld ? ` · ${b.notHeld} matches not held` : ""}${b.alreadyHeld?.length ? ` · already held, left out: ${b.alreadyHeld.join(", ")}` : ""}${b.recentlySold?.length ? ` · sold recently, left out: ${b.recentlySold.join(", ")}` : ""}${b.sectorFull?.length ? ` · sector full, left out: ${b.sectorFull.join(", ")}` : ""}${b.tooCorrelated?.length ? ` · moves with a holding, left out: ${b.tooCorrelated.join(", ")}` : ""}`)),
       b.error ? el("div", { class: "down" }, b.error) : null,
       b.intents.length ? el("table", {},
         el("thead", {}, el("tr", {}, ...["#", "Symbol", "Qty", "Price", "Cost", "Decision", "Why"].map((h) => el("th", {}, h)))),
