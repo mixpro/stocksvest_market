@@ -150,3 +150,20 @@ def test_next_vwap_fills_after_the_signal(market_path, app_db):
                       fill="SAME_CLOSE")
     up = [next(t for t in r["trades"] if t["symbol"] == "UP") for r in (nxt, same)]
     assert up[0]["price"] == pytest.approx(up[1]["price"] * 1.01, rel=1e-6)  # one hour later on a +1%/hour stock
+
+
+def test_schedule_steps_run_each_automation_at_its_own_times(market_path, app_db):
+    path, ids = app_db
+    weekly = [{"type": "WEEKLY", "onDays": ["TUE"], "atTimes": ["11:00:00"]}]
+    out = engine.run(path, market_path, ids["Buy"], ids["Sell"], date(2026, 10, 5), date(2026, 10, 7),
+                     overrides={"buy": {"schedules": weekly}})
+    buys = [t for t in out["trades"] if t["side"] == "BUY"]
+    assert buys and {datetime.fromisoformat(t["time"]).astimezone(ET).strftime("%a %H:%M")
+                     for t in buys} == {"Tue 11:00"}
+    every_15 = engine._fire_times({"schedules": [{"type": "MARKET", "anchor": "REGULAR_OPEN",
+                                                  "repeatEveryMinutes": 15}], "runTargets": [], "actions": [],
+                                   "name": "x"},
+                                  date(2026, 10, 5), lambda a, b: HistoricalMarket(market_path, a, b).calendar(
+                                      a.isoformat(), b.isoformat())["days"], at("2026-10-05", 0))
+    assert [t.astimezone(ET).strftime("%H:%M") for t in every_15] == [
+        "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00"]  # 09:30 runs at the hour's start

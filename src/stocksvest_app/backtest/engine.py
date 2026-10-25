@@ -1,14 +1,18 @@
 """Replay a Buy and a Sell automation over history with the app's own filter engine and order planner.
 
-Every trading hour (10:00 to 15:00 New York, while the regular session is open) the Sell automation runs first, then
-the Buy automation, exactly as the live runner does them: evaluate the run targets, planner.select, put live quotes
-(modelled spreads) into the plan, planner.size, then fill each PLACE intent. Fill modes: NEXT_VWAP (default) fills at
-the next hour's VWAP at the modelled ask/bid, so a signal never trades at the very print that triggered it; SAME_CLOSE
-fills at once at the planner's estimated price (the old, optimistic way, kept for comparison). Shares are kept as position lots in a scratch copy of the app database, so filters that read
-the portfolio (INVESTMENT_PORTFOLIO inputs, POSITION, UNREALIZED_PNL) see the simulated holdings.
+Each automation runs in every clock hour its schedule fires in (steps SCHEDULE, the default), once, at the start of
+that hour: bars are hourly, so the run sees the prices as of the hour and fills inside it (a 09:30 fire runs at
+09:00). Steps HOURLY instead runs both every trading hour from 10:00 to 15:00 New York (the old way, kept for
+comparison). At the same time the Sell automation runs first, then the Buy automation, exactly as the live runner
+does them: evaluate the run targets, planner.select, put live quotes (modelled spreads) into the plan, planner.size,
+then fill each PLACE intent. Fill modes: NEXT_VWAP (default) fills at the next hour's VWAP at the modelled ask/bid,
+so a signal never trades at the very print that triggered it; SAME_CLOSE fills at once at the planner's estimated
+price (the old, optimistic way, kept for comparison). Shares are kept as position lots in a scratch copy of the app
+database, so filters that read the portfolio (INVESTMENT_PORTFOLIO inputs, POSITION, UNREALIZED_PNL) see the
+simulated holdings.
 
-Simplifications, listed in every report: hourly steps instead of the live 1- and 15-minute schedules; market orders
-fill completely at the modelled bid/ask (a buy shrinks to the cash there is); no fees (Alpaca paper);
+Simplifications, listed in every report: at most one run an hour instead of the live 1- and 15-minute schedules;
+market orders fill completely at the modelled bid/ask (a buy shrinks to the cash there is); no fees (Alpaca paper);
 today's halal universe throughout.
 
 Used by: backtest.__main__, tests.
@@ -18,14 +22,16 @@ import json
 import sqlite3
 import tempfile
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
+from pydantic import TypeAdapter
+
 from .. import db
-from ..automations import planner
+from ..automations import planner, timing
 from ..automations import store as automations_store
-from ..automations.models import AutomationIn, OrderGuards
+from ..automations.models import AutomationIn, OrderGuards, Schedule
 from ..brokers.base import BrokerCapabilities
 from ..budgets import store as budget_store
 from ..filters import store as filters_store
@@ -37,6 +43,8 @@ from .history import ET, HistoricalMarket
 
 STEP_HOURS = range(10, 16)  # 10:00 .. 15:00 New York. Used by: run
 FILL_MODES = ("NEXT_VWAP", "SAME_CLOSE")  # see the module docstring. Used by: run, __main__
+STEP_MODES = ("SCHEDULE", "HOURLY")  # see the module docstring. Used by: run, __main__
+SCHEDULES = TypeAdapter(list[Schedule])  # Used by: _fire_times
 
 
 class _Broker:
@@ -92,6 +100,24 @@ def _context(conn, hist: HistoricalMarket, ev: Evaluator, book: Book, portfolio_
     return planner.PlanContext(snapshots=dict(snaps), holdings=holdings, open_buys=set(), open_sells={},
                                budget_available=book.cash, budget_equity=book.cash + invested, session="REGULAR",
                                data_age_minutes=0, last_sells=dict(book.last_sells), now=now)
+
+
+def _fire_times(automation: dict, day: date, calendar: timing.CalendarFn, created: datetime) -> list[datetime]:
+    """The starts of the clock hours (New York) the automation fires in on `day`.
+
+    Args:
+        automation: the automation dict.
+        day: the trading day.
+        calendar: trading days for MARKET schedules.
+        created: anchor for WEEKLY / INTERVAL schedules without startAt (the backtest's start).
+    """
+    lo = datetime.combine(day, time(), ET)
+    hours: set[datetime] = set()
+    for s in SCHEDULES.validate_python(automation["schedules"]):
+        for t in timing.fires_between(s, lo - timedelta(seconds=1), lo + timedelta(days=1, seconds=-1), created,
+                                      calendar, cap=2000):
+            hours.add(t.astimezone(ET).replace(minute=0, second=0, microsecond=0))
+    return sorted(hours)
 
 
 def _run_automation(conn, hist, market, book, automation, portfolio_id, budget_id, now, broker, fill) -> None:
@@ -178,7 +204,7 @@ def prepare(app_db: Path, work_dir: Path) -> Path:
 
 def run(app_db: Path, market_db: Path, buy_id: str, sell_id: str, start: date, end: date, budget: float = 10_000,
         overrides: dict | None = None, hist: HistoricalMarket | None = None, progress=None,
-        fill: str = "NEXT_VWAP") -> dict:
+        fill: str = "NEXT_VWAP", steps: str = "SCHEDULE") -> dict:
     """Backtest a Buy and a Sell automation from `start` to `end` (inclusive) on one budget.
 
     Args:
@@ -194,12 +220,15 @@ def run(app_db: Path, market_db: Path, buy_id: str, sell_id: str, start: date, e
         hist: an already loaded HistoricalMarket (reused across runs); default loads one.
         progress: called with each finished day ("YYYY-MM-DD", equity).
         fill: NEXT_VWAP or SAME_CLOSE (see the module docstring).
+        steps: SCHEDULE or HOURLY (see the module docstring).
 
     Returns:
         {"params", "summary", "equity" (per day), "trades"}.
     """
     if fill not in FILL_MODES:
         raise ValueError(f"fill must be one of {FILL_MODES}")
+    if steps not in STEP_MODES:
+        raise ValueError(f"steps must be one of {STEP_MODES}")
     overrides = overrides or {}
     hist = hist or HistoricalMarket(market_db, start, end)
     with tempfile.TemporaryDirectory() as tmp:
@@ -223,18 +252,22 @@ def run(app_db: Path, market_db: Path, buy_id: str, sell_id: str, start: date, e
             market = MarketData(hist)
             broker = _Broker()
             days = [r["date"] for r in hist.calendar_rows if start.isoformat() <= r["date"] <= end.isoformat()]
+            calendar = lambda a, b: hist.calendar(a.isoformat(), b.isoformat())["days"]  # noqa: E731
+            created = datetime.combine(start, time(), ET)
             for day in days:
+                d = date.fromisoformat(day)
                 close = datetime.fromisoformat(next(r["close"] for r in hist.calendar_rows if r["date"] == day))
-                for hour in STEP_HOURS:
-                    now = datetime.combine(date.fromisoformat(day), time(hour), ET)
-                    if now >= close:
-                        break
+                if steps == "HOURLY":
+                    runs = [(datetime.combine(d, time(h), ET), i) for h in STEP_HOURS for i in (0, 1)
+                            if datetime.combine(d, time(h), ET) < close]
+                else:
+                    runs = sorted((t, i) for i, key in enumerate(("sell", "buy"))
+                                  for t in _fire_times(autos[key], d, calendar, created))
+                for now, i in runs:  # i: 0 = Sell, 1 = Buy, so at the same time the Sell runs first
                     hist.now = now
-                    _run_automation(conn, hist, market, book, autos["sell"], portfolio_id, budget_id, now, broker,
-                                    fill)
-                    _run_automation(conn, hist, market, book, autos["buy"], portfolio_id, budget_id, now, broker,
-                                    fill)
-                hist.now = close
+                    _run_automation(conn, hist, market, book, autos[("sell", "buy")[i]], portfolio_id, budget_id,
+                                    now, broker, fill)
+                hist.now = close  # ponytail: equity at the regular close, after-hours fires land in the next day
                 equity, invested = _equity(conn, hist, book, portfolio_id, budget_id)
                 book.equity.append({"date": day, "equity": round(equity, 2), "invested": round(invested, 2),
                                     "cash": round(float(book.cash), 2)})
@@ -242,7 +275,7 @@ def run(app_db: Path, market_db: Path, buy_id: str, sell_id: str, start: date, e
                     progress(day, equity)
         finally:
             conn.close()
-    return {"params": {"start": start.isoformat(), "end": end.isoformat(), "budget": budget, "fill": fill,
+    return {"params": {"start": start.isoformat(), "end": end.isoformat(), "budget": budget, "fill": fill, "steps": steps,
                        "buy": autos["buy"],
                        "sell": autos["sell"], "overrides": overrides},
             "summary": summarize(book, budget), "equity": book.equity, "trades": book.trades}

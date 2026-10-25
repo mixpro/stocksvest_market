@@ -18,10 +18,12 @@ Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 →
   - Fix: fill at the next bar's open (or next hour's close) ± spread.
   - Done 2026-10-25: default `--fill NEXT_VWAP` (next hour's VWAP ± spread); `SAME_CLOSE` kept for comparison.
   - Result on the live setup (2025-10-24..2026-10-23): −85.6% same close vs −86.2% next VWAP. The bias was small.
-- [ ] **BT-2: Schedule timing in the engine**
+- [x] **BT-2: Schedule timing in the engine**
   - The engine steps hourly 10:00–15:00 ET every day. Real automations run on their own schedule.
   - Needed for STRAT-1 (weekly at 11:00) and STRAT-2 (daily at 11:00).
   - Option: read each automation's schedule and only run it when it would fire.
+  - Done 2026-10-25: default `--steps SCHEDULE` runs each automation once in every hour its schedule fires in (a 09:30 fire runs at 09:00, since bars are hourly). `HOURLY` kept for comparison.
+  - Live setup on its real schedules: −90.0% (3,542 buys, win rate 29%) vs −86.2% hourly 10–15. The extra 09:00–10:00 runs hurt.
 - [ ] **BT-3: True buy-and-hold benchmark**
   - The current benchmark rebalances daily to equal weight, so it's an active strategy itself.
   - Add: buy the universe (or SPY-like proxy) once on day 1, hold to the end.
