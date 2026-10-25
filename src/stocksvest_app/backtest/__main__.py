@@ -12,6 +12,7 @@ from datetime import date
 from pathlib import Path
 
 from .engine import FILL_MODES, STEP_MODES, run
+from .history import HistoricalMarket
 
 
 def main(argv=None) -> None:
@@ -29,9 +30,12 @@ def main(argv=None) -> None:
                    help="NEXT_VWAP: next hour's VWAP at ask/bid (default); SAME_CLOSE: the signal's own price")
     p.add_argument("--steps", choices=STEP_MODES, default="SCHEDULE",
                    help="SCHEDULE: each automation at its own fire times (default); HOURLY: both every hour 10-15")
+    p.add_argument("--spread-factor", type=float, default=1.0, help="cost stress: modelled spreads x this")
     p.add_argument("--out", type=Path, help="write the full result (equity per day, every trade) as JSON")
     a = p.parse_args(argv)
-    result = run(a.app_db, a.market_db, a.buy, a.sell, a.start, a.end, a.budget, a.overrides,
+    hist = HistoricalMarket(a.market_db, a.start, a.end)
+    hist.spread_factor = a.spread_factor
+    result = run(a.app_db, a.market_db, a.buy, a.sell, a.start, a.end, a.budget, a.overrides, hist=hist,
                  progress=lambda day, eq: print(f"{day}  equity ${eq:,.2f}", file=sys.stderr), fill=a.fill,
                  steps=a.steps)
     if a.out:

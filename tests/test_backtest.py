@@ -70,6 +70,9 @@ def test_as_of_prices_never_look_ahead(market_path):
     assert m.snapshots(["UP"])["snapshots"]["UP"]["previousClose"] == pytest.approx(snap["previousClose"])
     q = m.quotes(["UP"])["quotes"]["UP"]
     assert q["bid"] < q["last"] < q["ask"] and q["source"] == "IBKR"
+    m.spread_factor = 2
+    q2 = m.quotes(["UP"])["quotes"]["UP"]
+    assert q2["ask"] - q2["bid"] == pytest.approx(2 * (q["ask"] - q["bid"]), rel=1e-3)
     vol = m.volume(2, ["UP"])["volumes"]["UP"]
     assert vol["averageVolume"] == 16_000_000 and vol["daysTraded"] == 2  # Mon + Fri, today not finished
 

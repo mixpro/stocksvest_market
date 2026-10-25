@@ -89,6 +89,7 @@ class HistoricalMarket:
         self.by_ticker = {s["ticker"]: s for s in self.symbols_by_id.values()}
         self.now = datetime.combine(start, time(10), ET)
         self._adv: dict[tuple[str, str], float | None] = {}
+        self.spread_factor = 1.0  # cost stress: modelled spreads x this (e.g. 2). Used by: quotes, next_fill
 
     def _load(self, conn, table: str, span: tuple[int, int] | None) -> dict[str, Series]:
         """Bars of a table by ticker.
@@ -271,7 +272,7 @@ class HistoricalMarket:
             last = self.latest_price(t)
             if not last:
                 continue
-            half = spread_for(self.avg_dollar_volume(t)) / 200
+            half = spread_for(self.avg_dollar_volume(t)) * self.spread_factor / 200
             out[t] = {"source": "IBKR", "bid": round(last[1] * (1 - half), 4), "ask": round(last[1] * (1 + half), 4),
                       "last": last[1], "price": last[1], "time": self.now.isoformat(), "ageSeconds": 0}
         return {"quotes": out, "liveQuotes": {"enabled": True, "connected": True}}
@@ -298,7 +299,7 @@ class HistoricalMarket:
             if i >= len(s.ts) or s.ts[i] >= self.day_close.get(today.isoformat(), ts + 86400):
                 return None
             price = s.vw[i]
-        half = spread_for(self.avg_dollar_volume(ticker)) / 200
+        half = spread_for(self.avg_dollar_volume(ticker)) * self.spread_factor / 200
         return round(price * (1 + half if side == "BUY" else 1 - half), 4)
 
     def calendar(self, start=None, end=None) -> dict:
