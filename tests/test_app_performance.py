@@ -92,7 +92,7 @@ def test_scheduled_snapshots(app_and_client, client, broker, portfolio, budget):
     def at(h, m):  # Monday 12 Oct 2026, New York time (in the past: fills happen on the real clock)
         return datetime(2026, 10, 12, h, m, tzinfo=ET).astimezone(timezone.utc)
 
-    for t in (at(9, 0), at(9, 31), at(9, 40), at(9, 46), at(15, 59), at(16, 10)):
+    for t in (at(9, 0), at(9, 31), at(9, 40), at(9, 46), at(15, 59), at(16, 3)):  # 16:03: close not synced yet
         snapshots.scheduled(ctx, conn, t)
     hist = client.get(f"/v1/portfolios/{portfolio['id']}/history", headers=KEY).json()["points"]
     assert [p["kind"] for p in hist] == ["INTERVAL", "INTERVAL", "INTERVAL"]  # 9:31 and 9:46 slots, 15:59

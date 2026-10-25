@@ -18,7 +18,7 @@ curl -H "X-API-Key: $KEY" http://localhost:8000/v1/symbols/AAPL
 - Responses are in UTC, e.g. `2026-10-15T14:32:00Z`.
 - `start` and `end` accept a date (`2026-10-01`) or a datetime (`2026-10-01T09:30:00`). Without a time zone they are read as **New York time**.
 
-**Data freshness:** bars come from Alpaca's SIP feed, which the free plan only serves up to about 16 minutes ago.
+**Data freshness:** bars come from Alpaca's SIP feed in real time (paid plan), synced every minute (`SYNC_INTERVAL_MINUTES`). On the free plan, which only serves data up to about 16 minutes ago, set `SIP_DELAY_MINUTES=16` and `ALPACA_RPM=180`.
 Watched symbols (see [Live bars](#live-bars)) get real-time minutes from IBKR on top, so their latest price,
 snapshot and price changes are current.
 
@@ -254,7 +254,7 @@ calendar is shorter than `days`.
 ### Live quotes
 
 `GET /v1/quotes?symbols=AAPL,JRSH` (up to 100 symbols): the price **right now**, from Interactive Brokers when the
-service is connected to an IB Gateway (`IBKR_ENABLED=true`), otherwise the newest delayed price.
+service is connected to an IB Gateway (`IBKR_ENABLED=true`), otherwise the newest minute bar (`DELAYED`).
 
 ```json
 {
@@ -283,7 +283,7 @@ Streams IBKR real-time bars for these symbols (for example a portfolio's holding
 list again before then to keep them. The app does this every minute for everything its portfolios hold or have an order
 open for.
 
-- Each watched symbol first gets the last 30 minutes of 1-minute history from IBKR (covering the delayed SIP gap), then
+- Each watched symbol first gets the last 30 minutes of 1-minute history from IBKR (covering any gap since the last sync), then
   5-second real-time bars, rolled up into minutes.
 - While a symbol is watched, `latestPrice` in snapshots, the latest price of `GET /v1/price-change` and the start of
   `MINUTES` periods use these minutes, so `periodAmount=3&periodUnit=MINUTES` is the last 3 real minutes.

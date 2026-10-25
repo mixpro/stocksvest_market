@@ -51,7 +51,7 @@ inputs (union) ──► action 1 ──► action 2 ──► … ──► mat
    | `HOLDING_PERIOD` | `portfolioIds`, `periodUnit`, `condition`, `value`, `maxValue` | the time the symbol has been held matches, e.g. `DAYS` `MORE_THAN` `5` = held for more than 5 days |
 
    - **`priceReference`:**
-     - `LATEST_BAR`: newest price: real-time for symbols a portfolio holds, else ~16 min delayed
+     - `LATEST_BAR`: newest price: real-time for symbols a portfolio holds, else the newest minute bar (synced every minute)
      - `LAST_CLOSE`: close of the last *completed* trading day
    - **`periodUnit`:** `MINUTES` (max 7 days), `HOURS`, `DAYS`, `WEEKS`, `MONTHS`, `YEARS`. Only time the market is
      open counts: `DAYS` are trading days (on Monday, 2 days = Friday + Monday, compared with Thursday's close),
@@ -80,7 +80,7 @@ inputs (union) ──► action 1 ──► action 2 ──► … ──► mat
      Typical uses in a sell filter: a time exit ("held more than 2 weeks"), or giving a new position room ("price change
      below −2.5% in 3 hours **and** held more than 1 day").
    - **`UNREALIZED_PNL`:** the shares of all the listed portfolios (manual and automation) count together, valued at
-     the IBKR live last trade (else the ~16 min delayed price, like the portfolio page) against what they cost. `PERCENT` is of the cost, `ABSOLUTE` in dollars.
+     the IBKR live last trade (else the newest minute bar, like the portfolio page) against what they cost. `PERCENT` is of the cost, `ABSOLUTE` in dollars.
      Symbols not held there, or without a price, are dropped. Unlike `PRICE_CHANGE`, which looks at a time window,
      this compares with the buy price. Example, "sell what is down 8% or more":
      `{"type": "UNREALIZED_PNL", "portfolioIds": ["pf_a"], "valueType": "PERCENT", "condition": "LESS_THAN", "value": -8}`
@@ -212,7 +212,7 @@ curl -X POST -H "X-API-Key: $APP_KEY" -H "Content-Type: application/json" \
 
 **How often is useful:** runs can repeat every minute, but only live prices change that fast: `UNREALIZED_PNL`
 and order prices use IBKR quotes. `PRICE_CHANGE`, `SYMBOL_PRICE` and the ranking keys use the market service's
-bars, which are ~16 minutes delayed and refreshed every 5 minutes, except for symbols a portfolio holds or has an
+bars, which are real-time and synced every minute, except for symbols a portfolio holds or has an
 order open for: the scheduler asks the market service for real-time IBKR bars of those every minute, so sell filters on
 your holdings (price change, latest price) work on current prices.
 
@@ -300,7 +300,7 @@ budget, and position caps and `skipBuyIfHeld` look at the budget's shares and op
 ```
 
 `requireLivePrice: true` places an order only when its symbol has a live quote (see below); otherwise it is skipped
-(`NO_LIVE_PRICE`) instead of priced at the ~16 minute delayed price.
+(`NO_LIVE_PRICE`) instead of priced at the newest minute bar.
 
 `maxSpreadPercent` skips a **buy** (`WIDE_SPREAD`) when its live quote's ask is more than this % above the bid
 (measured from the midpoint). Thinly traded stocks can quote e.g. bid $25.00 / ask $28.50 (13%): a market buy fills
@@ -319,7 +319,7 @@ taking the top N (listed as `recentlySold` in the run), so the next best takes t
 3. **Live prices:** for exactly the selected symbols (all matches, or the top N; sells only held ones), live quotes are
    fetched once per run (IBKR, through the market service's `/v1/quotes`) and used to price and size them: **buys at
    the ask, sells at the bid**. Nothing is fetched when the market is closed or the data too old (nothing can be
-   placed then). Symbols without a live quote, or when live quotes fail, use the delayed price. Each intent
+   placed then). Symbols without a live quote, or when live quotes fail, use the newest minute bar. Each intent
    has `priceSource` (`IBKR` or `DELAYED`) and `quoteAgeSeconds`.
 4. **Guards:** applied in rank order. Each symbol becomes an intent: `PLACE`, or `SKIP` with a reason:
 

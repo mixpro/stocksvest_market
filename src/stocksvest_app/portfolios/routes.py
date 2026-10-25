@@ -250,7 +250,7 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.get("/{portfolio_id}")
     def get_portfolio(portfolio_id: str, conn: Conn):
-        """The portfolio with positions at live prices where available (`priceSource: IBKR`, else the ~16 min delayed
+        """The portfolio with positions at live prices where available (`priceSource: IBKR`, else the newest minute bar,
         price), budgets, totals and the last broker sync.
         \f
         Args:

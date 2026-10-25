@@ -222,8 +222,8 @@ def check(ctx, conn, now: datetime | None = None) -> None:
     live = status.get("liveQuotes") or {}
     ibkr_down = in_session and live.get("enabled") and not live.get("connected")
     condition(conn, mailer, "market:ibkr", "Live prices (IBKR)",
-              f"Not connected to the IB Gateway ({live.get('lastError') or 'no detail'}). Orders use the ~16 min "
-              f"delayed price meanwhile." if ibkr_down else None, now, GRACE)
+              f"Not connected to the IB Gateway ({live.get('lastError') or 'no detail'}). Orders use the newest "
+              f"minute bar meanwhile." if ibkr_down else None, now, GRACE)
 
     # The daily summary, once per trading day after the close.
     if day and now >= datetime.fromisoformat(day["regularClose"]) + SUMMARY_AFTER:

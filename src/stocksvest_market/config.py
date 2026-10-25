@@ -29,7 +29,8 @@ class Settings:
         alpaca_data_url: market data API base (ALPACA_DATA_URL).
         alpaca_trading_url: trading API base, used for assets and the calendar (ALPACA_TRADING_URL; paper by default).
         alpaca_feed: bar feed, "sip" (all exchanges) or "iex" (ALPACA_FEED).
-        sip_delay_minutes: how far behind "now" bars are requested; 16 on the free plan, 0 on a paid one.
+        sip_delay_minutes: how far behind "now" bars are requested; 0 on the paid plan (Algo Trader Plus, since
+            2026-10-25), 16 on the free plan.
         requests_per_minute: client-side rate limit for Alpaca calls (ALPACA_RPM).
         sec_user_agent: contact sent to SEC EDGAR for sector lookups; empty disables sectors (SEC_USER_AGENT).
         data_dir: folder holding market.db and halal.db (DATA_DIR).
@@ -57,9 +58,10 @@ class Settings:
         default_factory=lambda: os.environ.get("ALPACA_TRADING_URL", "https://paper-api.alpaca.markets")
     )
     alpaca_feed: str = field(default_factory=lambda: os.environ.get("ALPACA_FEED", "sip"))
-    # Free plan: SIP data from the last 15 minutes is not available. Set 0 on a paid plan.
-    sip_delay_minutes: int = field(default_factory=lambda: int(os.environ.get("SIP_DELAY_MINUTES", "16")))
-    requests_per_minute: int = field(default_factory=lambda: int(os.environ.get("ALPACA_RPM", "180")))
+    # Paid plan: real-time SIP. On the free plan the last 15 minutes are not available: set 16 (and ALPACA_RPM=180).
+    sip_delay_minutes: int = field(default_factory=lambda: int(os.environ.get("SIP_DELAY_MINUTES", "0")))
+    # The paid plan allows 10,000 a minute; this leaves plenty of headroom.
+    requests_per_minute: int = field(default_factory=lambda: int(os.environ.get("ALPACA_RPM", "1000")))
 
     # SEC EDGAR requires a contact in the User-Agent, e.g. "StocksVest-Market you@example.com".
     # Empty = sector sync is skipped.
@@ -81,7 +83,7 @@ class Settings:
     run_scheduler: bool = field(
         default_factory=lambda: os.environ.get("RUN_SCHEDULER", "true").lower() in ("1", "true", "yes")
     )
-    sync_interval_minutes: int = field(default_factory=lambda: int(os.environ.get("SYNC_INTERVAL_MINUTES", "5")))
+    sync_interval_minutes: int = field(default_factory=lambda: int(os.environ.get("SYNC_INTERVAL_MINUTES", "1")))
     # Live quotes from IB Gateway (read-only connection; see ibkr.py).
     ibkr_enabled: bool = field(
         default_factory=lambda: os.environ.get("IBKR_ENABLED", "false").lower() in ("1", "true", "yes")

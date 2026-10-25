@@ -17,8 +17,9 @@ from . import store
 log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")  # Used by: scheduled, snapshot_*, routes.budget_performance
 INTERVAL = timedelta(minutes=15)  # INTERVAL snapshot spacing. Used by: scheduled
-# Prices are ~16 minutes delayed: wait this long after the close before the end-of-day snapshot. Used by: scheduled
-AFTER_CLOSE = timedelta(minutes=20)
+# Wait this long after the close before the end-of-day snapshot, so the closing minutes are synced (real-time data,
+# synced every minute). Used by: scheduled
+AFTER_CLOSE = timedelta(minutes=5)
 
 
 def _prices(ctx: AppContext, symbols: set[str]) -> dict[str, Decimal]:

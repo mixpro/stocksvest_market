@@ -424,7 +424,7 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
     def live_watch(conn: Conn, body: WatchIn):
         """Stream IBKR real-time bars for these symbols (e.g. a portfolio's holdings) for `ttlMinutes`; send the list
         again before it runs out to keep them. While watched, a symbol's latest price, snapshot and price changes use
-        real-time minutes instead of the ~16 minute delayed SIP data. Unknown symbols are listed, not refused.
+        real-time minutes from IBKR on top of the SIP minute bars. Unknown symbols are listed, not refused.
         \f
         Args:
             conn: market DB connection (one per request, injected).
@@ -459,8 +459,8 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
     @app.get("/v1/quotes", tags=["prices"], dependencies=read)
     def quotes(conn: Conn, symbols: Annotated[str, Query(description="Comma-separated tickers/ids, up to 100")]):
         """Live price per symbol right now: bid, ask and last from IBKR (`source: IBKR`), or, when IBKR can't
-        answer, the newest delayed price (`source: DELAYED`, about 16 minutes old). `price` is the bid/ask midpoint
-        (or the last trade); `ageSeconds` says how old it is.
+        answer, the newest minute bar (`source: DELAYED`; real-time SIP on the paid plan, about 16 minutes old on the
+        free one). `price` is the bid/ask midpoint (or the last trade); `ageSeconds` says how old it is.
         \f
         Args:
             conn: market DB connection (one per request, injected).
@@ -614,7 +614,7 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
 
     def latest(conn, table: str, symbol_id: str, before_ts: int | None = None) -> sqlite3.Row | None:
         """The newest bar (ts, c, v) of a symbol in a table, optionally at or before a time. For minutes, IBKR's
-        real-time bars (watched symbols) count too, so the newest minute is current rather than ~16 minutes old.
+        real-time bars (watched symbols) count too, so the newest minute is current even between syncs.
 
         Args:
             conn: market DB connection.

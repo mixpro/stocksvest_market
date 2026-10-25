@@ -61,7 +61,7 @@ class PriceReference(str, Enum):
     """
 
     LAST_CLOSE = "LAST_CLOSE"  # close of the last completed trading day
-    LATEST_BAR = "LATEST_BAR"  # newest price available (~16 min delayed)
+    LATEST_BAR = "LATEST_BAR"  # newest price available (real-time minute bars, synced every minute)
 
 
 class ValueType(str, Enum):
@@ -255,7 +255,7 @@ class PositionAction(PortfolioIds):
 
 class UnrealizedPnlAction(PortfolioIds, Comparison):
     """Keep held symbols whose unrealized gain/loss matches the comparison: the shares of all the portfolios
-    (any owner) together, valued at the IBKR live last trade (else the ~16 min delayed price, like the portfolio
+    (any owner) together, valued at the IBKR live last trade (else the newest minute bar, like the portfolio
     page) against their cost. PERCENT is of the cost
     (-8 = down 8% from the buy price), ABSOLUTE in dollars. Symbols not held, or without a price, are dropped.
 

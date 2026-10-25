@@ -55,7 +55,7 @@ Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 →
 - [ ] **DATA-4: Delisted stocks for the backtests (survivorship bias)**
   - The biggest doubt on every result: the universe is today's list, so stocks that collapsed or delisted are missing.
   - Check whether Alpaca serves bars for inactive assets; if so, add the ones that were halal-eligible and rerun STRAT-5B.
-- [ ] **DATA-3: Buy side is still 16 min delayed** (deferred by you)
+- [x] **DATA-3: Buy side is still 16 min delayed**: Alpaca Algo Trader Plus ($99/month) since 2026-10-25. Defaults now `SIP_DELAY_MINUTES=0`, `SYNC_INTERVAL_MINUTES=1`, `ALPACA_RPM=1000`
   - Option 1: Alpaca paid plan (real-time SIP).
   - Option 2: IEX feed top-up (free, real-time, thinner coverage).
   - Held symbols are already live via IBKR (done).

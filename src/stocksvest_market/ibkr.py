@@ -6,8 +6,8 @@ asyncio loop in a background thread (ib_async needs one) and reconnects by itsel
 restart. Quotes are taken from short-lived streaming subscriptions (the account's "US Equity and Options Add-On
 Streaming Bundle"): subscribe, wait for bid/ask/last, unsubscribe, so no paid snapshots are used.
 
-Live bars: each watched symbol gets the last 30 minutes of 1-minute history (covering the ~16 minutes Alpaca's free
-SIP data lags) and then 5-second real-time bars, rolled up into minutes and written to bars_live_1min, where
+Live bars: each watched symbol gets the last 30 minutes of 1-minute history (covering the minutes since the last SIP
+sync, ~16 of them on Alpaca's free plan) and then 5-second real-time bars, rolled up into minutes and written to bars_live_1min, where
 api.latest picks them up, so prices and price changes of watched symbols are current. A watch expires unless the app
 renews it.
 

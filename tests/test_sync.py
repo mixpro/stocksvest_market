@@ -110,8 +110,8 @@ def test_scheduler_incremental_during_session(conn, settings):
     seed(conn)
     _calendar(conn)
     assert scheduler.due_jobs(conn, settings, NOW) == ["incremental"]
-    sync.db.set_state(conn, "last_incremental_at", (NOW - timedelta(minutes=2)).isoformat())
-    assert scheduler.due_jobs(conn, settings, NOW) == []  # interval not reached
+    sync.db.set_state(conn, "last_incremental_at", (NOW - timedelta(seconds=30)).isoformat())
+    assert scheduler.due_jobs(conn, settings, NOW) == []  # interval (1 minute) not reached
 
 
 def test_scheduler_quiet_before_premarket_and_nightly_after(conn, settings):
