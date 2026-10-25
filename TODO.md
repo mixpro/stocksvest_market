@@ -82,7 +82,20 @@ Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 →
 - [x] **BT-7: Audits Kimi asked for**: list the 27 delisted exits (buyout vs failure; stress failures at −100%); before 2024 the fill is the decision day's VWAP, which includes trades before the decision (use the next day's to be strict).
   - Delisted exits: all 27 were buyouts/mergers (Immunomedics +176%, MyoKardia +142%, Medicines Co +53%, Inphi, Red Hat, Cimarex, Whiting…), one meme merger (Support.com −68%). No failures: the liquidity + uptrend gate never held a collapsing stock. Stress cost: 0.
   - Strict fills (new fill mode `NEXT_VWAP_STRICT`: before 2024, the next day's VWAP): 5B +409% → +322% (17.4%/yr, below buy-and-hold's 18.1%) on today's stocks; +357% → +333% (17.7%/yr vs 15.5%) with delisted. Part of the edge on today's stocks came from same-day fills; with delisted stocks it holds (+2.2 pts/yr). The truth is between the two modes.
-- [ ] **BT-8: How fragile is the edge**: 100 runs with random entry weekdays; block bootstrap of monthly 5B-minus-benchmark returns; walk-forward (choose on 2017–2020, test 2021–2023, etc.). Report drawdown and volatility next to return for 5B and the benchmark.
+- [x] **BT-8: How fragile is the edge**: 100 runs with random entry weekdays; block bootstrap of monthly 5B-minus-benchmark returns; walk-forward (choose on 2017–2020, test 2021–2023, etc.). Report drawdown and volatility next to return for 5B and the benchmark.
+  - 100 runs (5 buy weekdays × 20 start weeks, Nov 2017 – Mar 2018 starts), normal fills:
+
+    | | Today's stocks | With delisted |
+    |---|---|---|
+    | 5B %/yr, median (range) | 19.6 (15.7..23.5) | 19.4 (16.1..23.6) |
+    | vs buy-and-hold, median / 10th percentile | +1.8 / −0.2 pts/yr | +4.5 / +2.7 pts/yr |
+    | runs beating buy-and-hold | 85 / 100 | 100 / 100 |
+    | max drop, median (worst) | −39% (−45%) | −39% (−45%) |
+
+  - Monthly: 5B volatility 31.5%/yr vs benchmark 18.9% (delisted: 30.8 vs 16.9), tracking error ~22%/yr. Return per unit of volatility ~0.63 vs ~0.96: 5B is the riskier way to a similar return.
+  - Block bootstrap (6-month blocks, 10,000 draws) of monthly excess return: 5% −4.3, median +6.8, 95% +18.3 pts/yr, P(> 0) 85% (delisted: −4.2 / +8.6 / +21.4, 86%).
+  - Walk-forward over the ~17 variants: best on 2017–2020 → rank 16/17 on 2021–2023; best on 2017–2023 → 13/17 on 2024–2026; best on 2021–2023 → 14/17 on 2024–2026. Picking variants by past results is noise: don't tune 5B further on this history.
+  - Verdict: a real but modest edge over equal-weight liquid buy-and-hold (likely 1–5 pts/yr), bought with ~1.7× the volatility; strict fills (BT-7) shave ~2 pts/yr.
 
 ## BT: Backtester accuracy
 
@@ -107,12 +120,12 @@ Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 →
     - Entries: +1 day +0.2 pts, +5 days +0.3, +20 days −0.6, +60 days +3.0 average but only +0.4 median; beat 47–52% of the time. The edge is a few big winners (right skew), not a high hit rate.
     - Exits: sold stocks did +1.9 / +2.2 pts better than the universe over the next 20 / 60 days on average (median ~0): the exit costs a little on average, mostly by selling some recoveries.
     - MAE/MFE: median worst point −11%, best +21%, result −1%. Median give-back from the best point 25 pts; 66 of 181 trades that were +20% at some point closed below +5%.
-  - A trailing exit (also sell when 25% below the 52-week high) was tested in the next batch: see 5B-X-TRAIL25 below.
+  - A trailing exit (also sell when 25% below the 52-week high, held > 30 days): +410%, −40%: same as 5B. The give-back is the price of letting winners run.
   - Entries: average forward 1/5/20/60-day return of what each buy rule picks, vs. the universe.
   - Exits: same entries, different sell rules. Also what a stock did 1/5/20 days after we sold it.
   - MAE/MFE per trade (worst and best point while held).
   - Why: "stops lose, take-profits win" is partly an accounting artifact. A stop only closes losers by definition.
-- [ ] **BT-5: Robustness checks**
+- [x] **BT-5: Robustness checks**: done through STRAT-6 (×2/×3 spreads), DATA-4 (delisted), BT-7 (strict fills) and BT-8 (100 runs, bootstrap, walk-forward)
   - 2× spread cost stress.
   - Walk-forward: tune on one period, test on the next.
   - Keep the last 12 months untouched until a strategy is final.
@@ -257,11 +270,11 @@ Shared base: price > $10, 20-day dollar volume > $50M, max spread 0.30%, buy at 
   - 200-day moving average (price above/below), distance from 52-week high.
 - [x] **FEAT-5: Sector-relative strength**: filter step `SECTOR_RELATIVE_CHANGE` (stock's change minus its sector's median) (2026-10-25). 5B + 6-month sector-relative > 0: +423% (20.2%/yr, −39%): within noise. With-delisted test not valid (delisted stocks have no sector, so the step drops them)
   - Stock's change vs. its sector's average over the same period.
-- [ ] **FEAT-6: Earnings calendar**
+- [x] **FEAT-6: Earnings calendar**: SEC 8-K item 2.02 dates, synced nightly; `INDICATOR` `DAYS_SINCE_EARNINGS` / `DAYS_TO_EARNINGS` (expected next = last + 91 days) (2026-10-25). 5B skipping buys within 7 days before earnings: +287% (16.3%/yr) vs +409%; buying only within 30 days after earnings (drift): +208%. Both hurt: stocks earn extra around their reports (the earnings-announcement premium), so avoiding them costs
   - Skip buys N days before earnings; needs a data source.
 - [x] **FEAT-7: Market regime**: `MARKET_CHANGE` filter step, median % change of the whole universe (2026-10-25). Backtests: it hurt (see STRAT-5)
   - Only buy when the broad market is above its 200-day average (or similar).
-- [ ] **FEAT-8: Quality fundamentals**
+- [x] **FEAT-8: Quality fundamentals**: SEC XBRL frames (net income, revenue, equity, assets) synced nightly, point-in-time (a year counts 90 days after it ends); `INDICATOR` `ROE`, `NET_MARGIN`, `DEBT_TO_ASSETS` (2026-10-25). 5B + ROE > 10%: +225% (14.0%/yr, 2022 −28%); + profitable (net margin > 0): +294% (16.5%/yr). Both hurt: momentum's big winners are often not yet profitable. Not valid with delisted stocks (they have no CIK, so no data)
   - Profitability, debt. Needs a data source.
 - [x] **FEAT-9: Correlation clusters** (the graph-theory idea): guard `maxCorrelation` + market `GET /v1/returns` (2026-10-25): a TOP_N buy skips a stock whose 120-day daily returns correlate above X with a holding or an earlier pick (tooCorrelated). 5B with 0.7: +322% −39% / +360% −38% with delisted; with 0.5: +191% / +133%. Cuts the delisted drawdown like volatility sizing, but costs return on today's stocks
   - Group stocks that move together; hold at most N per cluster.
