@@ -97,7 +97,24 @@ Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 →
   - Walk-forward over the ~17 variants: best on 2017–2020 → rank 16/17 on 2021–2023; best on 2017–2023 → 13/17 on 2024–2026; best on 2021–2023 → 14/17 on 2024–2026. Picking variants by past results is noise: don't tune 5B further on this history.
   - Verdict: a real but modest edge over equal-weight liquid buy-and-hold (likely 1–5 pts/yr), bought with ~1.7× the volatility; strict fills (BT-7) shave ~2 pts/yr.
 
+## Kimi review 3 (2026-10-26, overnight)
+
+Kimi's verdict on the overnight results (`advice, checked`):
+- 5B is "a reasonable momentum experiment, not a validated core allocation": keep it as a paper satellite; strict fills put it −0.7 to +2.2 pts/yr vs buy-and-hold. The bootstrap's 85% is not an 85% chance of real alpha (same nine years, variants were selected); the 100 BT-8 runs overlap; walk-forward is the strongest warning: stop selecting variants.
+- Vol sizing 60: only as a frozen paper experiment after checks: same exposure as plain 5B? what drove 2021? Don't tune 40 vs 60. Don't adopt maxCorrelation (inconsistent).
+- Could still flip conclusions: point-in-time halal universe, execution (next-day VWAP is a delay test, not a live fill), benchmark treatment, no untouched holdout, unadjusted prices for the $10 gate, days-to-earnings look-ahead.
+- Next, ranked: freeze one specification + pass/fail criteria; certify universe/delisting/benchmark; rerun frozen 5B, vol 60, Core 40 and the combination with live-like costs and strict-fill BT-8; resolve vol 60's 2021 attribution; meanwhile a broad simple sleeve as the core.
+
+Checked:
+- Vol 60 is not an exposure effect: 96.5% invested on average for both (2021: 95.7% vs 96.8%). 2021 attribution: half-size positions in the 2021 speculative names (BEEM −844 → −375, SPRT −806 → gone, CPSH −779 → −357, APPN −568 → gone): a consistent mechanism, not a few lucky trades.
+- Days to earnings: not look-ahead (only 8-Ks filed on or before the day are used).
+- **The $10 gate was wrong in backtests** (see BT-9).
+
 ## BT: Backtester accuracy
+
+- [x] **BT-9: Price gates on adjusted prices** (found from Kimi review 3): bars are split- and dividend-adjusted (`adjustment=all`), so in 2016 NVDA shows $1.73 (it traded ~$70) and the "price > $10" gate kept future split stocks (often the big winners) out of past runs. Live trading is unaffected (today's adjusted price is the real price).
+  - Without the price gate (the $50M/day gate already keeps penny stocks out): 5B +409% → +459% (21.1%/yr, −39%); with delisted +357% → +435% (20.5%/yr, −38%, 2021 −9%). Core 40: no change (+438% vs +430%).
+  - So the bias worked against 5B. Proper fix if price gates matter: store unadjusted closes (or the split factors) and compare SYMBOL_PRICE against them in the backtester. Until then: drop price gates in backtests.
 
 - [x] **BT-1: Fill at the next price, not the signal's own close**
   - Today a buy is filled at the same hourly close the filter just saw, so results look better than reality.
@@ -282,7 +299,7 @@ Shared base: price > $10, 20-day dollar volume > $50M, max spread 0.30%, buy at 
 
 ## OPS: Production and fixes
 
-- [ ] **OPS-1: Check live bars Monday 2026-10-26 after 09:30 ET**
+- [ ] **OPS-1: Check live bars Monday 2026-10-26 after 09:30 ET** (blocked overnight 2026-10-25: needs the market open)
   - Also: did 5B Buy place ~20 orders at 11:00 ET, and do the fill prices sit within the modelled spread?
   - And: did the 19 OPG sells of the Testing budget fill at the open?
   - `GET /v1/live` → `lastBarAt` should update every few seconds for held symbols.
