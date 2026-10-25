@@ -52,6 +52,9 @@ Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 →
   - Done 2026-10-25: `DAILY_HISTORY_DAYS=3650` in tinkergw `.env`, one-time full daily re-download (1.74M bars from 2016-10-28; 521 symbols in 2016 → 881 today). DB 671 → 784 MB. Hourly stays 2 years; backtests before 2024 fill at the day's VWAP.
 - [ ] **DATA-2: Keep more minute bars** (only if BT-6 is wanted)
   - Check DB size impact first.
+- [ ] **DATA-4: Delisted stocks for the backtests (survivorship bias)**
+  - The biggest doubt on every result: the universe is today's list, so stocks that collapsed or delisted are missing.
+  - Check whether Alpaca serves bars for inactive assets; if so, add the ones that were halal-eligible and rerun STRAT-5B.
 - [ ] **DATA-3: Buy side is still 16 min delayed** (deferred by you)
   - Option 1: Alpaca paid plan (real-time SIP).
   - Option 2: IEX feed top-up (free, real-time, thinner coverage).
@@ -141,7 +144,7 @@ Shared base: price > $10, 20-day dollar volume > $50M, max spread 0.30%, buy at 
   - The old Testing Buy/Sell were paused 2026-10-25. Their 19 positions (~$7.1k) have market-on-open (OPG) sells for Monday 2026-10-26 09:30 ET.
   - Own budget on the Alpaca paper account, next to or instead of the live setup (which lost every year in 9).
   - Goal: check live fills/spreads vs the backtest, not to prove the edge (months of paper can't).
-- [ ] **STRAT-4: Decide what to do with the live setup**
+- [x] **STRAT-4: Decide what to do with the live setup**: paused 2026-10-25, positions sold at Monday's open, replaced by STRAT-5B (STRAT-7)
   - Backtest verdict so far: live setup −71%, spike-chasing rules removed −9%, benchmark +20%.
   - After STRAT-1..3: replace, keep paper-testing, or turn off.
   - Cleanup: R.B E is redundant in the Buy group union.
