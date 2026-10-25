@@ -14,6 +14,8 @@ Filters page → filter editor → "add step". Models in `src/stocksvest_app/fil
 | Volume filter (keep thin stocks out) | **"Average daily trading"**: days (1–260), shares or dollars | `AVERAGE_VOLUME`. It averages completed trading days from the market service's `/v1/volume`; days without trades count as 0. 5B and Core 40 use "20 days, dollars, > $50M" |
 | Holding period | **"Holding period"**: portfolio(s), minutes … years | `HOLDING_PERIOD`. It measures time since the oldest open lot of the symbol in that portfolio. 5B Sell uses "> 30 days" |
 | Exclude symbols | **"Exclude symbols"**: a comma-separated ticker list | `EXCLUDE_SYMBOLS`. Drops the listed tickers. Core 40's buy filter excludes GOOG so Alphabet is bought once (GOOGL) |
+| Indicators [FEAT-2/4/6/8] | **"Indicator (trend, volatility, 52-week high)"**: pick one, compare | `INDICATOR`. From market `GET /v1/indicators`: `VOLATILITY_20`, `ATR_14_PERCENT`, `PRICE_VS_SMA_50/200`, `FROM_52W_HIGH` (completed daily bars); `ROE`, `NET_MARGIN`, `DEBT_TO_ASSETS`, `DAYS_SINCE_EARNINGS`, `DAYS_TO_EARNINGS` (SEC filings, synced nightly, `src/stocksvest_market/fundamentals.py`). Tested on 5B, none adopted |
+| Sector-relative strength [FEAT-5] | **"Change vs its sector"** | `SECTOR_RELATIVE_CHANGE`: the stock's % change minus its sector's median |
 | Market regime [FEAT-1, STRAT-5A/C/H] | **"Market trend (median change of all stocks)"** | `MARKET_CHANGE` (`MarketChangeAction`, `_market_change`). It takes the median % change of the whole ~880-stock universe over the period: every symbol passes or none does. **Not used**: it cut returns from +409% to +37..107% |
 
 ## 2. Automation settings
@@ -29,6 +31,9 @@ UI in `static/automations.js`.
 | Spread guard | **"max buy spread %"** | `maxSpreadPercent`. A buy whose live ask is more than X% above the bid is skipped (`WIDE_SPREAD`). 5B and Core 40 use 0.3% |
 | Re-buy cooldown | **"no re-buy for … min after a sell"** | `rebuyCooldownMinutes`. Recently sold stocks are left out before the top N is taken, and the run shows "sold recently, left out: …". 5B uses 7 days |
 | Require live price | Checkbox **"require live price"** | `requireLivePrice`. No live quote means the order is skipped (`NO_LIVE_PRICE`). Live now means an Alpaca quote |
+| Volatility sizing [RISK-2] | **"size by volatility, target %"** | `targetVolatilityPercent`: buy size and position caps × target ÷ 20-day volatility (0.5–1.5). Best drawdown tool found (−45% → −38% with delisted), recommended, not applied live |
+| Correlation limit [FEAT-9] | **"max correlation"** | `maxCorrelation`: TOP_N skips a stock whose 120-day returns correlate above X with a holding or earlier pick ("moves with a holding, left out"); market `GET /v1/returns` |
+| Max positions [FEAT-3] | **"max positions"** | `maxOpenPositions`: a buy of a new symbol beyond it skips (`MAX_POSITIONS`) |
 | Sector cap [RISK-1] | **"max per sector %"** | `maxSectorPercent`. Stocks of full sectors are skipped before the top N ("sector full, left out: …"), and a buy that would cross the cap shrinks or skips (`SECTOR_FULL`). **Not used** |
 
 ### Selection, sizing and schedules
@@ -36,6 +41,7 @@ UI in `static/automations.js`.
 | Concept | Where | How it works |
 |---|---|---|
 | Momentum ranking [FEAT-7] | Order action → TOP_N → rank by **MOMENTUM_12_1 / MOMENTUM_6_1** | The % change from 12 (or 6) months ago to 1 month ago. `planner.add_rank_data` fetches it before ranking. 5B uses 12-1 |
+| Volatility / 52-week-high ranking | Rank by **VOLATILITY_20 / FROM_52W_HIGH** | From the indicators endpoint, via `planner.add_rank_data` |
 | Most-traded ranking [RISK-3] | Rank by **AVERAGE_DOLLAR_VOLUME_20** | Dollars traded a day over 20 days (`market.volumes`). Core 40 uses it |
 | 1-minute schedules | Schedule → MARKET → repeat every **1** minute | The old 5-minute minimum was removed |
 | Position sizing by equity | Sizing "cash amount" + guard **"or %"** (max position %) | A large cash amount capped by the position limit means each buy is X% of the budget. 5B uses 5%, Core 40 uses 2.5% |
@@ -78,6 +84,7 @@ Market service code in `src/stocksvest_market/` (`alpaca.py`, `api.py`, `config.
 | Concept | Where |
 |---|---|
 | Backtester on real history [BT-1, BT-2] | `python -m stocksvest_app.backtest --app-db … --market-db … --buy … --sell … --start … --end …`. Options: `--fill NEXT_VWAP` (default) or `SAME_CLOSE`; `--steps SCHEDULE` (each automation on its own schedule, default) or `HOURLY`; `--spread-factor 2` for a cost stress test; `--overrides` to change settings for one run. Code in `src/stocksvest_app/backtest/` |
+| Strict fills [BT-7] | `--fill NEXT_VWAP_STRICT`: before 2024 (daily bars only) the next day's VWAP, never a price from before the decision |
 | What it models | Decisions use only data complete at that moment (`HistoricalMarket`). Fills are at the next hour's average price ± a modelled spread (the day's average before 2024). Fires snap to the start of the hour. Delisted positions close at their last price after 5 trading days without bars. The summary includes buy-and-hold benchmarks (`buyHold.allPct`, `buyHold.liquidPct`) |
 | The strategies tested [STRAT-1..6] | `scripts/backtest_strategies.py` builds STRAT-1/2/3, the four 5B versions and CORE-40 in a scratch database |
 | Sleeve and blend tests [RISK-3] | `scripts/backtest_sleeve.py` (top-N sleeves); `scripts/backtest_compare.py` (return, worst drop, years, budgets added together) |

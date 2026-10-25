@@ -312,6 +312,7 @@ Shared base: price > $10, 20-day dollar volume > $50M, max spread 0.30%, buy at 
 
 ## IDEA: Parked
 
+- [ ] **IDEA-2..13: Research ideas (2026-10-26)**: see `docs/RESEARCH-IDEAS.md` (why, limits, how to test each). Ranked: IDEA-2 research gate, IDEA-3 tranches on different days (timing luck), IDEA-4 halal ETF core, IDEA-5 Core 40 banding, IDEA-6 residual momentum, IDEA-7 MAX vs frog-in-the-pan, then EAR, anti-chasing, quote-aware execution, asset growth, lookback ensemble, industry momentum. Not built.
 - [ ] **IDEA-1: Researcher / advisor**
   - An assistant that reviews filters, positions and results and suggests changes. You said leave it for now.
 
