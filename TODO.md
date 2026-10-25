@@ -5,11 +5,24 @@ Status: `[ ]` open · `[~]` in progress · `[x]` done · `[-]` dropped.
 
 Longer write-ups for an item can go in `todos/` (e.g. `todos/001-sec-user-agent-for-sectors.md`).
 
-Prefixes: **BT** backtester · **DATA** market data · **STRAT** strategies to test · **FEAT** new filter/automation features · **OPS** production and fixes · **IDEA** parked ideas.
+Prefixes: **RISK** drawdown control · **BT** backtester · **DATA** market data · **STRAT** strategies to test · **FEAT** new filter/automation features · **OPS** production and fixes · **IDEA** parked ideas.
 
 Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 → rest.
 
 ---
+
+## RISK: Cutting STRAT-5B's worst drop (Kimi review 2, 2026-10-25)
+
+5B's worst drop is deeper than buy-and-hold's: −38% (Jun 22 → Jul 29, 2026) and −45% with delisted stocks (Feb 2021 → Mar 2023), vs −31..−34% for buy-and-hold (Feb–Mar 2020). At the 2026 peak 5B was 84% technology (memory/storage/optical: TTMI, AXTI, WDC, SNDK, MU, STX…), winners grown to 10–12% each, then down 30–60% together.
+
+- [ ] **RISK-1: Sector cap** (Kimi's #1): new guard `maxSectorPercent` (sector value / budget equity); skip a buy that would cross it and take the next ranked stock. Test 25 / 30 / 40%, with and without delisted stocks, ×1 and ×2 spreads.
+  - Also test trimming positions that grew above a cap (e.g. 10%), since the 2026 drop came from drift, not from the 5% buys.
+- [ ] **RISK-2: Volatility-scaled sizing**: buy size × clamp(0.40 / 20-day volatility, 0.5, 1.5), capped at 7.5%. Compare with plain 5B at the same average exposure.
+- [ ] **RISK-3: Blend with buy-and-hold**: 25 / 50 / 75% 5B, rest in liquid buy-and-hold, rebalanced quarterly. The baseline every risk rule must beat.
+- [ ] **RISK-4: Faster stock exit**: (a) drop the 30-day minimum, (b) 3-month change < 0, (c) 3- or 6-month < 0. Check what sold stocks did in the next 3 months.
+- [ ] **RISK-5: Momentum-crash signal** (only after an event study): top-20 momentum names trailing the universe by > 10% over 3 months → halve new buys for 4 weeks. Kimi: the market-regime exit failed because it's slow and all-or-nothing.
+- [ ] **BT-7: Audits Kimi asked for**: list the 27 delisted exits (buyout vs failure; stress failures at −100%); before 2024 the fill is the decision day's VWAP, which includes trades before the decision (use the next day's to be strict).
+- [ ] **BT-8: How fragile is the edge**: 100 runs with random entry weekdays; block bootstrap of monthly 5B-minus-benchmark returns; walk-forward (choose on 2017–2020, test 2021–2023, etc.). Report drawdown and volatility next to return for 5B and the benchmark.
 
 ## BT: Backtester accuracy
 
