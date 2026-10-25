@@ -18,6 +18,9 @@ class Market:
     def universe(self):
         return {"A": {}, "B": {}, "C": {}}
 
+    def volumes(self, tickers, days):
+        return {t: {"averageDollarVolume": v} for t, v in {"A": 5e8, "B": 9e8, "C": None}.items() if t in tickers}
+
     def price_changes(self, tickers, amount, unit):
         if (amount, unit) == (6, "MONTHS"):  # A +10%, B -20%, C +1%: median +1%
             return {t: {"changePercent": v} for t, v in {"A": 10, "B": -20, "C": 1}.items() if t in tickers}
@@ -67,3 +70,15 @@ def test_sector_cap_skips_full_sectors_before_the_top_n():
         ("T1", "PLACE", 20), ("T2", "PLACE", 25), ("E1", "PLACE", 100)]
     ctx.sector_planned["TECH"] += Decimal(900)  # e.g. an earlier action of the run bought more TECH
     assert planner.size(action, guards, ["T3"], ctx, FakeBroker())[0]["skipReason"] == "SECTOR_FULL"
+
+
+def test_rank_by_20_day_dollar_volume():
+    action = PlaceOrderAction.model_validate({
+        "type": "PLACE_ORDER", "side": "BUY", "sizings": [{"mode": "CASH_AMOUNT", "value": 100}],
+        "selection": {"mode": "TOP_N", "topN": 3, "rankBy": "AVERAGE_DOLLAR_VOLUME_20"}})
+    snaps = {t: {"latestPrice": 1} for t in "ABC"}
+    planner.add_rank_data(action, ["A", "B", "C"], snaps, Market())
+    ctx = planner.PlanContext(snapshots=snaps, holdings={}, open_buys=set(), open_sells={},
+                              budget_available=Decimal(1000), budget_equity=Decimal(1000), session="REGULAR",
+                              data_age_minutes=0)
+    assert planner.select(action, ["A", "B", "C"], ctx, None)["symbols"] == ["B", "A", "C"]

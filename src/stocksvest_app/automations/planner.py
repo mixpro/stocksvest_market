@@ -89,11 +89,13 @@ def _round_price(price: Decimal) -> Decimal:
 
 # Momentum ranking keys -> (months back, the snapshot field add_rank_data fills). Used by: add_rank_data, _rank_value
 MOMENTUM = {RankingKey.MOMENTUM_12_1: (12, "momentum12_1"), RankingKey.MOMENTUM_6_1: (6, "momentum6_1")}
+DOLLAR_VOLUME_FIELD = "averageDollarVolume20"  # snapshot field for AVERAGE_DOLLAR_VOLUME_20. Used by: same
 
 
 def add_rank_data(action: PlaceOrderAction, tickers: list[str], snapshots: dict[str, dict], market) -> None:
     """Put the ranking value market snapshots don't carry into the snapshots, in place: for a momentum TOP_N, each
-    ticker's % change from N months ago to 1 month ago (None without both prices).
+    ticker's % change from N months ago to 1 month ago (None without both prices); for AVERAGE_DOLLAR_VOLUME_20,
+    its 20-day average dollar volume.
 
     Args:
         action: the order action (nothing to do unless it ranks by momentum).
@@ -104,7 +106,15 @@ def add_rank_data(action: PlaceOrderAction, tickers: list[str], snapshots: dict[
     Used by: runner._place_orders, backtest.engine._run_automation (before select).
     """
     sel = action.selection
-    if sel.mode != SelectionMode.TOP_N or sel.rankBy not in MOMENTUM or not tickers:
+    if sel.mode != SelectionMode.TOP_N or not tickers:
+        return
+    if sel.rankBy == RankingKey.AVERAGE_DOLLAR_VOLUME_20:
+        volumes = market.volumes(set(tickers), 20)
+        for t in tickers:
+            snapshots[t] = {**snapshots.get(t, {}),
+                            DOLLAR_VOLUME_FIELD: volumes.get(t, {}).get("averageDollarVolume")}
+        return
+    if sel.rankBy not in MOMENTUM:
         return
     months, field_name = MOMENTUM[sel.rankBy]
     recent = market.price_changes(set(tickers), 1, "MONTHS")
@@ -132,6 +142,8 @@ def _rank_value(key: RankingKey, ticker: str, ctx: PlanContext) -> Decimal | Non
         v = snap.get("dailyVolume")
     elif key in MOMENTUM:
         v = snap.get(MOMENTUM[key][1])
+    elif key == RankingKey.AVERAGE_DOLLAR_VOLUME_20:
+        v = snap.get(DOLLAR_VOLUME_FIELD)
     else:
         h = ctx.holdings.get(ticker)
         if not h or not h.quantity or price is None:

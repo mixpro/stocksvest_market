@@ -54,6 +54,14 @@ Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 →
     | 50/50 5B + top 40 | 21.3%/yr, −32% | 20.4%/yr, −33% |
 
   - The sleeve alone beats 5B and equal-weight buy-and-hold: 2017–2026 was a big-company decade, so this is partly era luck. The blend keeps it diversified across two different approaches.
+  - As real automations ("CORE-40" in `scripts/backtest_strategies.py`: TOP_N 40 by AVERAGE_DOLLAR_VOLUME_20, 2.5% each; every 13 weeks sell all at 10:30, rebuy at 11:00; the sell needs maxOrdersPerRun 100), $45k each:
+
+    | | Today's stocks | With delisted |
+    |---|---|---|
+    | 5B | 21.0%/yr, −38% | 18.0%/yr, −40% |
+    | Core 40 | 20.4%/yr, −34% | 19.7%/yr, −34% |
+    | **5B + Core 40 (two budgets)** | **20.7%/yr, −33%** | **18.9%/yr, −32%** |
+
   - To run it live: a ranking key for 20-day dollar volume, a quarterly sell-all + rebuy (liquid names: tiny spreads), and fractional shares (the app sizes in whole shares; Alpaca supports fractions) or a sleeve big enough for whole shares.
 - [ ] **RISK-4: Faster stock exit**: (a) drop the 30-day minimum, (b) 3-month change < 0, (c) 3- or 6-month < 0. Check what sold stocks did in the next 3 months.
 - [ ] **RISK-5: Momentum-crash signal** (only after an event study): top-20 momentum names trailing the universe by > 10% over 3 months → halve new buys for 4 weeks. Kimi: the market-regime exit failed because it's slow and all-or-nothing.

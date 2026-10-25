@@ -283,7 +283,9 @@ class SelectionMode(str, Enum):
 class RankingKey(str, Enum):
     """How TOP_N ranks the matches (descending by default). POSITION_VALUE and UNREALIZED_PNL_PERCENT use the
     budget's shares (unheld symbols rank last). MOMENTUM_12_1 / MOMENTUM_6_1: the price change from 12 (6) months ago
-    to 1 month ago, leaving out the latest month, which tends to reverse (planner.add_rank_data fetches it).
+    to 1 month ago, leaving out the latest month, which tends to reverse. AVERAGE_DOLLAR_VOLUME_20: dollars traded a
+    day over the last 20 trading days, the most-traded (usually largest) companies first. planner.add_rank_data
+    fetches both.
 
     Used by: SymbolSelection.rankBy, planner._rank_value.
     """
@@ -294,6 +296,7 @@ class RankingKey(str, Enum):
     UNREALIZED_PNL_PERCENT = "UNREALIZED_PNL_PERCENT"
     MOMENTUM_12_1 = "MOMENTUM_12_1"  # % change from 12 months ago to 1 month ago (the latest month left out)
     MOMENTUM_6_1 = "MOMENTUM_6_1"  # same from 6 months ago
+    AVERAGE_DOLLAR_VOLUME_20 = "AVERAGE_DOLLAR_VOLUME_20"  # dollars traded a day over the last 20 trading days
 
 
 class SymbolSelection(BaseModel):

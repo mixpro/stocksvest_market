@@ -15,7 +15,7 @@ const SCHEDULE_DEFAULTS = {
 
 const st = { automations: [], filters: [], groups: [], portfolios: [], selectedId: null, draft: null };
 const RANK_KEYS = ["DAILY_CHANGE_PERCENT", "LAST_PRICE", "DAILY_VOLUME", "POSITION_VALUE", "UNREALIZED_PNL_PERCENT",
-  "MOMENTUM_12_1", "MOMENTUM_6_1"];
+  "MOMENTUM_12_1", "MOMENTUM_6_1", "AVERAGE_DOLLAR_VOLUME_20"];
 const ORDER_DEFAULT = {
   type: "PLACE_ORDER", side: "BUY", orderType: "MARKET", timeInForce: "DAY", extendedHours: false,
   selection: { mode: "TOP_N", topN: 3, rankBy: "DAILY_CHANGE_PERCENT", descending: true },

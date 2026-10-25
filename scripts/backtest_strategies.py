@@ -82,6 +82,15 @@ STRATS = {
     "STRAT-5B": strat5(),  # no regime (does the regime help?)
     "STRAT-5C": strat5(regime_months=3),  # faster regime
     "STRAT-5H": strat5(regime_months=6, stock_exit=False),  # hold, sell only when the market turns
+    # RISK-3 Core 40: the 40 most-traded liquid stocks, equal weight; every 13 weeks sell all (10:30) and rebuy (11:00).
+    "CORE-40": dict(
+        buy=gate(10, 50e6), sells=lambda pf: [[]],
+        buy_schedule=[{"type": "WEEKLY", "everyNWeeks": 13, "onDays": ["TUE"], "atTimes": ["11:00:00"],
+                       "startAt": "2017-11-07T00:00:00-05:00"}],
+        sell_schedule=[{"type": "WEEKLY", "everyNWeeks": 13, "onDays": ["TUE"], "atTimes": ["10:30:00"],
+                        "startAt": "2017-11-07T00:00:00-05:00"}],
+        top=40, cash=1000000, pct=2.5, spread=0.3, cooldown=None, rank="AVERAGE_DOLLAR_VOLUME_20", descending=True,
+        sell_guards={"maxOrdersPerRun": 100}),  # sell the whole sleeve (the default is 10 orders a run)
 }
 
 
@@ -110,10 +119,11 @@ def main():
                              "sizings": [{"mode": "CASH_AMOUNT", "value": s["cash"]}]}],
                 "orderGuards": {"maxOrdersPerRun": s["top"], "maxPositionPercent": s["pct"],
                                 "requireLivePrice": True, "maxSpreadPercent": s["spread"],
-                                "rebuyCooldownMinutes": s["cooldown"], "maxDataAgeMinutes": 25}})
+                                **({"rebuyCooldownMinutes": s["cooldown"]} if s["cooldown"] else {}),
+                                "maxDataAgeMinutes": 25}})
             sell = post("/v1/automations", {
                 "name": f"{name} Sell", "runTargets": [{"type": "FILTER", "id": f["id"]} for f in sell_fs],
-                "schedules": AT_11,
+                "schedules": s.get("sell_schedule", AT_11), "orderGuards": s.get("sell_guards", {}),
                 "actions": [{"type": "PLACE_ORDER", "side": "SELL",
                              "sizings": [{"mode": "PERCENT_OF_POSITION", "value": 100}]}]})
             post(f"/v1/portfolios/{pf}/budgets", {"name": name, "amount": 10000,
