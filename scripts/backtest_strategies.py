@@ -110,6 +110,13 @@ STRATS = {
     "5B-CORR70": strat5(guards={"maxCorrelation": 0.7}),
     "5B-CORR50": strat5(guards={"maxCorrelation": 0.5}),
     "5B-VOL60-CORR70": strat5(guards={"targetVolatilityPercent": 60, "maxCorrelation": 0.7}),
+    # FEAT-8 quality, FEAT-6 earnings, BT-4 trailing exit.
+    "5B-Q-ROE10": strat5(extra=[ind("ROE", "MORE_THAN", 10)]),
+    "5B-Q-PROFIT": strat5(extra=[ind("NET_MARGIN", "MORE_THAN", 0)]),
+    "5B-E-SKIP7": strat5(extra=[ind("DAYS_TO_EARNINGS", "MORE_THAN", 7)]),
+    "5B-E-AFTER": strat5(extra=[ind("DAYS_SINCE_EARNINGS", "LESS_THAN", 30)]),  # post-earnings drift
+    "5B-X-TRAIL25": strat5(exits=lambda pf: [[held(pf, 30), pc(6, "MONTHS", "LESS_THAN", 0)],
+                                             [held(pf, 30), ind("FROM_52W_HIGH", "LESS_THAN", -25)]]),
     "5B-VOL60-NOMIN": strat5(guards={"targetVolatilityPercent": 60}, exits=lambda pf: [[pc(6, "MONTHS", "LESS_THAN", 0)]]),
     # RISK-3 Core 40: the 40 most-traded liquid stocks, equal weight; every 13 weeks sell all (10:30) and rebuy (11:00).
     "CORE-40": dict(

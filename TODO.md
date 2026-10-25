@@ -30,7 +30,17 @@ Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 →
     | cap 40% / 30% / 25%, delisted | +339% / +349% / +293% | | −40% / −38% / −39% | | |
 
   - Verdict: no reliable cut in the worst drop on today's stocks, ~110 points less return; with delisted stocks −45% → −38..−40% at little cost. Holdings drift past the cap, so it mostly trims the upside. Not adopted.
-- [ ] **RISK-2: Volatility-scaled sizing**: buy size × clamp(0.40 / 20-day volatility, 0.5, 1.5), capped at 7.5%. Compare with plain 5B at the same average exposure.
+- [x] **RISK-2: Volatility-scaled sizing**: buy size × clamp(0.40 / 20-day volatility, 0.5, 1.5), capped at 7.5%. Compare with plain 5B at the same average exposure.
+  - Built 2026-10-25: guard `targetVolatilityPercent` (scales each buy and its position caps by target ÷ 20-day volatility, 0.5–1.5). Overnight batch, 2017-11..2026-10, $10k:
+
+    | Run | Today's stocks | With delisted |
+    |---|---|---|
+    | 5B | +409%, 19.9%/yr, −38% | +357%, 18.4%/yr, −45% (2021 −23%) |
+    | target 40% | +350%, 18.2%/yr, −38% | +344%, 18.1%/yr, −38% (2021 −1%) |
+    | target 60% | +395%, 19.5%/yr, −37% | +364%, 18.6%/yr, −38% (2021 −3%) |
+    | target 60% + maxCorrelation 0.7 | +335%, 17.8%/yr, −37% | +319%, 17.3%/yr, −37% |
+
+  - Verdict: on today's stocks it changes nothing beyond noise; with delisted stocks (the honest test) target 60% keeps the return and cuts the worst drop −45% → −38% and 2021 from −23% to −3%. Cheapest drawdown cut found so far. Recommended for 5B (your call; not applied live).
 - [x] **RISK-3: Blend with buy-and-hold**: live 2026-10-25 as Core 40 + 5B, $45k each: 25 / 50 / 75% 5B, rest in liquid buy-and-hold, rebalanced quarterly. The baseline every risk rule must beat.
   - Computed from the daily curves (no costs on the buy-and-hold sleeve):
 
@@ -63,9 +73,15 @@ Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 →
     | **5B + Core 40 (two budgets)** | **20.7%/yr, −33%** | **18.9%/yr, −32%** |
 
   - To run it live: a ranking key for 20-day dollar volume, a quarterly sell-all + rebuy (liquid names: tiny spreads), and fractional shares (the app sizes in whole shares; Alpaca supports fractions) or a sleeve big enough for whole shares.
-- [ ] **RISK-4: Faster stock exit**: (a) drop the 30-day minimum, (b) 3-month change < 0, (c) 3- or 6-month < 0. Check what sold stocks did in the next 3 months.
-- [ ] **RISK-5: Momentum-crash signal** (only after an event study): top-20 momentum names trailing the universe by > 10% over 3 months → halve new buys for 4 weeks. Kimi: the market-regime exit failed because it's slow and all-or-nothing.
-- [ ] **BT-7: Audits Kimi asked for**: list the 27 delisted exits (buyout vs failure; stress failures at −100%); before 2024 the fill is the decision day's VWAP, which includes trades before the decision (use the next day's to be strict).
+- [x] **RISK-4: Faster stock exit**: (a) drop the 30-day minimum, (b) 3-month change < 0, (c) 3- or 6-month < 0. Check what sold stocks did in the next 3 months.
+  - Results (today's / with delisted): (a) no minimum +386% −40% / +356% −40%; (b) 3-month +353% −42%; (c) 3- or 6-month +424% −41% / +296% −42%; below 200-day average +340% −44%; also sell when 25% below the 52-week high: see BT-4.
+  - Verdict: no exit beats the current one; faster exits trade more and buy back late. Keep "held > 30 days and 6-month < 0".
+- [-] **RISK-5: Momentum-crash signal** (only after an event study): top-20 momentum names trailing the universe by > 10% over 3 months → halve new buys for 4 weeks. Kimi: the market-regime exit failed because it's slow and all-or-nothing.
+  - Event study 2018-11..2026-10, 375 Mondays: the top 20 by 12-1 momentum beat all liquid stocks by +1.4 pts over the next 4 weeks and +3.8 over 13 on average. Kimi's signal fired once (2021-05; next 4 weeks +5.2); the Daniel & Moskowitz "bear rebound" signal 3 weeks (2023-11/12; 4 weeks −1.8, 13 weeks +6.8); market 6-month < 0 on 76 weeks: momentum did better after them (+2.3 / +6.1).
+  - Dropped: no crash in this period to protect against, and nothing to fit a rule on. Revisit only if a real momentum crash (like 2009) shows up.
+- [x] **BT-7: Audits Kimi asked for**: list the 27 delisted exits (buyout vs failure; stress failures at −100%); before 2024 the fill is the decision day's VWAP, which includes trades before the decision (use the next day's to be strict).
+  - Delisted exits: all 27 were buyouts/mergers (Immunomedics +176%, MyoKardia +142%, Medicines Co +53%, Inphi, Red Hat, Cimarex, Whiting…), one meme merger (Support.com −68%). No failures: the liquidity + uptrend gate never held a collapsing stock. Stress cost: 0.
+  - Strict fills (new fill mode `NEXT_VWAP_STRICT`: before 2024, the next day's VWAP): 5B +409% → +322% (17.4%/yr, below buy-and-hold's 18.1%) on today's stocks; +357% → +333% (17.7%/yr vs 15.5%) with delisted. Part of the edge on today's stocks came from same-day fills; with delisted stocks it holds (+2.2 pts/yr). The truth is between the two modes.
 - [ ] **BT-8: How fragile is the edge**: 100 runs with random entry weekdays; block bootstrap of monthly 5B-minus-benchmark returns; walk-forward (choose on 2017–2020, test 2021–2023, etc.). Report drawdown and volatility next to return for 5B and the benchmark.
 
 ## BT: Backtester accuracy
@@ -86,7 +102,12 @@ Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 →
   - Add: buy the universe (or SPY-like proxy) once on day 1, hold to the end.
   - Done 2026-10-25: `summary.buyHold` = whole universe and liquid (> $50M/day) equal-weight buy-and-hold.
   - 2025-10-24..2026-10-23: all +15.6%, > $50M/day +18.7%, > $100M/day +19.7%.
-- [ ] **BT-4: Test entries and exits separately**
+- [x] **BT-4: Test entries and exits separately**
+  - 5B, 2017-11..2026-10 (375 buys, 357 sells), forward returns vs the liquid universe on the same day:
+    - Entries: +1 day +0.2 pts, +5 days +0.3, +20 days −0.6, +60 days +3.0 average but only +0.4 median; beat 47–52% of the time. The edge is a few big winners (right skew), not a high hit rate.
+    - Exits: sold stocks did +1.9 / +2.2 pts better than the universe over the next 20 / 60 days on average (median ~0): the exit costs a little on average, mostly by selling some recoveries.
+    - MAE/MFE: median worst point −11%, best +21%, result −1%. Median give-back from the best point 25 pts; 66 of 181 trades that were +20% at some point closed below +5%.
+  - A trailing exit (also sell when 25% below the 52-week high) was tested in the next batch: see 5B-X-TRAIL25 below.
   - Entries: average forward 1/5/20/60-day return of what each buy rule picks, vs. the universe.
   - Exits: same entries, different sell rules. Also what a stock did 1/5/20 days after we sold it.
   - MAE/MFE per trade (worst and best point while held).
@@ -96,7 +117,7 @@ Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 →
   - Walk-forward: tune on one period, test on the next.
   - Keep the last 12 months untouched until a strategy is final.
   - Block bootstrap of daily returns for a confidence range.
-- [ ] **BT-6: Minute-resolution runs**
+- [-] **BT-6: Minute-resolution runs**: dropped 2026-10-25. No live strategy uses minute rules any more (the old setup is retired); 5B and Core 40 trade weekly/quarterly at 11:00, which hourly steps model. Revisit with DATA-2 if a minute rule comes back
   - Minute rules (F.S 3's 3-minute step) can't be tested at hourly steps.
   - Limit: only ~7 days of minute bars are kept. Needs DATA-2 first.
 
@@ -107,7 +128,7 @@ Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 →
   - Alpaca's free plan serves daily bars back to 2016. Change the setting, re-sync, check DB size.
   - Caveat: survivorship bias. The universe is today's halal list, so stocks that died or delisted are missing.
   - Done 2026-10-25: `DAILY_HISTORY_DAYS=3650` in tinkergw `.env`, one-time full daily re-download (1.74M bars from 2016-10-28; 521 symbols in 2016 → 881 today). DB 671 → 784 MB. Hourly stays 2 years; backtests before 2024 fill at the day's VWAP.
-- [ ] **DATA-2: Keep more minute bars** (only if BT-6 is wanted)
+- [-] **DATA-2: Keep more minute bars** (only if BT-6 is wanted): dropped with BT-6 (2 years of minute bars ≈ 250M rows, 15–20 GB, for no current use)
   - Check DB size impact first.
 - [x] **DATA-4: Delisted stocks for the backtests (survivorship bias)**
   - The biggest doubt on every result: the universe is today's list, so stocks that collapsed or delisted are missing.
@@ -228,13 +249,13 @@ Shared base: price > $10, 20-day dollar volume > $50M, max spread 0.30%, buy at 
 - [x] **FEAT-1: Momentum ranking key (12-1 and 6-1)**: `rankBy` `MOMENTUM_12_1` / `MOMENTUM_6_1` (2026-10-25)
   - Return over the last 12 (or 6) months, skipping the latest month. Strongest known selection signal.
   - Today `rankBy` only has daily change, price, volume.
-- [ ] **FEAT-2: Volatility (ATR)**
+- [x] **FEAT-2: Volatility (ATR)**: market `GET /v1/indicators` (20-day volatility, 14-day ATR %), filter step `INDICATOR`, ranking key `VOLATILITY_20`, guard `targetVolatilityPercent` (2026-10-25). A volatility cap (< 60%) cut 5B to +259% / +198% with delisted: not useful as a filter; as sizing see RISK-2
   - Filter step on ATR %, position sizing by volatility, ATR-based stops.
-- [ ] **FEAT-3: Portfolio limits**
+- [x] **FEAT-3: Portfolio limits**: guard `maxOpenPositions` (MAX_POSITIONS), with `maxSectorPercent` (RISK-1) and `maxOrdersPerRun` already there (2026-10-25). 5B with max 20 positions: +396% / +360%: no change (it rarely holds more than ~20). A per-day turnover cap: not built (schedules + maxOrdersPerRun cover it)
   - Max open positions, max per sector, max buys/sells per day (turnover cap).
-- [ ] **FEAT-4: Trend position**
+- [x] **FEAT-4: Trend position**: `INDICATOR` `PRICE_VS_SMA_50`, `PRICE_VS_SMA_200`, `FROM_52W_HIGH`; ranking key `FROM_52W_HIGH` (2026-10-25). 5B + above 200-day average: +384% / +376% (no change); + within 15% of the high: +211%; ranked by nearness to the 52-week high (George & Hwang) instead of 12-1: +223% (13.9%/yr) but max drop only −27% (−20% with delisted); 50/50 with 5B: 17.2%/yr, −33%
   - 200-day moving average (price above/below), distance from 52-week high.
-- [ ] **FEAT-5: Sector-relative strength**
+- [x] **FEAT-5: Sector-relative strength**: filter step `SECTOR_RELATIVE_CHANGE` (stock's change minus its sector's median) (2026-10-25). 5B + 6-month sector-relative > 0: +423% (20.2%/yr, −39%): within noise. With-delisted test not valid (delisted stocks have no sector, so the step drops them)
   - Stock's change vs. its sector's average over the same period.
 - [ ] **FEAT-6: Earnings calendar**
   - Skip buys N days before earnings; needs a data source.
@@ -242,7 +263,7 @@ Shared base: price > $10, 20-day dollar volume > $50M, max spread 0.30%, buy at 
   - Only buy when the broad market is above its 200-day average (or similar).
 - [ ] **FEAT-8: Quality fundamentals**
   - Profitability, debt. Needs a data source.
-- [ ] **FEAT-9: Correlation clusters** (the graph-theory idea)
+- [x] **FEAT-9: Correlation clusters** (the graph-theory idea): guard `maxCorrelation` + market `GET /v1/returns` (2026-10-25): a TOP_N buy skips a stock whose 120-day daily returns correlate above X with a holding or an earlier pick (tooCorrelated). 5B with 0.7: +322% −39% / +360% −38% with delisted; with 0.5: +191% / +133%. Cuts the delisted drawdown like volatility sizing, but costs return on today's stocks
   - Group stocks that move together; hold at most N per cluster.
   - Kimi ranked this low for returns, useful for diversification.
 
@@ -252,12 +273,12 @@ Shared base: price > $10, 20-day dollar volume > $50M, max spread 0.30%, buy at 
   - Also: did 5B Buy place ~20 orders at 11:00 ET, and do the fill prices sit within the modelled spread?
   - And: did the 19 OPG sells of the Testing budget fill at the open?
   - `GET /v1/live` → `lastBarAt` should update every few seconds for held symbols.
-- [ ] **OPS-2: False cash-mismatch alerts**
+- [x] **OPS-2: False cash-mismatch alerts** (fixed 2026-10-25: FILL_LAG in orders/service.sync_account)
   - Sync compares app vs. broker while fills are only partly imported.
   - Fix: skip the cash/position comparison while the broker reports fills not yet imported.
-- [ ] **OPS-3: `claude-lite` defaults to DeepSeek**
+- [x] **OPS-3: `claude-lite` defaults to DeepSeek**: `ANTHROPIC_MODEL` now defaults to Kimi in `~/.local/bin/claude-lite` (`--model haiku` still gives DeepSeek) (2026-10-25)
   - Add `export ANTHROPIC_MODEL="my-kimi-k3.1-pro-highspeed"` to `~/.local/bin/claude-lite`, or keep using `--model sonnet`.
-- [ ] **OPS-4: Ponytail statusline badge** (optional)
+- [x] **OPS-4: Ponytail statusline badge** (optional): `statusLine` added to `~/.claude/settings.json` (2026-10-25)
 
 ## IDEA: Parked
 
