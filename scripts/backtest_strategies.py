@@ -46,13 +46,19 @@ def market(months, cond, value=0):
 
 
 # STRAT-5: liquid stocks ranked by 12-1 momentum, each buy 5% of equity (cash capped by maxPositionPercent), weekly.
-def strat5(regime_months=None, stock_exit=True):
+def strat5(regime_months=None, stock_exit=True, extra=(), exits=None, guards=None, rank="MOMENTUM_12_1"):
+    """extra: more buy filter steps; exits: pf -> sell filters replacing the stock exit; guards: more buy guards."""
     regime = [market(regime_months, "MORE_THAN")] if regime_months else []
     sells = ([[market(regime_months, "LESS_THAN")]] if regime_months else [])
-    return dict(buy=gate(10, 50e6) + regime + [pc(6, "MONTHS", "MORE_THAN", 0)],
-                sells=lambda pf: sells + ([[held(pf, 30), pc(6, "MONTHS", "LESS_THAN", 0)]] if stock_exit else []),
+    stock = exits or (lambda pf: [[held(pf, 30), pc(6, "MONTHS", "LESS_THAN", 0)]] if stock_exit else [])
+    return dict(buy=gate(10, 50e6) + regime + [pc(6, "MONTHS", "MORE_THAN", 0)] + list(extra),
+                sells=lambda pf: sells + stock(pf),
                 buy_schedule=MONDAY_11, top=20, cash=100000, pct=5, spread=0.3, cooldown=10080,
-                rank="MOMENTUM_12_1", descending=True)
+                rank=rank, descending=True, guards=guards or {})
+
+
+def ind(indicator, cond, value):
+    return {"type": "INDICATOR", "indicator": indicator, "condition": cond, "value": value}
 
 
 AT_11 = [{"type": "MARKET", "anchor": "REGULAR_OPEN", "offsetMinutes": 90}]
@@ -82,6 +88,24 @@ STRATS = {
     "STRAT-5B": strat5(),  # no regime (does the regime help?)
     "STRAT-5C": strat5(regime_months=3),  # faster regime
     "STRAT-5H": strat5(regime_months=6, stock_exit=False),  # hold, sell only when the market turns
+    # 2026-10-25 overnight batch. RISK-2: volatility-scaled sizing.
+    "5B-VOL40": strat5(guards={"targetVolatilityPercent": 40}),
+    "5B-VOL60": strat5(guards={"targetVolatilityPercent": 60}),
+    # RISK-4: faster stock exits.
+    "5B-X-NOMIN": strat5(exits=lambda pf: [[pc(6, "MONTHS", "LESS_THAN", 0)]]),
+    "5B-X-3M": strat5(exits=lambda pf: [[held(pf, 30), pc(3, "MONTHS", "LESS_THAN", 0)]]),
+    "5B-X-3OR6": strat5(exits=lambda pf: [[held(pf, 30), pc(3, "MONTHS", "LESS_THAN", 0)],
+                                          [held(pf, 30), pc(6, "MONTHS", "LESS_THAN", 0)]]),
+    "5B-X-SMA200": strat5(exits=lambda pf: [[held(pf, 30), ind("PRICE_VS_SMA_200", "LESS_THAN", 0)]]),
+    # FEAT-4: trend entries; 52-week-high momentum (George & Hwang 2004).
+    "5B-T-SMA200": strat5(extra=[ind("PRICE_VS_SMA_200", "MORE_THAN", 0)]),
+    "5B-T-HIGH15": strat5(extra=[ind("FROM_52W_HIGH", "MORE_THAN", -15)]),
+    "5B-R-HIGH": strat5(rank="FROM_52W_HIGH"),
+    # FEAT-5: sector-relative strength; FEAT-2: volatility cap; FEAT-3: position count.
+    "5B-SREL6": strat5(extra=[{"type": "SECTOR_RELATIVE_CHANGE", "periodAmount": 6, "periodUnit": "MONTHS",
+                               "condition": "MORE_THAN", "value": 0}]),
+    "5B-LOWVOL60": strat5(extra=[ind("VOLATILITY_20", "LESS_THAN", 60)]),
+    "5B-MAXPOS20": strat5(guards={"maxOpenPositions": 20}),
     # RISK-3 Core 40: the 40 most-traded liquid stocks, equal weight; every 13 weeks sell all (10:30) and rebuy (11:00).
     "CORE-40": dict(
         buy=gate(10, 50e6), sells=lambda pf: [[]],
@@ -97,7 +121,7 @@ STRATS = {
 def main():
     out = {}
     with TestClient(create_app(Settings(), market_factory=lambda s: FakeMarket(),
-                               broker_factory=lambda a: FakeBroker(cash="100000"))) as c:
+                               broker_factory=lambda a: FakeBroker(cash="10000000"))) as c:
         def post(path, body):
             r = c.post(path, headers=KEY, json=body)
             assert r.status_code == 201, (path, r.text)
@@ -120,7 +144,7 @@ def main():
                 "orderGuards": {"maxOrdersPerRun": s["top"], "maxPositionPercent": s["pct"],
                                 "requireLivePrice": True, "maxSpreadPercent": s["spread"],
                                 **({"rebuyCooldownMinutes": s["cooldown"]} if s["cooldown"] else {}),
-                                "maxDataAgeMinutes": 25}})
+                                "maxDataAgeMinutes": 25, **s.get("guards", {})}})
             sell = post("/v1/automations", {
                 "name": f"{name} Sell", "runTargets": [{"type": "FILTER", "id": f["id"]} for f in sell_fs],
                 "schedules": s.get("sell_schedule", AT_11), "orderGuards": s.get("sell_guards", {}),
