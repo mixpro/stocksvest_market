@@ -43,6 +43,18 @@ Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 →
 
   - Keeps almost all of 5B's return with buy-and-hold's drawdown: far better than the sector cap.
   - Open: how to hold the buy-and-hold sleeve live (no fractional shares; ~250 liquid stocks). Options: a halal ETF (SPUS/HLAL, needs ETFs in the universe), or the 30–50 largest liquid stocks equal-weight (test it).
+  - Tested 2026-10-25: sleeve = the N most-traded stocks (20-day dollar volume, price > $10), equal weight, re-picked each quarter, spread costs at each rebalance:
+
+    | | Today's stocks | With delisted |
+    |---|---|---|
+    | 5B alone | 19.9%/yr, −38% | 18.4%/yr, −45% |
+    | top 30 sleeve | 21.4%/yr, −37% | 20.8%/yr, −38% |
+    | **top 40 sleeve** | **21.7%/yr, −33%** | **21.0%/yr, −33%** |
+    | top 50 sleeve | 21.2%/yr, −32% | 20.4%/yr, −31% |
+    | 50/50 5B + top 40 | 21.3%/yr, −32% | 20.4%/yr, −33% |
+
+  - The sleeve alone beats 5B and equal-weight buy-and-hold: 2017–2026 was a big-company decade, so this is partly era luck. The blend keeps it diversified across two different approaches.
+  - To run it live: a ranking key for 20-day dollar volume, a quarterly sell-all + rebuy (liquid names: tiny spreads), and fractional shares (the app sizes in whole shares; Alpaca supports fractions) or a sleeve big enough for whole shares.
 - [ ] **RISK-4: Faster stock exit**: (a) drop the 30-day minimum, (b) 3-month change < 0, (c) 3- or 6-month < 0. Check what sold stocks did in the next 3 months.
 - [ ] **RISK-5: Momentum-crash signal** (only after an event study): top-20 momentum names trailing the universe by > 10% over 3 months → halve new buys for 4 weeks. Kimi: the market-regime exit failed because it's slow and all-or-nothing.
 - [ ] **BT-7: Audits Kimi asked for**: list the 27 delisted exits (buyout vs failure; stress failures at −100%); before 2024 the fill is the decision day's VWAP, which includes trades before the decision (use the next day's to be strict).
