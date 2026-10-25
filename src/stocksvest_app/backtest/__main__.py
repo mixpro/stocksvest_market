@@ -27,7 +27,8 @@ def main(argv=None) -> None:
     p.add_argument("--budget", type=float, default=10_000)
     p.add_argument("--overrides", type=json.loads, default=None, help="JSON merged into the definitions")
     p.add_argument("--fill", choices=FILL_MODES, default="NEXT_VWAP",
-                   help="NEXT_VWAP: next hour's VWAP at ask/bid (default); SAME_CLOSE: the signal's own price")
+                   help="NEXT_VWAP: next hour's VWAP at ask/bid (default); NEXT_VWAP_STRICT: same, but the next day's VWAP "
+                        "where only daily bars exist; SAME_CLOSE: the signal's own price")
     p.add_argument("--steps", choices=STEP_MODES, default="SCHEDULE",
                    help="SCHEDULE: each automation at its own fire times (default); HOURLY: both every hour 10-15")
     p.add_argument("--spread-factor", type=float, default=1.0, help="cost stress: modelled spreads x this")

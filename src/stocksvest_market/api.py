@@ -15,7 +15,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
-from . import aggregate, db, halal, indicators as ind, sectors, sync
+from . import aggregate, db, fundamentals, halal, indicators as ind, sectors, sync
 from .alpaca import AlpacaClient, AlpacaQuotes
 from .config import Settings
 from .scheduler import Scheduler
@@ -826,18 +826,22 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
     @app.get("/v1/indicators", tags=["prices"], dependencies=read)
     def indicators(conn: Conn, symbols: str | None = None):
         """Technical indicators from completed daily bars (today's bar counts once its extended session has ended):
-        20-day volatility, 14-day ATR %, 50/200-day averages, 52-week high and the close's distance from each.
-        Values are null without enough history.
+        20-day volatility, 14-day ATR %, 50/200-day averages, 52-week high and the close's distance from each; and
+        SEC fundamentals as public today (ROE, net margin, debt/assets, days since / to earnings). Values are null
+        without enough data.
         \f
         Args:
             conn: market DB connection (one per request, injected).
             symbols: comma-separated tickers/ids, or None for all.
         """
         rows, series = daily_series(conn, symbols, ind.DAYS_NEEDED)
+        facts, earnings = fundamentals.load(conn)
+        today = datetime.now(sync.ET).date().isoformat()
         out = {}
         for r in rows:
             bars = series.get(r["id"], [])
-            out[r["ticker"]] = ind.compute([b["c"] for b in bars], [b["h"] for b in bars], [b["l"] for b in bars])
+            out[r["ticker"]] = {**ind.compute([b["c"] for b in bars], [b["h"] for b in bars], [b["l"] for b in bars]),
+                                **fundamentals.as_of(facts.get(r["cik"]), earnings.get(r["cik"]), today)}
         return {"indicators": out}
 
     @app.get("/v1/returns", tags=["prices"], dependencies=read)

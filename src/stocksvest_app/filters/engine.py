@@ -41,7 +41,9 @@ ET = ZoneInfo("America/New_York")  # Used by: Evaluator._last_close (today's dat
 # INDICATOR -> field of market GET /v1/indicators. Used by: Evaluator.apply
 INDICATOR_FIELDS = {Indicator.VOLATILITY_20: "volatility20", Indicator.ATR_14_PERCENT: "atr14Percent",
                     Indicator.PRICE_VS_SMA_50: "priceVsSma50Percent", Indicator.PRICE_VS_SMA_200: "priceVsSma200Percent",
-                    Indicator.FROM_52W_HIGH: "fromHigh52wPercent"}
+                    Indicator.FROM_52W_HIGH: "fromHigh52wPercent", Indicator.ROE: "roe",
+                    Indicator.NET_MARGIN: "netMargin", Indicator.DEBT_TO_ASSETS: "debtToAssets",
+                    Indicator.DAYS_SINCE_EARNINGS: "daysSinceEarnings", Indicator.DAYS_TO_EARNINGS: "daysToEarnings"}
 UNIT_SECONDS = {"MINUTES": 60, "HOURS": 3600, "DAYS": 86400, "WEEKS": 7 * 86400, "MONTHS": 30.4375 * 86400,
                 "YEARS": 365.25 * 86400}
 log = logging.getLogger(__name__)

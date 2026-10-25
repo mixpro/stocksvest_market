@@ -6,7 +6,8 @@ that hour: bars are hourly, so the run sees the prices as of the hour and fills 
 comparison). At the same time the Sell automation runs first, then the Buy automation, exactly as the live runner
 does them: evaluate the run targets, planner.select, put live quotes (modelled spreads) into the plan, planner.size,
 then fill each PLACE intent. Fill modes: NEXT_VWAP (default) fills at the next hour's VWAP at the modelled ask/bid,
-so a signal never trades at the very print that triggered it; SAME_CLOSE fills at once at the planner's estimated
+so a signal never trades at the very print that triggered it (NEXT_VWAP_STRICT: before the hourly history, the next
+day's VWAP instead of the same day's); SAME_CLOSE fills at once at the planner's estimated
 price (the old, optimistic way, kept for comparison). Shares are kept as position lots in a scratch copy of the app
 database, so filters that read the portfolio (INVESTMENT_PORTFOLIO inputs, POSITION, UNREALIZED_PNL) see the
 simulated holdings.
@@ -42,7 +43,7 @@ from ..portfolios import store as portfolios_store
 from .history import ET, HistoricalMarket
 
 STEP_HOURS = range(10, 16)  # 10:00 .. 15:00 New York. Used by: run
-FILL_MODES = ("NEXT_VWAP", "SAME_CLOSE")  # see the module docstring. Used by: run, __main__
+FILL_MODES = ("NEXT_VWAP", "NEXT_VWAP_STRICT", "SAME_CLOSE")  # see the module docstring. Used by: run, __main__
 STEP_MODES = ("SCHEDULE", "HOURLY")  # see the module docstring. Used by: run, __main__
 SCHEDULES = TypeAdapter(list[Schedule])  # Used by: _fire_times
 DELISTED_AFTER_DAYS = 5  # a held stock without a daily bar for this many trading days is closed. Used by: run
@@ -144,8 +145,8 @@ def _run_automation(conn, hist, market, book, automation, portfolio_id, budget_i
             if intent["decision"] != "PLACE":
                 continue
             price = Decimal(str(intent["estimatedPrice"]))
-            if fill == "NEXT_VWAP":
-                nxt = hist.next_fill(intent["ticker"], intent["side"])
+            if fill in ("NEXT_VWAP", "NEXT_VWAP_STRICT"):
+                nxt = hist.next_fill(intent["ticker"], intent["side"], strict=fill == "NEXT_VWAP_STRICT")
                 if nxt is None:
                     continue  # no trade left today: the order would expire unfilled
                 price = Decimal(str(nxt))

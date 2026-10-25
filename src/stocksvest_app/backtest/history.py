@@ -21,6 +21,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from stocksvest_market import fundamentals
 from stocksvest_market import indicators as ind
 from stocksvest_market.api import _market_time_back, _trading_days_back
 
@@ -86,6 +87,7 @@ class HistoricalMarket:
         lo = int(datetime.combine(start - timedelta(days=hourly_lookback_days), time(), ET).timestamp())
         hi = int(datetime.combine(end + timedelta(days=1), time(), ET).timestamp())
         self.hourly = self._load(conn, "bars_1hour", (lo, hi))
+        self.facts, self.earnings = fundamentals.load(conn)
         conn.close()
         self.by_ticker = {s["ticker"]: s for s in self.symbols_by_id.values()}
         self.now = datetime.combine(start, time(10), ET)
@@ -293,7 +295,9 @@ class HistoricalMarket:
                 s = self.daily.get(t)
                 lo = max(0, i + 1 - ind.DAYS_NEEDED) if i is not None else 0
                 hi = i + 1 if i is not None else 0
-                self._ind[key] = ind.compute(s.c[lo:hi], s.h[lo:hi], s.l[lo:hi]) if s else ind.compute([], [], [])
+                cik = self.by_ticker.get(t, {}).get("cik")
+                self._ind[key] = {**(ind.compute(s.c[lo:hi], s.h[lo:hi], s.l[lo:hi]) if s else ind.compute([], [], [])),
+                                  **fundamentals.as_of(self.facts.get(cik), self.earnings.get(cik), today)}
             out[t] = self._ind[key]
         return {"indicators": out}
 
@@ -326,10 +330,11 @@ class HistoricalMarket:
                       "last": last[1], "price": last[1], "time": self.now.isoformat(), "ageSeconds": 0}
         return {"quotes": out, "liveQuotes": {"enabled": True, "connected": True}}
 
-    def next_fill(self, ticker: str, side: str) -> float | None:
+    def next_fill(self, ticker: str, side: str, strict: bool = False) -> float | None:
         """Price a market order sent at `now` gets: the VWAP of the next hourly bar that started at or after `now`
         on the same day, at the modelled ask (BUY) or bid (SELL). None when the stock didn't trade again that day.
-        Before the hourly history starts (only daily bars kept), the day's VWAP instead.
+        Before the hourly history starts (only daily bars kept), the day's VWAP instead, which includes trades before
+        `now`; `strict` takes the next trading day's VWAP there, so no fill can use a price from before the decision.
 
         Used by: engine._fill (fill mode NEXT_VWAP).
         """
@@ -339,9 +344,15 @@ class HistoricalMarket:
         if not s or ts < s.ts[0]:
             d = self.daily.get(ticker)
             midnight = int(datetime.combine(today, time(), ET).timestamp())
-            j = bisect_right(d.ts, midnight) - 1 if d else -1
-            if j < 0 or datetime.fromtimestamp(d.ts[j], ET).date() != today:
-                return None
+            if strict:
+                tomorrow = int(datetime.combine(today + timedelta(days=1), time(), ET).timestamp())
+                j = bisect_right(d.ts, tomorrow - 1) if d else 0
+                if not d or j >= len(d.ts):
+                    return None
+            else:
+                j = bisect_right(d.ts, midnight) - 1 if d else -1
+                if j < 0 or datetime.fromtimestamp(d.ts[j], ET).date() != today:
+                    return None
             price = d.vw[j]
         else:
             i = bisect_right(s.ts, ts - 1)

@@ -9,7 +9,7 @@ import time as monotime
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from . import db, halal, sectors, symbols
+from . import db, fundamentals, halal, sectors, symbols
 from .alpaca import AlpacaClient
 from .config import Settings
 
@@ -420,7 +420,8 @@ def run_incremental(conn, client, settings, now=None, budget_seconds: float | No
 
 def run_nightly(conn, client, settings, now=None) -> dict:
     """Refresh calendar and symbols, fill gaps (including new symbols), re-sync re-adjusted symbols, prune.
-    Sectors are looked up too when SEC_USER_AGENT is set (failures there never stop the price sync).
+    Sectors, fundamentals and earnings dates are looked up too when SEC_USER_AGENT is set (failures there never stop
+    the price sync).
 
     Args:
         conn: market DB connection.
@@ -443,6 +444,11 @@ def run_nightly(conn, client, settings, now=None) -> dict:
         except Exception as e:  # sectors are optional; never block the price sync
             log.warning("sector sync failed: %s", e)
             result["sectors"] = {"error": str(e)}
+        try:
+            result["fundamentals"] = fundamentals.sync(conn, sec, now.astimezone(ET).date())
+        except Exception as e:  # optional too
+            log.warning("fundamentals sync failed: %s", e)
+            result["fundamentals"] = {"error": str(e)}
     result["bars"] = sync_all_timeframes(conn, client, settings, now)
     readjusted = find_readjusted(conn, client, now)
     if readjusted:

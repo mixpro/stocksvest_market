@@ -153,6 +153,9 @@ def test_next_vwap_fills_after_the_signal(market_path, app_db):
     m.hourly = {}  # only daily bars (older years): the day's VWAP
     m.now = at("2026-10-06", 11)
     assert m.next_fill("UP", "SELL") == pytest.approx(hourly_close("2026-10-06", 19, 1.01) * (1 - half), rel=1e-6)
+    strict = m.next_fill("UP", "SELL", strict=True)  # the next day's VWAP: never a price from before the decision
+    assert strict == pytest.approx(m.daily["UP"].vw[m.daily["UP"].ts.index(
+        int(datetime.combine(date(2026, 10, 7), time(), ET).timestamp()))] * (1 - half), rel=1e-6)
     nxt = engine.run(path, market_path, ids["Buy"], ids["Sell"], date(2026, 10, 5), date(2026, 10, 5))
     same = engine.run(path, market_path, ids["Buy"], ids["Sell"], date(2026, 10, 5), date(2026, 10, 5),
                       fill="SAME_CLOSE")

@@ -233,7 +233,8 @@ class SectorRelativeChangeAction(PriceChangeAction):
 
 
 class Indicator(str, Enum):
-    """Which technical indicator INDICATOR compares (market GET /v1/indicators, from completed daily bars).
+    """Which indicator INDICATOR compares (market GET /v1/indicators: technical ones from completed daily bars,
+    fundamentals and earnings dates from SEC filings as public on the day).
 
     Used by: IndicatorAction.indicator, engine (INDICATOR_FIELDS), routes.filter_actions.
     """
@@ -243,6 +244,11 @@ class Indicator(str, Enum):
     PRICE_VS_SMA_50 = "PRICE_VS_SMA_50"  # close vs 50-day average, % (> 0 = above it)
     PRICE_VS_SMA_200 = "PRICE_VS_SMA_200"  # close vs 200-day average, %
     FROM_52W_HIGH = "FROM_52W_HIGH"  # close vs 52-week high, % (0 at a new high, -20 = 20% below)
+    ROE = "ROE"  # last annual net income / equity, % (SEC filings, counted 90 days after the year end)
+    NET_MARGIN = "NET_MARGIN"  # last annual net income / revenue, %
+    DEBT_TO_ASSETS = "DEBT_TO_ASSETS"  # (assets - equity) / assets, %, latest quarter end + 60 days
+    DAYS_SINCE_EARNINGS = "DAYS_SINCE_EARNINGS"  # days since the last earnings release (8-K item 2.02)
+    DAYS_TO_EARNINGS = "DAYS_TO_EARNINGS"  # days until the expected next one (last + 91 days; < 0 = overdue)
 
 
 class IndicatorAction(Comparison):

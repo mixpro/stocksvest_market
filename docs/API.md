@@ -266,6 +266,12 @@ From completed daily bars (today's counts once its extended session has ended); 
 | `atr14Percent` | 14-day average true range as % of the close (15 bars) |
 | `sma50`, `sma200` / `priceVsSma50Percent`, `priceVsSma200Percent` | Averages of the closes and the close's distance from them, % |
 | `high52w` / `fromHigh52wPercent` | Highest high of the last 252 bars and the close vs it, % (0 = at the high) |
+| `roe` | Last annual net income ÷ latest equity, % (SEC XBRL frames; a year counts 90 days after it ends, a quarter end after 60) |
+| `netMargin` | Last annual net income ÷ revenue, % |
+| `debtToAssets` | (Assets − equity) ÷ assets, % |
+| `daysSinceEarnings` / `daysToEarnings` | Days since the last earnings release (8-K item 2.02) / until the expected next one (last + 91 days; negative when overdue) |
+
+Fundamentals and earnings dates are synced nightly from SEC EDGAR when `SEC_USER_AGENT` is set.
 
 ### Daily returns
 
