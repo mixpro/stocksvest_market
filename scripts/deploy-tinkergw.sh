@@ -25,7 +25,11 @@ if [ "$BUILD" = 1 ]; then
     .venv/bin/python -m pytest -q
   fi
   echo "== building stocksvest:$TAG for linux/amd64"
-  docker buildx build --platform linux/amd64 -t "stocksvest:$TAG" --load .
+  if [ "$(uname -m)" = x86_64 ]; then  # already amd64 (the Linux machine): no buildx needed
+    docker build -t "stocksvest:$TAG" .
+  else
+    docker buildx build --platform linux/amd64 -t "stocksvest:$TAG" --load .
+  fi
   echo "== loading the image on $HOST"
   docker save "stocksvest:$TAG" | gzip | ssh "$HOST" docker load
 else
