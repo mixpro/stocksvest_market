@@ -248,6 +248,24 @@ there is not enough history or trading calendar.
 ```
 
 A trading day without any trade counts as 0, so `averageVolume` is the total over `days`, divided by `days`.
+
+### Indicators
+
+`GET /v1/indicators?symbols=AAPL` (all symbols if omitted)
+
+From completed daily bars (today's counts once its extended session has ended); `null` without enough history.
+
+```json
+{"indicators": {"AAPL": {"close": 231.5, "volatility20": 24.1, "atr14Percent": 1.9, "sma50": 225.0, "sma200": 210.2,
+  "priceVsSma50Percent": 2.9, "priceVsSma200Percent": 10.1, "high52w": 240.0, "fromHigh52wPercent": -3.5}}}
+```
+
+| Field | Meaning |
+|---|---|
+| `volatility20` | Annualised standard deviation of the last 20 daily log returns, % (21 bars needed) |
+| `atr14Percent` | 14-day average true range as % of the close (15 bars) |
+| `sma50`, `sma200` / `priceVsSma50Percent`, `priceVsSma200Percent` | Averages of the closes and the close's distance from them, % |
+| `high52w` / `fromHigh52wPercent` | Highest high of the last 252 bars and the close vs it, % (0 = at the high) |
 `averageDollarVolume` uses each day's volume-weighted price (or its close). Values are `null` when the trading
 calendar is shorter than `days`.
 

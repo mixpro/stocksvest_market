@@ -15,7 +15,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
-from . import aggregate, db, halal, sectors, sync
+from . import aggregate, db, halal, indicators as ind, sectors, sync
 from .alpaca import AlpacaClient, AlpacaQuotes
 from .config import Settings
 from .scheduler import Scheduler
@@ -794,6 +794,51 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
                                 "averageDollarVolume": s["dollars"] / days if s else 0.0,
                                 "daysTraded": s["traded"] if s else 0}
         return {"days": days, "from": done[-1], "to": done[0], "volumes": out}
+
+    def completed_days(conn, days: int) -> list[str]:
+        """The newest `days` trading days whose extended session has ended, newest first.
+
+        Used by: indicators, returns.
+        """
+        now = datetime.now(timezone.utc)
+        return [c["date"] for c in conn.execute("SELECT date, session_close FROM calendar ORDER BY date DESC")
+                if datetime.fromisoformat(c["session_close"]) <= now][:days]
+
+    def daily_series(conn, symbols: str | None, days: int) -> tuple[list[sqlite3.Row], dict[str, list]]:
+        """Completed daily bars (ts, h, l, c) of the last `days` trading days per symbol id, oldest first.
+
+        Used by: indicators, returns.
+        """
+        done = completed_days(conn, days)
+        rows = symbol_rows(conn, symbols)
+        if not done:
+            return rows, {}
+        start = int(datetime.combine(date.fromisoformat(done[-1]), time(), sync.ET).timestamp())
+        end = int((datetime.combine(date.fromisoformat(done[0]), time(), sync.ET) + timedelta(days=1)).timestamp())
+        wanted = {r["id"] for r in rows}
+        series: dict[str, list] = {}
+        for b in conn.execute("SELECT symbol_id, ts, h, l, c FROM bars_1day WHERE ts >= ? AND ts < ? "
+                              "ORDER BY symbol_id, ts", (start, end)):
+            if b["symbol_id"] in wanted:
+                series.setdefault(b["symbol_id"], []).append(b)
+        return rows, series
+
+    @app.get("/v1/indicators", tags=["prices"], dependencies=read)
+    def indicators(conn: Conn, symbols: str | None = None):
+        """Technical indicators from completed daily bars (today's bar counts once its extended session has ended):
+        20-day volatility, 14-day ATR %, 50/200-day averages, 52-week high and the close's distance from each.
+        Values are null without enough history.
+        \f
+        Args:
+            conn: market DB connection (one per request, injected).
+            symbols: comma-separated tickers/ids, or None for all.
+        """
+        rows, series = daily_series(conn, symbols, ind.DAYS_NEEDED)
+        out = {}
+        for r in rows:
+            bars = series.get(r["id"], [])
+            out[r["ticker"]] = ind.compute([b["c"] for b in bars], [b["h"] for b in bars], [b["l"] for b in bars])
+        return {"indicators": out}
 
     @app.get("/v1/calendar", tags=["calendar"], dependencies=read)
     def calendar(conn: Conn, start: date | None = None, end: date | None = None):

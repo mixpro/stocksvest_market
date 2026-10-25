@@ -82,3 +82,26 @@ def test_rank_by_20_day_dollar_volume():
                               budget_available=Decimal(1000), budget_equity=Decimal(1000), session="REGULAR",
                               data_age_minutes=0)
     assert planner.select(action, ["A", "B", "C"], ctx, None)["symbols"] == ["B", "A", "C"]
+
+
+def test_volatility_scaled_buys_and_max_open_positions():
+    """targetVolatilityPercent 40, 5% positions of $10k: 20% vol -> x1.5 ($750), 80% -> x0.5 ($250), 40% -> x1."""
+    class IndMarket(Market):
+        def indicators(self, tickers):
+            return {t: {"volatility20": v, "fromHigh52wPercent": -v} for t, v in
+                    {"A": 20, "B": 80, "C": 40}.items() if t in tickers}
+
+    action = PlaceOrderAction.model_validate({
+        "type": "PLACE_ORDER", "side": "BUY", "sizings": [{"mode": "CASH_AMOUNT", "value": 100000}],
+        "selection": {"mode": "TOP_N", "topN": 3, "rankBy": "VOLATILITY_20", "descending": False}})
+    guards = OrderGuards(maxPositionPercent=5, targetVolatilityPercent=40, maxOpenPositions=3)
+    snaps = {t: {"latestPrice": 10, "priceSource": "ALPACA", "bid": 10, "ask": 10} for t in "ABC"}
+    planner.add_rank_data(action, ["A", "B", "C"], snaps, IndMarket(), guards)
+    ctx = planner.PlanContext(snapshots=snaps, holdings={"H": planner.Holding(Decimal(1), Decimal(10))},
+                              open_buys=set(), open_sells={}, budget_available=Decimal(10000),
+                              budget_equity=Decimal(10000), session="REGULAR", data_age_minutes=0)
+    chosen = planner.select(action, ["A", "B", "C"], ctx, guards)
+    assert chosen["symbols"] == ["A", "C", "B"]  # calmest first
+    intents = planner.size(action, guards, chosen["symbols"], ctx, FakeBroker())
+    assert [(i["ticker"], i["quantity"]) for i in intents[:2]] == [("A", 75), ("C", 50)]
+    assert intents[2]["skipReason"] == "MAX_POSITIONS"  # H + A + C = 3 symbols

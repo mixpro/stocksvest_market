@@ -204,6 +204,8 @@ const ACTION_DEFAULTS = {
   SYMBOL_PRICE: { priceReference: "LATEST_BAR", condition: "BETWEEN", value: 10, maxValue: 100 },
   PRICE_CHANGE: { periodAmount: 5, periodUnit: "DAYS", valueType: "PERCENT", condition: "MORE_THAN", value: 3 },
   MARKET_CHANGE: { periodAmount: 6, periodUnit: "MONTHS", condition: "MORE_THAN", value: 0 },
+  SECTOR_RELATIVE_CHANGE: { periodAmount: 3, periodUnit: "MONTHS", condition: "MORE_THAN", value: 0 },
+  INDICATOR: { indicator: "PRICE_VS_SMA_200", condition: "MORE_THAN", value: 0 },
   AVERAGE_VOLUME: { days: 20, volumeType: "DOLLARS", condition: "MORE_THAN", value: 1000000 },
   POSITION: { portfolioIds: [] },
   UNREALIZED_PNL: { portfolioIds: [], valueType: "PERCENT", condition: "LESS_THAN", value: -8 },

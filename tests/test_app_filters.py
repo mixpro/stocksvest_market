@@ -106,6 +106,12 @@ def test_comparisons(client):
     assert run({"type": "SYMBOL_PRICE", "priceReference": "LATEST_BAR", "condition": "LESS_THAN", "value": 10}) == {"CCC"}
     assert run({"type": "SYMBOL_PRICE", "priceReference": "LATEST_BAR", "condition": "MORE_THAN", "value": 10}) == {"BBB"}
     assert run(PRICE_10_TO_50) == {"AAA", "BBB"}  # inclusive; DDD has no price
+    assert run({"type": "INDICATOR", "indicator": "PRICE_VS_SMA_200", "condition": "MORE_THAN", "value": 0}) == {"AAA"}
+    assert run({"type": "INDICATOR", "indicator": "FROM_52W_HIGH", "condition": "LESS_THAN", "value": -20}) == {"BBB"}
+    # 1 week: AAA +25 vs TECHNOLOGY median (25, 2) = 13.5 -> +11.5; CCC 2 - 13.5; BBB alone in HEALTHCARE -> 0
+    rel = {"type": "SECTOR_RELATIVE_CHANGE", "periodAmount": 1, "periodUnit": "WEEKS", "condition": "MORE_THAN"}
+    assert run({**rel, "value": 10}) == {"AAA"}
+    assert run({**rel, "value": -1}) == {"AAA", "BBB"}  # DDD has no sector
     assert run({"type": "EXCLUDE_SYMBOLS", "tickers": [" aaa", "ZZZ"]}) == {"BBB", "CCC", "DDD"}
     assert run({"type": "PRICE_CHANGE", "periodAmount": 1, "periodUnit": "WEEKS", "valueType": "ABSOLUTE",
                 "condition": "LESS_THAN", "value": 0}) == {"BBB"}

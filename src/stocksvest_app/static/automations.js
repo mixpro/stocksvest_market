@@ -15,13 +15,13 @@ const SCHEDULE_DEFAULTS = {
 
 const st = { automations: [], filters: [], groups: [], portfolios: [], selectedId: null, draft: null };
 const RANK_KEYS = ["DAILY_CHANGE_PERCENT", "LAST_PRICE", "DAILY_VOLUME", "POSITION_VALUE", "UNREALIZED_PNL_PERCENT",
-  "MOMENTUM_12_1", "MOMENTUM_6_1", "AVERAGE_DOLLAR_VOLUME_20"];
+  "MOMENTUM_12_1", "MOMENTUM_6_1", "AVERAGE_DOLLAR_VOLUME_20", "VOLATILITY_20", "FROM_52W_HIGH"];
 const ORDER_DEFAULT = {
   type: "PLACE_ORDER", side: "BUY", orderType: "MARKET", timeInForce: "DAY", extendedHours: false,
   selection: { mode: "TOP_N", topN: 3, rankBy: "DAILY_CHANGE_PERCENT", descending: true },
   sizings: [{ mode: "CASH_AMOUNT", value: 500 }],
 };
-const GUARD_DEFAULT = { maxOrdersPerRun: 10, maxPositionValue: null, maxPositionPercent: null, regularHoursOnly: true, skipBuyIfHeld: true, maxDataAgeMinutes: 30, requireLivePrice: false, maxSpreadPercent: null, rebuyCooldownMinutes: null, maxSectorPercent: null };
+const GUARD_DEFAULT = { maxOrdersPerRun: 10, maxPositionValue: null, maxPositionPercent: null, regularHoursOnly: true, skipBuyIfHeld: true, maxDataAgeMinutes: 30, requireLivePrice: false, maxSpreadPercent: null, rebuyCooldownMinutes: null, maxSectorPercent: null, targetVolatilityPercent: null, maxOpenPositions: null };
 
 // ------------------------------------------------------------------ loading
 
@@ -238,6 +238,8 @@ function guardsEditor() {
     "max per symbol $", numInput(g, "maxPositionValue", { style: "width:80px", placeholder: "—" }),
     "or %", numInput(g, "maxPositionPercent", { style: "width:60px", placeholder: "—" }),
     "max per sector %", numInput(g, "maxSectorPercent", { style: "width:50px", placeholder: "—" }),
+    "max positions", numInput(g, "maxOpenPositions", { style: "width:50px", placeholder: "—", min: 1 }),
+    "size by volatility, target %", numInput(g, "targetVolatilityPercent", { style: "width:50px", placeholder: "—" }),
     "max data age", numInput(g, "maxDataAgeMinutes", { style: "width:50px", min: 1 }), "min",
     "max buy spread %", numInput(g, "maxSpreadPercent", { style: "width:50px", placeholder: "—" }),
     "no re-buy for", numInput(g, "rebuyCooldownMinutes", { style: "width:60px", placeholder: "—", min: 1 }), "min after a sell",

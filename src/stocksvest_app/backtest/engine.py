@@ -133,7 +133,7 @@ def _run_automation(conn, hist, market, book, automation, portfolio_id, budget_i
         if action.type != "PLACE_ORDER":
             continue
         ctx = ctx or _context(conn, hist, ev, book, portfolio_id, budget_id, matched, now)
-        planner.add_rank_data(action, sorted(matched), ctx.snapshots, market)
+        planner.add_rank_data(action, sorted(matched), ctx.snapshots, market, guards)
         chosen = planner.select(action, sorted(matched), ctx, guards)
         if not planner.market_blocked(guards, ctx):
             quotes = hist.quotes(chosen["symbols"])["quotes"]

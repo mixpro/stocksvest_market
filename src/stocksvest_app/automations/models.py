@@ -284,8 +284,8 @@ class RankingKey(str, Enum):
     """How TOP_N ranks the matches (descending by default). POSITION_VALUE and UNREALIZED_PNL_PERCENT use the
     budget's shares (unheld symbols rank last). MOMENTUM_12_1 / MOMENTUM_6_1: the price change from 12 (6) months ago
     to 1 month ago, leaving out the latest month, which tends to reverse. AVERAGE_DOLLAR_VOLUME_20: dollars traded a
-    day over the last 20 trading days, the most-traded (usually largest) companies first. planner.add_rank_data
-    fetches both.
+    day over the last 20 trading days, the most-traded (usually largest) companies first. VOLATILITY_20 and
+    FROM_52W_HIGH come from market GET /v1/indicators. planner.add_rank_data fetches all of these.
 
     Used by: SymbolSelection.rankBy, planner._rank_value.
     """
@@ -297,6 +297,8 @@ class RankingKey(str, Enum):
     MOMENTUM_12_1 = "MOMENTUM_12_1"  # % change from 12 months ago to 1 month ago (the latest month left out)
     MOMENTUM_6_1 = "MOMENTUM_6_1"  # same from 6 months ago
     AVERAGE_DOLLAR_VOLUME_20 = "AVERAGE_DOLLAR_VOLUME_20"  # dollars traded a day over the last 20 trading days
+    VOLATILITY_20 = "VOLATILITY_20"  # annualised 20-day volatility, % (descending false = calmest first)
+    FROM_52W_HIGH = "FROM_52W_HIGH"  # close vs 52-week high, % (descending = nearest the high first)
 
 
 class SymbolSelection(BaseModel):
@@ -419,6 +421,12 @@ class OrderGuards(BaseModel):
             A TOP_N buy leaves out stocks of full sectors before taking the top N (sectorFull), counting each
             planned buy at maxPositionPercent; a buy that would still cross the cap shrinks or skips (SECTOR_FULL).
             Stocks without a sector are not capped. Holdings that grew past the cap are not sold.
+        targetVolatilityPercent: volatility-scaled buys: each buy and its position caps are multiplied by
+            target / the stock's 20-day annualised volatility, kept within 0.5-1.5 (calm stocks get bigger
+            positions, jumpy ones smaller). 40 with maxPositionPercent 5 = 2.5-7.5% per stock. Stocks without
+            enough history are not scaled.
+        maxOpenPositions: most symbols the budget may hold at once (holdings, open buys and this run's buys); a
+            buy of a new symbol beyond it skips (MAX_POSITIONS). Adding to a held symbol is not limited.
 
     Used by: AutomationIn.orderGuards, runner.Trading, planner.plan.
     """
@@ -432,6 +440,8 @@ class OrderGuards(BaseModel):
     maxSpreadPercent: Decimal | None = Field(default=None, gt=0, le=100)  # buys: (ask - bid) / midpoint
     rebuyCooldownMinutes: int | None = Field(default=None, ge=1, le=43200)  # up to 30 days
     maxSectorPercent: Decimal | None = Field(default=None, gt=0, le=100)  # of the budget's equity
+    targetVolatilityPercent: Decimal | None = Field(default=None, gt=0, le=200)  # annualised, %
+    maxOpenPositions: int | None = Field(default=None, ge=1, le=1000)
 
 
 # Any automation action; the "type" field picks the model. Used by: AutomationIn.actions, runner.run_automation.

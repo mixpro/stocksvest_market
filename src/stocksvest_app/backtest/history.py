@@ -21,6 +21,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from stocksvest_market import indicators as ind
 from stocksvest_market.api import _market_time_back, _trading_days_back
 
 ET = ZoneInfo("America/New_York")
@@ -51,10 +52,10 @@ def spread_for(avg_dollar_volume: float | None) -> float:
 class Series:
     """One symbol's bars of one timeframe: parallel lists sorted by start time."""
 
-    __slots__ = ("ts", "c", "v", "vw")
+    __slots__ = ("ts", "h", "l", "c", "v", "vw")
 
     def __init__(self):
-        self.ts, self.c, self.v, self.vw = [], [], [], []
+        self.ts, self.h, self.l, self.c, self.v, self.vw = [], [], [], [], [], []
 
 
 class HistoricalMarket:
@@ -89,6 +90,8 @@ class HistoricalMarket:
         self.by_ticker = {s["ticker"]: s for s in self.symbols_by_id.values()}
         self.now = datetime.combine(start, time(10), ET)
         self._adv: dict[tuple[str, str], float | None] = {}
+        self._ind: dict[str, dict] = {}  # ticker -> indicators of the day self._ind_day (one day kept)
+        self._ind_day = None
         self.spread_factor = 1.0  # cost stress: modelled spreads x this (e.g. 2). Used by: quotes, next_fill
 
     def _load(self, conn, table: str, span: tuple[int, int] | None) -> dict[str, Series]:
@@ -100,12 +103,12 @@ class HistoricalMarket:
             span: (from, to) unix seconds, or None for all.
         """
         out: dict[str, Series] = {}
-        sql = f"SELECT symbol_id, ts, c, v, vw FROM {table}"
+        sql = f"SELECT symbol_id, ts, h, l, c, v, vw FROM {table}"
         args: tuple = ()
         if span:
             sql += " WHERE ts >= ? AND ts < ?"
             args = span
-        for sid, ts, c, v, vw in conn.execute(sql + " ORDER BY symbol_id, ts", args):
+        for sid, ts, h, l, c, v, vw in conn.execute(sql + " ORDER BY symbol_id, ts", args):
             sym = self.symbols_by_id.get(sid)
             if not sym:
                 continue
@@ -113,6 +116,8 @@ class HistoricalMarket:
             if s is None:
                 s = out[sym["ticker"]] = Series()
             s.ts.append(ts)
+            s.h.append(h)
+            s.l.append(l)
             s.c.append(c)
             s.v.append(v)
             s.vw.append(vw if vw is not None else c)
@@ -273,6 +278,24 @@ class HistoricalMarket:
             shares, dollars, traded = self._volume(t, days)
             out[t] = {"averageVolume": shares, "averageDollarVolume": dollars, "daysTraded": traded}
         return {"days": days, "volumes": out}
+
+    def indicators(self, symbols=None) -> dict:
+        """Market GET /v1/indicators as of `now`: from the daily bars whose day had ended."""
+        ts = self._now_ts()
+        today = self.now.astimezone(ET).date().isoformat()
+        if today != self._ind_day:
+            self._ind, self._ind_day = {}, today
+        out = {}
+        for t in symbols or self.by_ticker:
+            key = t
+            if key not in self._ind:
+                i = self._daily_index_by(t, ts)
+                s = self.daily.get(t)
+                lo = max(0, i + 1 - ind.DAYS_NEEDED) if i is not None else 0
+                hi = i + 1 if i is not None else 0
+                self._ind[key] = ind.compute(s.c[lo:hi], s.h[lo:hi], s.l[lo:hi]) if s else ind.compute([], [], [])
+            out[t] = self._ind[key]
+        return {"indicators": out}
 
     def quotes(self, symbols) -> dict:
         out = {}

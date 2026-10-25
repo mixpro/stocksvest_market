@@ -63,6 +63,7 @@ class PlanContext:
     sectors: dict[str, str | None] = field(default_factory=dict)  # ticker -> sector key (for maxSectorPercent)
     budget_left: Decimal = field(init=False)
     sector_planned: dict[str, Decimal] = field(init=False, default_factory=dict)  # this run's buys per sector
+    new_planned: set[str] = field(init=False, default_factory=set)  # symbols this run's buys add (maxOpenPositions)
 
     def __post_init__(self):
         """Start the run with the whole available budget unspent."""
@@ -90,23 +91,47 @@ def _round_price(price: Decimal) -> Decimal:
 # Momentum ranking keys -> (months back, the snapshot field add_rank_data fills). Used by: add_rank_data, _rank_value
 MOMENTUM = {RankingKey.MOMENTUM_12_1: (12, "momentum12_1"), RankingKey.MOMENTUM_6_1: (6, "momentum6_1")}
 DOLLAR_VOLUME_FIELD = "averageDollarVolume20"  # snapshot field for AVERAGE_DOLLAR_VOLUME_20. Used by: same
+# Ranking keys read from market GET /v1/indicators -> its field (copied into the snapshots). Used by: same
+INDICATOR_KEYS = {RankingKey.VOLATILITY_20: "volatility20", RankingKey.FROM_52W_HIGH: "fromHigh52wPercent"}
+VOL_SCALE = (Decimal("0.5"), Decimal("1.5"))  # targetVolatilityPercent scale limits. Used by: _vol_scale
 
 
-def add_rank_data(action: PlaceOrderAction, tickers: list[str], snapshots: dict[str, dict], market) -> None:
-    """Put the ranking value market snapshots don't carry into the snapshots, in place: for a momentum TOP_N, each
-    ticker's % change from N months ago to 1 month ago (None without both prices); for AVERAGE_DOLLAR_VOLUME_20,
-    its 20-day average dollar volume.
+def _vol_scale(guards: OrderGuards, snap: dict) -> Decimal:
+    """Buy size multiplier for targetVolatilityPercent: target / 20-day volatility within VOL_SCALE (1 when off or
+    without volatility data).
+
+    Used by: size.
+    """
+    vol = snap.get("volatility20")
+    if guards.targetVolatilityPercent is None or not vol:
+        return Decimal(1)
+    return min(VOL_SCALE[1], max(VOL_SCALE[0], guards.targetVolatilityPercent / Decimal(str(vol))))
+
+
+def add_rank_data(action: PlaceOrderAction, tickers: list[str], snapshots: dict[str, dict], market,
+                  guards: OrderGuards | None = None) -> None:
+    """Put the ranking and sizing values market snapshots don't carry into the snapshots, in place: for a momentum
+    TOP_N, each ticker's % change from N months ago to 1 month ago (None without both prices); for
+    AVERAGE_DOLLAR_VOLUME_20, its 20-day average dollar volume; for VOLATILITY_20 / FROM_52W_HIGH or a buy with
+    targetVolatilityPercent, the indicators.
 
     Args:
-        action: the order action (nothing to do unless it ranks by momentum).
+        action: the order action.
         tickers: the candidates.
         snapshots: ticker -> snapshot (the PlanContext's).
-        market: MarketData (price_changes).
+        market: MarketData (price_changes, volumes, indicators).
+        guards: the automation's OrderGuards (targetVolatilityPercent).
 
     Used by: runner._place_orders, backtest.engine._run_automation (before select).
     """
     sel = action.selection
-    if sel.mode != SelectionMode.TOP_N or not tickers:
+    if not tickers:
+        return
+    if sel.rankBy in INDICATOR_KEYS or (action.side == "BUY" and guards and guards.targetVolatilityPercent):
+        data = market.indicators(set(tickers))
+        for t in tickers:
+            snapshots[t] = {**snapshots.get(t, {}), **{f: data.get(t, {}).get(f) for f in INDICATOR_KEYS.values()}}
+    if sel.mode != SelectionMode.TOP_N:
         return
     if sel.rankBy == RankingKey.AVERAGE_DOLLAR_VOLUME_20:
         volumes = market.volumes(set(tickers), 20)
@@ -144,6 +169,8 @@ def _rank_value(key: RankingKey, ticker: str, ctx: PlanContext) -> Decimal | Non
         v = snap.get(MOMENTUM[key][1])
     elif key == RankingKey.AVERAGE_DOLLAR_VOLUME_20:
         v = snap.get(DOLLAR_VOLUME_FIELD)
+    elif key in INDICATOR_KEYS:
+        v = snap.get(INDICATOR_KEYS[key])
     else:
         h = ctx.holdings.get(ticker)
         if not h or not h.quantity or price is None:
@@ -382,6 +409,10 @@ def size(action: PlaceOrderAction, guards: OrderGuards, symbols: list[str], ctx:
         else:
             free = held.quantity - ctx.open_sells.get(ticker, D0)
             qty = min(sizing.value, free) if sizing.mode == SizingMode.QUANTITY else free * sizing.value / 100
+        scale = _vol_scale(guards, snap) if action.side == "BUY" else Decimal(1)
+        if scale != 1:
+            qty *= scale
+            intent["detail"] = f"size x{scale:.2f} for volatility {snap['volatility20']:.0f}%"
         qty = qty.quantize(Decimal(1), rounding=ROUND_DOWN)
 
         # 3. Position guards (buys): never let one symbol grow past the caps; shrink the order to fit.
@@ -394,11 +425,16 @@ def size(action: PlaceOrderAction, guards: OrderGuards, symbols: list[str], ctx:
                 _skip(intent, "RECENTLY_SOLD", f"the budget sold it at {sold:%Y-%m-%d %H:%M} UTC "
                                                f"(cooldown {guards.rebuyCooldownMinutes} min)")
                 continue
+            if guards.maxOpenPositions is not None and held.quantity <= 0 and ticker not in ctx.open_buys:
+                count = len({t for t, h in ctx.holdings.items() if h.quantity > 0} | ctx.open_buys | ctx.new_planned)
+                if count >= guards.maxOpenPositions:
+                    _skip(intent, "MAX_POSITIONS", f"the budget holds {count} symbols (max {guards.maxOpenPositions})")
+                    continue
             caps = []
             if guards.maxPositionValue is not None:
-                caps.append(guards.maxPositionValue)
+                caps.append(guards.maxPositionValue * scale)
             if guards.maxPositionPercent is not None:
-                caps.append(ctx.budget_equity * guards.maxPositionPercent / 100)
+                caps.append(ctx.budget_equity * guards.maxPositionPercent / 100 * scale)
             if caps:
                 room = min(caps) - held.quantity * price
                 fit = (room / price).quantize(Decimal(1), rounding=ROUND_DOWN) if room > 0 else D0
@@ -459,6 +495,8 @@ def size(action: PlaceOrderAction, guards: OrderGuards, symbols: list[str], ctx:
         ctx.orders_planned += 1
         if action.side == "BUY":
             ctx.budget_left -= cost
+            if held.quantity <= 0:
+                ctx.new_planned.add(ticker)
             if ctx.sectors.get(ticker):
                 s = ctx.sectors[ticker]
                 ctx.sector_planned[s] = ctx.sector_planned.get(s, D0) + qty * price

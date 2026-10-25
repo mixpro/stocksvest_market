@@ -176,6 +176,16 @@ def router(ctx: AppContext) -> APIRouter:
         """
         return call(lambda: api.volume(days, _split(symbols)))
 
+    @r.get("/indicators")
+    def indicators(symbols: str | None = None):
+        """Volatility, ATR, 50/200-day averages and 52-week high from completed daily bars (market
+        `GET /v1/indicators`).
+        \f
+        Args:
+            symbols: comma-separated tickers or ids; empty = all.
+        """
+        return call(lambda: api.indicators(_split(symbols)))
+
     @r.get("/quotes")
     def quotes(symbols: str):
         """Prices right now: IBKR live bid/ask/last when available, else the delayed price (market `GET /v1/quotes`).

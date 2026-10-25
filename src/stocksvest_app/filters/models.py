@@ -220,6 +220,43 @@ class MarketChangeAction(PriceChangeAction):
     valueType: Literal[ValueType.PERCENT] = ValueType.PERCENT
 
 
+class SectorRelativeChangeAction(PriceChangeAction):
+    """Sector-relative strength: keeps symbols whose percent change over periodAmount x periodUnit minus the median
+    change of their sector (all halal stocks of that sector) matches the comparison. +5 = 5 points better than the
+    typical stock of its sector. Symbols without a sector are dropped.
+
+    Used by: FilterAction, engine.Evaluator.apply (via _sector_relative).
+    """
+
+    type: Literal["SECTOR_RELATIVE_CHANGE"]
+    valueType: Literal[ValueType.PERCENT] = ValueType.PERCENT
+
+
+class Indicator(str, Enum):
+    """Which technical indicator INDICATOR compares (market GET /v1/indicators, from completed daily bars).
+
+    Used by: IndicatorAction.indicator, engine (INDICATOR_FIELDS), routes.filter_actions.
+    """
+
+    VOLATILITY_20 = "VOLATILITY_20"  # annualised 20-day volatility, % (e.g. 35)
+    ATR_14_PERCENT = "ATR_14_PERCENT"  # 14-day average true range as % of the close
+    PRICE_VS_SMA_50 = "PRICE_VS_SMA_50"  # close vs 50-day average, % (> 0 = above it)
+    PRICE_VS_SMA_200 = "PRICE_VS_SMA_200"  # close vs 200-day average, %
+    FROM_52W_HIGH = "FROM_52W_HIGH"  # close vs 52-week high, % (0 at a new high, -20 = 20% below)
+
+
+class IndicatorAction(Comparison):
+    """Keep symbols whose indicator matches the comparison, e.g. PRICE_VS_SMA_200 MORE_THAN 0 (uptrend),
+    FROM_52W_HIGH MORE_THAN -10 (near the high), VOLATILITY_20 LESS_THAN 60. Symbols without enough history are
+    dropped.
+
+    Used by: FilterAction, engine.Evaluator.apply (via MarketData.indicators).
+    """
+
+    type: Literal["INDICATOR"]
+    indicator: Indicator
+
+
 class VolumeType(str, Enum):
     """What AVERAGE_VOLUME compares: shares a day, or dollars a day (shares x price).
 
@@ -306,6 +343,7 @@ class HoldingPeriodAction(PortfolioIds, Comparison):
 # Any filter action; the "type" field picks the model. Used by: FilterIn.actions, engine.Evaluator.apply.
 FilterAction = Annotated[
     Union[SymbolTypeAction, SectorAction, ExcludeSymbolsAction, SymbolPriceAction, PriceChangeAction, MarketChangeAction,
+          SectorRelativeChangeAction, IndicatorAction,
           AverageVolumeAction, PositionAction, UnrealizedPnlAction, HoldingPeriodAction],
     Field(discriminator="type"),
 ]

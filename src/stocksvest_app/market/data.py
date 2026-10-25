@@ -102,6 +102,25 @@ class MarketData:
         data = self.api.volume(days, self._symbols_arg(tickers))["volumes"]
         return {t: v for t, v in data.items() if t in tickers}
 
+    def indicators(self, tickers: set[str]) -> dict[str, dict]:
+        """Technical indicators (market GET /v1/indicators) for these tickers only (halal universe only, as in
+        snapshots).
+
+        Args:
+            tickers: tickers wanted; empty = no call.
+
+        Returns:
+            ticker -> {close, volatility20, atr14Percent, sma50, sma200, priceVsSma50Percent, priceVsSma200Percent,
+            high52w, fromHigh52wPercent}.
+
+        Used by: filters.engine (INDICATOR action), automations.planner.add_rank_data.
+        """
+        tickers = tickers & self.universe().keys() if tickers else tickers
+        if not tickers:
+            return {}
+        data = self.api.indicators(self._symbols_arg(tickers))["indicators"]
+        return {t: v for t, v in data.items() if t in tickers}
+
     def live_quotes(self, tickers: set[str]) -> dict[str, dict]:
         """Prices right now (IBKR live when the market service can get them, else its delayed price), for the few
         symbols about to be traded. Not cached: every call asks again.

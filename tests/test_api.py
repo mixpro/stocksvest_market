@@ -176,6 +176,16 @@ def test_volume(client, seeded):
     assert short["from"] is None and short["volumes"]["S0001"]["averageVolume"] is None
 
 
+def test_indicators(client, seeded):
+    add_calendar(seeded, "2026-10-08", "2026-10-09", "2026-10-12", "2099-01-02")  # 2099: not completed yet
+    seeded.execute("INSERT INTO bars_1day VALUES ('id-S0001', ?, 50, 50, 50, 50, 99999, 1, 50)", (ts(2099, 1, 2, 5),))
+    seeded.commit()
+    body = client.get("/v1/indicators?symbols=S0001,S0002", headers=READ).json()["indicators"]
+    last = client.get("/v1/bars/S0001?timeframe=1Day&limit=1&end=2026-10-14T00:00:00Z", headers=READ).json()["bars"][-1]
+    assert body["S0001"]["close"] == last["c"] and body["S0001"]["sma200"] is None  # 2099 bar left out; short history
+    assert body["S0002"]["close"] is None
+
+
 def test_trading_days_back():
     days = ["2026-11-30", "2026-11-27", "2026-11-25", "2026-11-24"]  # Thanksgiving (26th) and the weekend closed
     assert _trading_days_back(days, "2026-11-30", 1) == "2026-11-27"  # Monday: from Friday's close

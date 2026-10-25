@@ -46,6 +46,8 @@ inputs (union) ──► action 1 ──► action 2 ──► … ──► mat
    | `SYMBOL_PRICE` | `priceReference`, `condition`, `value`, `maxValue` | the price matches |
    | `PRICE_CHANGE` | `periodAmount`, `periodUnit`, `valueType`, `condition`, `value`, `maxValue` | the change over the period matches |
    | `MARKET_CHANGE` | `periodAmount`, `periodUnit`, `condition`, `value`, `maxValue` | market regime gate: **every** symbol passes when the median % change of the whole universe over the period matches, **none** otherwise |
+   | `SECTOR_RELATIVE_CHANGE` | `periodAmount`, `periodUnit`, `condition`, `value`, `maxValue` | the stock's % change minus the median % change of its sector (all halal stocks of it) matches; stocks without a sector are dropped |
+   | `INDICATOR` | `indicator`: `VOLATILITY_20`, `ATR_14_PERCENT`, `PRICE_VS_SMA_50`, `PRICE_VS_SMA_200`, `FROM_52W_HIGH`; `condition`, `value`, `maxValue` | the indicator (market `GET /v1/indicators`, completed daily bars) matches. E.g. `PRICE_VS_SMA_200` > 0 = above the 200-day average; `FROM_52W_HIGH` > −10 = within 10% of the 52-week high |
    | `AVERAGE_VOLUME` | `days` (default 20), `volumeType`, `condition`, `value`, `maxValue` | the average daily trading over the last `days` completed trading days matches |
    | `POSITION` | `portfolioIds`: one or more portfolio ids | the symbol is held in at least one of the portfolios (manual or automation shares) |
    | `UNREALIZED_PNL` | `portfolioIds`, `valueType`, `condition`, `value`, `maxValue` | the unrealized gain/loss of the shares held matches, e.g. `PERCENT` `LESS_THAN` `-8` = down more than 8% from the buy price (a stop-loss) |
@@ -280,7 +282,7 @@ your holdings (price change, latest price) work on current prices.
 | `trailPercent` | For `TRAILING_STOP` |
 | `timeInForce` | `DAY`, `GTC`, `IOC`, `FOK`, `OPG`, `CLS` (whatever the broker supports) |
 | `extendedHours` | Only with `LIMIT` + `DAY` |
-| `selection` | `ALL_MATCHES`, or `TOP_N` with `topN` and `rankBy`: `DAILY_CHANGE_PERCENT`, `LAST_PRICE`, `DAILY_VOLUME`, `POSITION_VALUE`, `UNREALIZED_PNL_PERCENT`, `MOMENTUM_12_1`, `MOMENTUM_6_1` (% change from 12 or 6 months ago to 1 month ago; the latest month is left out because it tends to reverse), `AVERAGE_DOLLAR_VOLUME_20` (dollars traded a day over the last 20 trading days: the most-traded, usually largest, companies). A `TOP_N` buy with `skipBuyIfHeld` leaves out what the budget holds or has a buy open for **before** taking the top N ("top 3" = the 3 best it doesn't own yet); they are listed as `alreadyHeld` in the run |
+| `selection` | `ALL_MATCHES`, or `TOP_N` with `topN` and `rankBy`: `DAILY_CHANGE_PERCENT`, `LAST_PRICE`, `DAILY_VOLUME`, `POSITION_VALUE`, `UNREALIZED_PNL_PERCENT`, `MOMENTUM_12_1`, `MOMENTUM_6_1` (% change from 12 or 6 months ago to 1 month ago; the latest month is left out because it tends to reverse), `AVERAGE_DOLLAR_VOLUME_20` (dollars traded a day over the last 20 trading days: the most-traded, usually largest, companies), `VOLATILITY_20` (annualised 20-day volatility; `descending: false` = calmest first), `FROM_52W_HIGH` (% below the 52-week high; descending = nearest the high). A `TOP_N` buy with `skipBuyIfHeld` leaves out what the budget holds or has a buy open for **before** taking the top N ("top 3" = the 3 best it doesn't own yet); they are listed as `alreadyHeld` in the run |
 | `sizings` | One sizing for every symbol, or (`TOP_N`) one per rank. Buy: `QUANTITY`, `CASH_AMOUNT`, `PERCENT_OF_BUDGET`. Sell: `QUANTITY`, `PERCENT_OF_POSITION` |
 
 **Rules:**
@@ -297,7 +299,8 @@ budget, and position caps and `skipBuyIfHeld` look at the budget's shares and op
 ```json
 {"maxOrdersPerRun": 10, "maxPositionValue": null, "maxPositionPercent": null,
  "regularHoursOnly": true, "skipBuyIfHeld": true, "maxDataAgeMinutes": 30, "requireLivePrice": false,
- "maxSpreadPercent": null, "rebuyCooldownMinutes": null, "maxSectorPercent": null}
+ "maxSpreadPercent": null, "rebuyCooldownMinutes": null, "maxSectorPercent": null,
+ "targetVolatilityPercent": null, "maxOpenPositions": null}
 ```
 
 `requireLivePrice: true` places an order only when its symbol has a live quote (see below); otherwise it is skipped
@@ -318,6 +321,13 @@ A `TOP_N` buy leaves out stocks whose sector would cross it **before** taking th
 counting each planned buy at `maxPositionPercent`, so lower-ranked stocks of other sectors take the places. A buy
 that would still cross it shrinks, or skips (`SECTOR_FULL`). Stocks without a sector aren't capped, and holdings
 that grew past the cap are not sold. Example: 5% positions with a 30% cap hold at most 6 buys of one sector.
+
+`targetVolatilityPercent` sizes buys by risk: each buy and its position caps are multiplied by target ÷ the stock's
+20-day annualised volatility, kept within 0.5–1.5. With 40 and `maxPositionPercent` 5, a stock moving 20% a year
+gets 7.5%, one moving 80% gets 2.5%. Stocks without enough history are not scaled.
+
+`maxOpenPositions` limits how many symbols the budget holds at once (holdings, open buys and this run's buys). A buy
+of a new symbol beyond it skips (`MAX_POSITIONS`); adding to a held symbol is not limited.
 
 **How a run plans orders:**
 1. **Sync:** current fills and balances are imported from each budget's broker account first. If a broker can't
@@ -343,6 +353,7 @@ that grew past the cap are not sold. Example: 5% positions with a 30% cap hold a
    | `WIDE_SPREAD` | A buy whose live bid/ask spread is over `maxSpreadPercent` |
    | `RECENTLY_SOLD` | A buy of a symbol the budget sold within `rebuyCooldownMinutes` |
    | `SECTOR_FULL` | A buy whose sector is already at `maxSectorPercent` of the budget's equity |
+   | `MAX_POSITIONS` | A buy of a new symbol when the budget already holds `maxOpenPositions` symbols |
    | `ZERO_QUANTITY` | The sizing comes to less than one share |
    | `NOT_SUPPORTED_BY_BROKER` | The broker doesn't support this order type, time in force or extended hours |
 

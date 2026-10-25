@@ -19,6 +19,7 @@ from .models import (
     Condition,
     FilterIn,
     GroupIn,
+    Indicator,
     InputType,
     PriceReference,
     TimePeriodUnit,
@@ -117,6 +118,15 @@ def router(ctx: AppContext) -> APIRouter:
                  "fields": [
                     {"name": "periodAmount", "kind": "integer", "required": True, "min": 1},
                     {"name": "periodUnit", "kind": "select", "options": _values(TimePeriodUnit), "required": True},
+                    condition, value, max_value]},
+                {"type": "SECTOR_RELATIVE_CHANGE", "label": "Change vs its sector (points above the sector median)",
+                 "available": True, "fields": [
+                    {"name": "periodAmount", "kind": "integer", "required": True, "min": 1},
+                    {"name": "periodUnit", "kind": "select", "options": _values(TimePeriodUnit), "required": True},
+                    condition, value, max_value]},
+                {"type": "INDICATOR", "label": "Indicator (trend, volatility, 52-week high)", "available": True,
+                 "fields": [
+                    {"name": "indicator", "kind": "select", "options": _values(Indicator), "required": True},
                     condition, value, max_value]},
                 {"type": "AVERAGE_VOLUME", "label": "Average daily trading", "available": True, "fields": [
                     {"name": "days", "kind": "integer", "required": True, "min": 1, "max": 260},

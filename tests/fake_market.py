@@ -43,6 +43,17 @@ VOLUMES = {"AAA": {"averageVolume": 500_000.0, "averageDollarVolume": 5_000_000.
            "CCC": {"averageVolume": 300.0, "averageDollarVolume": 1_500.0, "daysTraded": 6},
            "DDD": {"averageVolume": None, "averageDollarVolume": None, "daysTraded": None}}
 
+# Indicators: AAA calm and above its averages, BBB volatile and far below its high, CCC/DDD lack history.
+_NO_IND = {"close": None, "volatility20": None, "atr14Percent": None, "sma50": None, "sma200": None,
+           "priceVsSma50Percent": None, "priceVsSma200Percent": None, "high52w": None, "fromHigh52wPercent": None}
+INDICATORS = {"AAA": {**_NO_IND, "close": 10.0, "volatility20": 20.0, "atr14Percent": 1.5, "sma50": 9.0, "sma200": 8.0,
+                      "priceVsSma50Percent": 11.1, "priceVsSma200Percent": 25.0, "high52w": 10.5,
+                      "fromHigh52wPercent": -4.8},
+              "BBB": {**_NO_IND, "close": 50.0, "volatility20": 80.0, "atr14Percent": 6.0, "sma50": 60.0,
+                      "sma200": 55.0, "priceVsSma50Percent": -16.7, "priceVsSma200Percent": -9.1, "high52w": 100.0,
+                      "fromHigh52wPercent": -50.0},
+              "CCC": dict(_NO_IND, close=5.0), "DDD": dict(_NO_IND)}
+
 
 class FakeMarket:
     def __init__(self, fail: bool = False, regular_close: str | None = None, last_sync: str | None = None):
@@ -122,6 +133,11 @@ class FakeMarket:
         self._check()
         self.calls.append(("volume", days, symbols))
         return {"days": days, "from": "f", "to": "t", "volumes": {t: VOLUMES[t] for t in (symbols or VOLUMES)}}
+
+    def indicators(self, symbols=None):
+        self._check()
+        self.calls.append(("indicators", symbols))
+        return {"indicators": {t: INDICATORS[t] for t in (symbols or INDICATORS)}}
 
     def calendar(self, start=None, end=None):
         self._check()

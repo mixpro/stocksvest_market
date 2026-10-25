@@ -24,6 +24,9 @@ from .models import (
     PriceChangeAction,
     PriceReference,
     ExcludeSymbolsAction,
+    Indicator,
+    IndicatorAction,
+    SectorRelativeChangeAction,
     SectorAction,
     SymbolPriceAction,
     SymbolTypeAction,
@@ -35,6 +38,10 @@ from .models import (
 ET = ZoneInfo("America/New_York")  # Used by: Evaluator._last_close (today's date in New York)
 # Seconds per HOLDING_PERIOD unit (calendar time; months and years as the market service counts them).
 # Used by: Evaluator.apply
+# INDICATOR -> field of market GET /v1/indicators. Used by: Evaluator.apply
+INDICATOR_FIELDS = {Indicator.VOLATILITY_20: "volatility20", Indicator.ATR_14_PERCENT: "atr14Percent",
+                    Indicator.PRICE_VS_SMA_50: "priceVsSma50Percent", Indicator.PRICE_VS_SMA_200: "priceVsSma200Percent",
+                    Indicator.FROM_52W_HIGH: "fromHigh52wPercent"}
 UNIT_SECONDS = {"MINUTES": 60, "HOURS": 3600, "DAYS": 86400, "WEEKS": 7 * 86400, "MONTHS": 30.4375 * 86400,
                 "YEARS": 365.25 * 86400}
 log = logging.getLogger(__name__)
@@ -376,6 +383,28 @@ class Evaluator:
         values = [c["changePercent"] for c in changes.values() if c.get("changePercent") is not None]
         return median(values) if values else None
 
+    def _sector_relative(self, action: SectorRelativeChangeAction, symbols: set[str]) -> set[str]:
+        """Symbols whose % change minus their sector's median % change (whole universe) matches the action.
+
+        Args:
+            action: the SECTOR_RELATIVE_CHANGE action.
+            symbols: the symbols still in the running.
+        """
+        universe = self.market.universe()
+        changes = self.market.price_changes(set(universe), action.periodAmount, action.periodUnit.value)
+        by_sector: dict[str, list[float]] = {}
+        for t, c in changes.items():
+            sector = universe.get(t, {}).get("sector")
+            if sector and c.get("changePercent") is not None:
+                by_sector.setdefault(sector, []).append(c["changePercent"])
+        medians = {k: median(v) for k, v in by_sector.items()}
+        out = set()
+        for t in symbols:
+            sector, pct = universe.get(t, {}).get("sector"), changes.get(t, {}).get("changePercent")
+            if sector in medians and pct is not None and action.matches(pct - medians[sector]):
+                out.add(t)
+        return out
+
     def apply(self, action: FilterAction, symbols: set[str]) -> set[str]:
         """Keep the symbols that pass one action.
 
@@ -406,6 +435,12 @@ class Evaluator:
             return {t for t, s in snaps.items() if action.matches(self._last_close(s))}
         if isinstance(action, MarketChangeAction):  # before PriceChangeAction: it is one
             return symbols if action.matches(self._market_change(action.periodAmount, action.periodUnit.value)) else set()
+        if isinstance(action, SectorRelativeChangeAction):  # also before PriceChangeAction
+            return self._sector_relative(action, symbols)
+        if isinstance(action, IndicatorAction):
+            data = self.market.indicators(symbols)
+            field = INDICATOR_FIELDS[action.indicator]
+            return {t for t, v in data.items() if action.matches(v.get(field))}
         if isinstance(action, PriceChangeAction):
             changes = self.market.price_changes(symbols, action.periodAmount, action.periodUnit.value)
             field = "changePercent" if action.valueType == ValueType.PERCENT else "change"

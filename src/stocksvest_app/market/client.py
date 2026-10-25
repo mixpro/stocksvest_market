@@ -22,6 +22,7 @@ ENDPOINTS = {
     "snapshots": "/v1/snapshots",
     "price_change": "/v1/price-change",
     "volume": "/v1/volume",
+    "indicators": "/v1/indicators",
     "quotes": "/v1/quotes",
     "live_status": "/v1/live",
     "live_watch": "/v1/live/watch",
@@ -145,6 +146,15 @@ class MarketAPI(Protocol):
 
         Args:
             days: completed trading days averaged (days without trades count as 0).
+            symbols: tickers or ids; None = every symbol.
+        """
+        ...
+
+    def indicators(self, symbols: list[str] | None = None) -> dict:
+        """GET /v1/indicators: {"indicators": {ticker: {close, volatility20, atr14Percent, sma50, sma200,
+        priceVsSma50Percent, priceVsSma200Percent, high52w, fromHigh52wPercent}}} from completed daily bars.
+
+        Args:
             symbols: tickers or ids; None = every symbol.
         """
         ...
@@ -325,6 +335,14 @@ class MarketClient:
             symbols: tickers or ids; None = all.
         """
         return self._get("volume", query=_query(days=days, symbols=symbols))
+
+    def indicators(self, symbols=None) -> dict:
+        """GET /v1/indicators.
+
+        Args:
+            symbols: tickers or ids; None = all.
+        """
+        return self._get("indicators", query=_query(symbols=symbols))
 
     def quotes(self, symbols) -> dict:
         """GET /v1/quotes.
