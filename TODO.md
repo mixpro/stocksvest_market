@@ -138,7 +138,7 @@ Shared base: price > $10, 20-day dollar volume > $50M, max spread 0.30%, buy at 
   - Live since 2026-10-25 (deploy 6521b88): portfolio "Momentum 5B" (`pf_059512a438f34e0ca2439864f7f87d5b`, $10,000 moved from Paper portfolio), budget `bud_11366221bbc3485b9ca9da8e4776e753`.
   - "5B Buy" (`aut_c6458dc7…`) Mondays 11:00 ET, "5B Sell" (`aut_35e5c29a…`) daily 11:00 ET. Data-age guard 30 min (as the old Buy).
   - First run Monday 2026-10-26 11:00 ET. Sunday preview: 229 matches, top 20 SNDK, MU, STX, AMD, DELL, INTC…
-  - The old Testing Buy/Sell were paused 2026-10-25. Their budget still holds 19 positions (~$7.1k) with no sell automation.
+  - The old Testing Buy/Sell were paused 2026-10-25. Their 19 positions (~$7.1k) have market-on-open (OPG) sells for Monday 2026-10-26 09:30 ET.
   - Own budget on the Alpaca paper account, next to or instead of the live setup (which lost every year in 9).
   - Goal: check live fills/spreads vs the backtest, not to prove the edge (months of paper can't).
 - [ ] **STRAT-4: Decide what to do with the live setup**
@@ -173,6 +173,7 @@ Shared base: price > $10, 20-day dollar volume > $50M, max spread 0.30%, buy at 
 
 - [ ] **OPS-1: Check live bars Monday 2026-10-26 after 09:30 ET**
   - Also: did 5B Buy place ~20 orders at 11:00 ET, and do the fill prices sit within the modelled spread?
+  - And: did the 19 OPG sells of the Testing budget fill at the open?
   - `GET /v1/live` → `lastBarAt` should update every few seconds for held symbols.
 - [ ] **OPS-2: False cash-mismatch alerts**
   - Sync compares app vs. broker while fills are only partly imported.
