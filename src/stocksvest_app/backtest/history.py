@@ -153,6 +153,14 @@ class HistoricalMarket:
         i = bisect_right(s.ts, midnight) - 1
         return s.c[i] if i >= 0 and datetime.fromtimestamp(s.ts[i], ET).date().isoformat() == day else None
 
+    def last_bar(self, ticker: str) -> tuple[str, float] | None:
+        """(New York date, close) of the symbol's very last daily bar in the data: where a delisted stock stopped.
+
+        Used by: engine.run (delisting close-out).
+        """
+        s = self.daily.get(ticker)
+        return (datetime.fromtimestamp(s.ts[-1], ET).date().isoformat(), s.c[-1]) if s and s.ts else None
+
     def latest_price(self, ticker: str) -> tuple[int, float] | None:
         """(time, price) at `now`: the newest ended hourly bar, else the newest ended daily bar."""
         ts = self._now_ts()

@@ -45,6 +45,7 @@ STEP_HOURS = range(10, 16)  # 10:00 .. 15:00 New York. Used by: run
 FILL_MODES = ("NEXT_VWAP", "SAME_CLOSE")  # see the module docstring. Used by: run, __main__
 STEP_MODES = ("SCHEDULE", "HOURLY")  # see the module docstring. Used by: run, __main__
 SCHEDULES = TypeAdapter(list[Schedule])  # Used by: _fire_times
+DELISTED_AFTER_DAYS = 5  # a held stock without a daily bar for this many trading days is closed. Used by: run
 LIQUID_DOLLARS = 50e6  # the liquid benchmark's minimum 20-day average dollar volume. Used by: run
 
 
@@ -178,6 +179,20 @@ def _fill(conn, book: Book, automation: dict, portfolio_id: str, budget_id: str,
                                 "heldHours": round((now - datetime.fromisoformat(opened)).total_seconds() / 3600, 1)})
 
 
+def _close_delisted(conn, hist: HistoricalMarket, book: Book, automation: dict, portfolio_id: str, budget_id: str,
+                    days: list[str], day: str, now: datetime) -> None:
+    """Sell, at its last close, every held stock whose bars ended DELISTED_AFTER_DAYS trading days ago (delisted:
+    bought out, merged or gone). ponytail: the last close is kind to bankruptcies, which often end lower."""
+    i = days.index(day)
+    if i < DELISTED_AFTER_DAYS:
+        return
+    for p in portfolios_store.positions(conn, portfolio_id, budget_id=budget_id):
+        last = hist.last_bar(p["symbol"])
+        if last and last[0] < days[i - DELISTED_AFTER_DAYS]:
+            intent = {"ticker": p["symbol"], "side": "SELL", "quantity": p["quantity"]}
+            _fill(conn, book, automation, portfolio_id, budget_id, intent, "DELISTED", now, Decimal(str(last[1])))
+
+
 def _equity(conn, hist: HistoricalMarket, book: Book, portfolio_id: str, budget_id: str) -> tuple[float, float]:
     """(equity, invested) at hist.now: cash plus every held share at the modelled bid."""
     held = portfolios_store.positions(conn, portfolio_id, budget_id=budget_id)
@@ -270,6 +285,7 @@ def run(app_db: Path, market_db: Path, buy_id: str, sell_id: str, start: date, e
                     _run_automation(conn, hist, market, book, autos[("sell", "buy")[i]], portfolio_id, budget_id,
                                     now, broker, fill)
                 hist.now = close  # ponytail: equity at the regular close, after-hours fires land in the next day
+                _close_delisted(conn, hist, book, autos["sell"], portfolio_id, budget_id, days, day, close)
                 equity, invested = _equity(conn, hist, book, portfolio_id, budget_id)
                 book.equity.append({"date": day, "equity": round(equity, 2), "invested": round(invested, 2),
                                     "cash": round(float(book.cash), 2)})
@@ -287,8 +303,9 @@ def run(app_db: Path, market_db: Path, buy_id: str, sell_id: str, start: date, e
 
 
 def buy_and_hold(hist: HistoricalMarket, days: list[str], min_dollars: float = 0.0) -> float | None:
-    """Benchmark return in percent: equal dollars in every symbol with a close on the first and the last day (and,
-    with min_dollars, a 20-day average dollar volume above it before the first day), bought and held, no costs.
+    """Benchmark return in percent: equal dollars in every symbol with a close on the first day (and, with
+    min_dollars, a 20-day average dollar volume above it before the first day), bought and held, no costs. A symbol
+    whose bars end before the last day (delisted) counts at its last close.
 
     Args:
         hist: the loaded market.
@@ -301,6 +318,9 @@ def buy_and_hold(hist: HistoricalMarket, days: list[str], min_dollars: float = 0
     ratios = []
     for t in hist.by_ticker:
         a, b = hist._daily_on(t, days[0]), hist._daily_on(t, days[-1])
+        last = hist.last_bar(t)
+        if a and not b and last and days[0] < last[0] < days[-1]:
+            b = last[1]
         if a and b and (not min_dollars or (hist.avg_dollar_volume(t) or 0) > min_dollars):
             ratios.append(b / a)
     return round((sum(ratios) / len(ratios) - 1) * 100, 2) if ratios else None

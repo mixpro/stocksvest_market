@@ -175,3 +175,27 @@ def test_schedule_steps_run_each_automation_at_its_own_times(market_path, app_db
                                       a.isoformat(), b.isoformat())["days"], at("2026-10-05", 0))
     assert [t.astimezone(ET).strftime("%H:%M") for t in every_15] == [
         "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00"]  # 09:30 runs at the hour's start
+
+
+def test_a_delisted_stock_is_closed_at_its_last_price(market_path, app_db):
+    path, ids = app_db
+    conn = market_db.connect(market_path)
+    gone = int(at("2026-10-05", 0).timestamp())  # DOWN's bars stop after Monday
+    conn.execute("DELETE FROM bars_1day WHERE symbol_id = 'id-DOWN' AND ts > ?", (gone,))
+    conn.execute("DELETE FROM bars_1hour WHERE symbol_id = 'id-DOWN' AND ts > ?", (gone + 86400,))
+    conn.commit()
+    conn.close()
+    days = ["2026-10-05", "2026-10-06", "2026-10-07"]
+    hist = HistoricalMarket(market_path, date(2026, 10, 5), date(2026, 10, 7))
+    assert hist.last_bar("DOWN")[0] == "2026-10-05"
+    engine.DELISTED_AFTER_DAYS, old = 1, engine.DELISTED_AFTER_DAYS
+    try:
+        out = engine.run(path, market_path, ids["Buy"], ids["Sell"], date(2026, 10, 5), date(2026, 10, 7),
+                         overrides={"sell": {"schedules": [{"type": "ONCE", "at": "2020-01-01T00:00:00-05:00"}]}},
+                         hist=hist)  # the Sell never runs: only the close-out sells
+    finally:
+        engine.DELISTED_AFTER_DAYS = old
+    sells = [t for t in out["trades"] if t["side"] == "SELL"]
+    assert [(t["symbol"], t["filter"]) for t in sells] == [("DOWN", "DELISTED")]
+    assert sells[0]["price"] == pytest.approx(hist.last_bar("DOWN")[1])
+    assert datetime.fromisoformat(sells[0]["time"]).astimezone(ET).date().isoformat() == days[2]  # 1 day later
