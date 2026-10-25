@@ -71,6 +71,10 @@ Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 →
   - Option 2: IEX feed top-up (free, real-time, thinner coverage).
   - Held symbols are already live via IBKR (done).
 
+- [ ] **DATA-5: Alpaca real-time quotes as backup for IBKR**
+  - The paid plan includes real-time bid/ask. Today bid/ask come only from the IB Gateway: if it's down, orders with `requireLivePrice` (5B Buy) skip with NO_LIVE_PRICE.
+  - Use Alpaca's latest quote when IBKR has none (or as the main source).
+
 ## STRAT: Strategies to backtest (from Kimi)
 
 Built by `scripts/backtest_strategies.py`. Results 2025-10-24..2026-10-23 (liquid buy-and-hold +18.7%, live setup −90%):
