@@ -129,3 +129,29 @@ def test_max_correlation_skips_stocks_that_move_with_a_holding_or_an_earlier_pic
     chosen = planner.select(action, list("ABCD"), ctx, guards)
     # A mirrors the holding H, C mirrors the earlier pick B; D is H backwards (uncorrelated enough).
     assert chosen["symbols"] == ["B", "D"] and chosen["tooCorrelated"] == ["A", "C"]
+
+
+def test_fractional_shares_buy_expensive_stocks_and_sell_whole():
+    """5% of $9,000 = $450: a $1,200 stock is 0 whole shares, 0.375 with fractionalShares; selling all sells 0.375."""
+    buy = PlaceOrderAction.model_validate({
+        "type": "PLACE_ORDER", "side": "BUY", "sizings": [{"mode": "CASH_AMOUNT", "value": 100000}],
+        "selection": {"mode": "TOP_N", "topN": 1, "rankBy": "LAST_PRICE"}})
+    snaps = {"X": {"latestPrice": 1200, "priceSource": "ALPACA", "bid": 1200, "ask": 1200}}
+
+    def ctx(holdings):
+        return planner.PlanContext(snapshots=snaps, holdings=holdings, open_buys=set(), open_sells={},
+                                   budget_available=Decimal(9000), budget_equity=Decimal(9000), session="REGULAR",
+                                   data_age_minutes=0)
+
+    whole = planner.size(buy, OrderGuards(maxPositionPercent=5), ["X"], ctx({}), FakeBroker())[0]
+    assert whole["skipReason"] == "MAX_POSITION"
+    frac = planner.size(buy, OrderGuards(maxPositionPercent=5, fractionalShares=True), ["X"], ctx({}), FakeBroker())[0]
+    assert frac["decision"] == "PLACE" and frac["quantity"] == 0.375
+    limit = buy.model_copy(update={"orderType": "LIMIT", "limitOffsetPercent": Decimal(1)})
+    assert planner.size(limit, OrderGuards(maxPositionPercent=5, fractionalShares=True), ["X"], ctx({}),
+                        FakeBroker())[0]["decision"] == "SKIP"  # fractions are MARKET + DAY only
+    sell = PlaceOrderAction.model_validate({"type": "PLACE_ORDER", "side": "SELL",
+                                            "sizings": [{"mode": "PERCENT_OF_POSITION", "value": 100}]})
+    held = {"X": planner.Holding(Decimal("0.375"), Decimal(450))}
+    out = planner.size(sell, OrderGuards(), ["X"], ctx(held), FakeBroker())[0]
+    assert out["decision"] == "PLACE" and out["quantity"] == 0.375  # no fractionalShares needed to sell it all

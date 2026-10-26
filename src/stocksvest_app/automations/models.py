@@ -319,7 +319,7 @@ class SymbolSelection(BaseModel):
 class SizingMode(str, Enum):
     """How big each order is. Buys: QUANTITY (shares), CASH_AMOUNT (dollars), PERCENT_OF_BUDGET (of the budget
     available when the run starts). Sells: QUANTITY, PERCENT_OF_POSITION (of the budget's shares).
-    Quantities are rounded down to whole shares.
+    Quantities are rounded down to whole shares (to 0.0001 with OrderGuards.fractionalShares).
 
     Used by: OrderSizing.mode, BUY_SIZINGS / SELL_SIZINGS, planner.plan.
     """
@@ -430,6 +430,9 @@ class OrderGuards(BaseModel):
             (listed as tooCorrelated); the next ranked stock takes its place. Stops buying the same bet twice.
         maxOpenPositions: most symbols the budget may hold at once (holdings, open buys and this run's buys); a
             buy of a new symbol beyond it skips (MAX_POSITIONS). Adding to a held symbol is not limited.
+        fractionalShares: size MARKET + DAY orders to 0.0001 share instead of whole shares (when the broker allows
+            fractions), so small budgets can hold expensive stocks at their target size. Selling a whole position
+            always uses its exact quantity, with or without this.
 
     Used by: AutomationIn.orderGuards, runner.Trading, planner.plan.
     """
@@ -446,6 +449,7 @@ class OrderGuards(BaseModel):
     targetVolatilityPercent: Decimal | None = Field(default=None, gt=0, le=200)  # annualised, %
     maxOpenPositions: int | None = Field(default=None, ge=1, le=1000)
     maxCorrelation: Decimal | None = Field(default=None, gt=0, lt=1)
+    fractionalShares: bool = False
 
 
 # Any automation action; the "type" field picks the model. Used by: AutomationIn.actions, runner.run_automation.

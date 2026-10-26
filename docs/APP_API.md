@@ -300,7 +300,7 @@ budget, and position caps and `skipBuyIfHeld` look at the budget's shares and op
 {"maxOrdersPerRun": 10, "maxPositionValue": null, "maxPositionPercent": null,
  "regularHoursOnly": true, "skipBuyIfHeld": true, "maxDataAgeMinutes": 30, "requireLivePrice": false,
  "maxSpreadPercent": null, "rebuyCooldownMinutes": null, "maxSectorPercent": null,
- "targetVolatilityPercent": null, "maxOpenPositions": null, "maxCorrelation": null}
+ "targetVolatilityPercent": null, "maxOpenPositions": null, "maxCorrelation": null, "fractionalShares": false}
 ```
 
 `requireLivePrice: true` places an order only when its symbol has a live quote (see below); otherwise it is skipped
@@ -332,6 +332,11 @@ next ranked stock takes the place. Market `GET /v1/returns` supplies the returns
 
 `maxOpenPositions` limits how many symbols the budget holds at once (holdings, open buys and this run's buys). A buy
 of a new symbol beyond it skips (`MAX_POSITIONS`); adding to a held symbol is not limited.
+
+`fractionalShares: true` sizes `MARKET` + `DAY` orders to 0.0001 share instead of rounding down to whole shares, so a
+$9,000 budget can hold 5% of a $1,200 stock (0.37 share). Other order types stay whole. Selling a whole position
+always uses its exact quantity, so fractional holdings sell with or without it. Manual orders take fractions for
+`MARKET` + `DAY` too.
 
 **How a run plans orders:**
 1. **Sync:** current fills and balances are imported from each budget's broker account first. If a broker can't

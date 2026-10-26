@@ -155,7 +155,7 @@ def test_fills_land_in_the_right_portfolio(client, broker):
 def test_manual_buy_fill_and_sync(client, portfolio, broker):
     assert buy(client, portfolio, symbol="ZZZ").status_code == 422  # not halal / unknown
     assert "INSUFFICIENT_BUDGET" in buy(client, portfolio, quantity=5000).text  # 5000 * 10 > 10000
-    assert "ZERO_QUANTITY" in buy(client, portfolio, quantity=1.5).text  # whole shares only
+    assert "ZERO_QUANTITY" in buy(client, portfolio, quantity=1.5, type="LIMIT", limitPrice=10).text  # fractions: MARKET + DAY only
 
     order = buy(client, portfolio).json()
     assert order["status"] == "SUBMITTED" and order["estimatedPrice"] == 10.0 and order["automationId"] is None

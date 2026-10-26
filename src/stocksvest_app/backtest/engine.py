@@ -55,7 +55,7 @@ class _Broker:
 
     def capabilities(self) -> BrokerCapabilities:
         return BrokerCapabilities(order_types={"MARKET", "LIMIT", "STOP", "STOP_LIMIT", "TRAILING_STOP"},
-                                  time_in_force={"DAY", "GTC", "OPG", "CLS", "IOC", "FOK"}, fractional_shares=False,
+                                  time_in_force={"DAY", "GTC", "OPG", "CLS", "IOC", "FOK"}, fractional_shares=True,
                                   extended_hours=True, short_selling=False, max_orders_per_minute=200)
 
 

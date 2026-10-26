@@ -60,7 +60,7 @@ def check_request(broker: Broker, *, type: str, time_in_force: str, quantity: De
         broker: the Broker (its capabilities).
         type: order type.
         time_in_force: time in force.
-        quantity: shares (whole, above 0).
+        quantity: shares above 0; fractions only for MARKET + DAY at a broker that takes them.
         limit_price: needed for LIMIT / STOP_LIMIT.
         stop_price: needed for STOP / STOP_LIMIT.
         trail_percent: needed for TRAILING_STOP.
@@ -72,8 +72,11 @@ def check_request(broker: Broker, *, type: str, time_in_force: str, quantity: De
     Used by: place_order, automations.planner.plan (same checks in previews).
     """
     caps = broker.capabilities()
-    if quantity <= 0 or quantity != quantity.to_integral_value():
-        raise OrderRejected("quantity must be a whole number of shares above 0", "ZERO_QUANTITY")
+    if quantity <= 0:
+        raise OrderRejected("quantity must be above 0", "ZERO_QUANTITY")
+    if quantity != quantity.to_integral_value() and not (
+            caps.fractional_shares and type == "MARKET" and time_in_force == "DAY"):
+        raise OrderRejected("quantity must be a whole number of shares (fractions: MARKET + DAY only)", "ZERO_QUANTITY")
     if type not in caps.order_types:
         raise OrderRejected(f"{type} orders are not supported by this broker", "NOT_SUPPORTED_BY_BROKER")
     if time_in_force not in caps.time_in_force:
@@ -201,7 +204,7 @@ def place_order(conn: sqlite3.Connection, broker: Broker, portfolio: dict, *, sy
         symbol: ticker.
         side: BUY or SELL.
         type: order type.
-        quantity: whole shares.
+        quantity: shares (fractions: MARKET + DAY only).
         time_in_force: time in force.
         limit_price: limit price.
         stop_price: stop price.

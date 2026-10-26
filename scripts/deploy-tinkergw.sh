@@ -38,13 +38,13 @@ fi
 
 echo "== run files"
 ssh "$HOST" "mkdir -p ~/$DIR/data ~/$DIR/grafana ~/$DIR/backups"
-scp -q deploy/tinkergw/docker-compose.yml deploy/tinkergw/backup.sh deploy/tinkergw/gateway-check.sh "$HOST:$DIR/"
+scp -q deploy/tinkergw/docker-compose.yml deploy/tinkergw/backup.sh deploy/tinkergw/gateway-check.sh deploy/tinkergw/tranche-phase-in.py "$HOST:$DIR/"
 scp -q -r grafana/provisioning grafana/dashboards "$HOST:$DIR/grafana/"
 
 ssh "$HOST" TAG="$TAG" DIR="$DIR" bash -s <<'REMOTE'
 set -euo pipefail
 cd ~/"$DIR"
-chmod +x backup.sh gateway-check.sh
+chmod +x backup.sh gateway-check.sh tranche-phase-in.py
 [ -s .env ] || { echo "!! ~/$DIR/.env is missing: copy it from the Mac first (see deploy/README.md)"; exit 1; }
 if grep -q '^STOCKSVEST_TAG=' .env; then
   sed -i "s/^STOCKSVEST_TAG=.*/STOCKSVEST_TAG=$TAG/" .env
@@ -73,6 +73,11 @@ LINE="0 7 * * * $HOME/$DIR/gateway-check.sh >> $HOME/$DIR/backups/gateway-check.
 if ! crontab -l 2>/dev/null | grep -qF "$DIR/gateway-check.sh"; then
   { crontab -l 2>/dev/null || true; echo "$LINE"; } | crontab -
   echo "== daily IB Gateway support check installed (07:00)"
+fi
+LINE="40 14 * * 1-5 $HOME/$DIR/tranche-phase-in.py >> $HOME/$DIR/backups/tranche-phase-in.log 2>&1"
+if ! crontab -l 2>/dev/null | grep -qF "$DIR/tranche-phase-in.py"; then  # IDEA-3; 14:40 UTC is before 11:00 ET all year
+  { crontab -l 2>/dev/null || true; echo "$LINE"; } | crontab -
+  echo "== 5B tranche phase-in installed (weekdays 14:40 UTC)"
 fi
 docker image ls stocksvest --format '  kept image: {{.Tag}} ({{.CreatedSince}})' | head -5
 REMOTE

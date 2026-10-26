@@ -15,6 +15,7 @@ from ..orders.service import PRICE_BUFFER, OrderRejected, check_request
 from .models import OrderGuards, PlaceOrderAction, RankingKey, SelectionMode, SizingMode
 
 D0 = Decimal(0)
+FRACTION = Decimal("0.0001")  # smallest fractional order (guards.fractionalShares)
 
 
 @dataclass
@@ -383,6 +384,8 @@ def size(action: PlaceOrderAction, guards: OrderGuards, symbols: list[str], ctx:
     Used by: plan, runner._place_orders.
     """
     blocked = market_blocked(guards, ctx)
+    fractional = guards.fractionalShares and action.orderType == "MARKET" and action.timeInForce == "DAY"
+    step = FRACTION if fractional else Decimal(1)
     candidates = symbols
     intents = []
     for i, ticker in enumerate(candidates):
@@ -429,11 +432,12 @@ def size(action: PlaceOrderAction, guards: OrderGuards, symbols: list[str], ctx:
         else:
             free = held.quantity - ctx.open_sells.get(ticker, D0)
             qty = min(sizing.value, free) if sizing.mode == SizingMode.QUANTITY else free * sizing.value / 100
+        sell_all = action.side == "SELL" and qty >= free > 0
         scale = _vol_scale(guards, snap) if action.side == "BUY" else Decimal(1)
         if scale != 1:
             qty *= scale
             intent["detail"] = f"size x{scale:.2f} for volatility {snap['volatility20']:.0f}%"
-        qty = qty.quantize(Decimal(1), rounding=ROUND_DOWN)
+        qty = free if sell_all else qty.quantize(step, rounding=ROUND_DOWN)  # a fractional holding sells whole
 
         # 3. Position guards (buys): never let one symbol grow past the caps; shrink the order to fit.
         if action.side == "BUY":
@@ -457,7 +461,7 @@ def size(action: PlaceOrderAction, guards: OrderGuards, symbols: list[str], ctx:
                 caps.append(ctx.budget_equity * guards.maxPositionPercent / 100 * scale)
             if caps:
                 room = min(caps) - held.quantity * price
-                fit = (room / price).quantize(Decimal(1), rounding=ROUND_DOWN) if room > 0 else D0
+                fit = (room / price).quantize(step, rounding=ROUND_DOWN) if room > 0 else D0
                 if fit < qty:
                     if fit <= 0:
                         _skip(intent, "MAX_POSITION", f"position limit {min(caps):.2f} reached")
@@ -468,7 +472,7 @@ def size(action: PlaceOrderAction, guards: OrderGuards, symbols: list[str], ctx:
             if guards.maxSectorPercent is not None and sector:
                 cap = ctx.budget_equity * guards.maxSectorPercent / 100
                 room = cap - _sector_values(ctx).get(sector, D0)
-                fit = (room / price).quantize(Decimal(1), rounding=ROUND_DOWN) if room > 0 else D0
+                fit = (room / price).quantize(step, rounding=ROUND_DOWN) if room > 0 else D0
                 if fit < qty:
                     if fit <= 0:
                         _skip(intent, "SECTOR_FULL", f"{sector} is at its limit of {cap:.2f}")

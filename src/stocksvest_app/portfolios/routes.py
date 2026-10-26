@@ -69,7 +69,7 @@ class ManualOrderIn(BaseModel):
         symbol: ticker (must be in the halal universe).
         side: BUY or SELL.
         type: MARKET, LIMIT, STOP, STOP_LIMIT or TRAILING_STOP.
-        quantity: whole shares.
+        quantity: shares; fractions only for MARKET + DAY.
         timeInForce: DAY, GTC, GTD, OPG, CLS, IOC or FOK (the broker may support fewer).
         limitPrice: for LIMIT / STOP_LIMIT.
         stopPrice: for STOP / STOP_LIMIT.
