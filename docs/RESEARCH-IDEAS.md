@@ -57,6 +57,12 @@ volatility sizing as the candidate), net of costs, not just plain 5B.
 - **Test:** the app already supports this: 5 budgets with copies of the 5B automations on MON..FRI. Backtest the sum of 5
   runs (`compare.py` adds budgets) against the 100-run distribution. Pass bar: median similar, range at least 50%
   narrower.
+- **Result (2026-10-26, BT-8 runs, the 5 weekdays of each start week summed):** median 19.5%/yr vs 19.6 single
+  (with delisted 19.4 vs 19.4); range 18.1–20.7 vs 15.7–23.5 (delisted 18.2–21.1 vs 16.1–23.6); worst drop −39% vs
+  −45%. Against one weekday's own 20 runs the range is 40–60% narrower: a borderline pass. Built: `fractionalShares`
+  guard (a $9k budget can't buy whole shares above $450: SNDK, MU, AMD, DELL, STX) and a phase-in
+  (`deploy/tinkergw/tranche-phase-in.py`, weekdays 14:40 UTC) that moves the Monday budget's spare cash to Tue–Fri
+  budgets, a whole fifth at a time, with no forced selling.
 
 ## IDEA-4: Halal ETF as the real-money core
 
