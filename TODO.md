@@ -299,10 +299,16 @@ Shared base: price > $10, 20-day dollar volume > $50M, max spread 0.30%, buy at 
 
 ## OPS: Production and fixes
 
-- [ ] **OPS-1: Check live bars Monday 2026-10-26 after 09:30 ET** (blocked overnight 2026-10-25: needs the market open)
-  - Also: did 5B Buy place ~20 orders at 11:00 ET, and do the fill prices sit within the modelled spread?
-  - And: did the 19 OPG sells of the Testing budget fill at the open?
-  - `GET /v1/live` → `lastBarAt` should update every few seconds for held symbols.
+- [x] **OPS-1: Check the first live Monday, 2026-10-26** (checked 12:15 ET)
+  - 5B Buy ran at 11:00:22 ET. It placed 11 of 20 orders; 9 were skipped as WIDE_SPREAD (see OPS-6). All 11 filled within a minute; fill vs estimate was 0.00–0.05% (paper fills at the quote, so this says little about real slippage).
+  - The 19 OPG sells of the Testing budget all EXPIRED at 09:32 ET, unfilled: Alpaca paper does not fill OPG orders. The positions are still held (see OPS-5).
+  - Live bars: `/v1/market/live` reports `enabled: false`. Live bars come from IBKR, which is off on tinkergw (IBKR_ENABLED unset), so this is expected.
+- [ ] **OPS-5: Re-sell the 19 Testing positions**: place them again as MARKET DAY sells (the same symbols, quantities and budget). Placing orders needs the user (it was blocked for me). Never use OPG on Alpaca paper.
+- [ ] **OPS-6: 5B Buy skipped 9 of 20 on the 0.3% spread guard** (TXG, MXL, TWST, CDNA, STX, LQDA, FSLY, SMTC, PENG; 0.3–0.8% at 11:00)
+  - The guard reads one SIP quote. At 12:15 most of the same names were at 0.06–0.26%, so a single snapshot is noisy.
+  - The backtest models the spread but never skips, so live fills up more slowly than backtested.
+  - Options (none applied): add a second Monday run time to 5B Buy (e.g. 13:00; skipBuyIfHeld stops double buys), or raise maxSpreadPercent to 0.5. Core 40 Buy uses 0.3% too, but on the most-traded names.
+  - Whole shares: the high-priced names land under 5% (SNDK: 1 share = $1,263 vs a $2,250 target).
 - [x] **OPS-2: False cash-mismatch alerts** (fixed 2026-10-25: FILL_LAG in orders/service.sync_account)
   - Sync compares app vs. broker while fills are only partly imported.
   - Fix: skip the cash/position comparison while the broker reports fills not yet imported.
