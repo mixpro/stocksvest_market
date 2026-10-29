@@ -1,6 +1,6 @@
-import { useLocalSearchParams } from 'expo-router';
+import { Link, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 
 import { LineChart, Range, RANGES, sinceDays } from '@/components/LineChart';
 import { Card, ErrorNote, money, pct, Pills, Screen, signedMoney, T } from '@/components/ui';
@@ -39,7 +39,17 @@ export default function HoldingScreen() {
 
   return (
     <Screen back title={symbol} subtitle={p.data?.name} onRefresh={() => { p.reload(); bars.reload(); }}
-      refreshing={p.loading || bars.loading}>
+      refreshing={p.loading || bars.loading}
+      footer={(['SELL', 'BUY'] as const).map((side) => (
+        <Link key={side} asChild href={{ pathname: '/order', params: { portfolio, symbol, side } }}>
+          <Pressable accessibilityRole="button" disabled={side === 'SELL' && !shares}
+            style={{ flex: 1, height: 56, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
+              backgroundColor: side === 'BUY' ? colors.accent : colors.card, borderWidth: side === 'SELL' ? 2 : 0,
+              borderColor: colors.text, opacity: side === 'SELL' && !shares ? 0.4 : 1 }}>
+            <T size={16} weight="heavy" color={side === 'BUY' ? colors.card : colors.text}>{side === 'BUY' ? 'Buy more' : 'Sell'}</T>
+          </Pressable>
+        </Link>
+      ))}>
       <ErrorNote error={p.error ?? bars.error} />
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
         <View style={{ flex: 1 }}>

@@ -1,4 +1,5 @@
 import { Link } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
 import { useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 
@@ -23,7 +24,17 @@ export default function Home() {
 
   return (
     <Screen onRefresh={() => { reload(); automations.reload(); }} refreshing={loading}>
-      <T size={13} color={colors.muted}>StocksVest</T>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <T size={22} weight="heavy">StocksVest</T>
+        <Link href="/kill-all" asChild>
+          <Pressable accessibilityRole="button" accessibilityLabel="Kill all"
+            style={{ height: 44, paddingHorizontal: 14, borderRadius: 22, backgroundColor: colors.dangerSoft, flexDirection: 'row',
+              alignItems: 'center', gap: 6 }}>
+            <SymbolView name={{ ios: 'power', android: 'power_settings_new', web: 'power_settings_new' }} tintColor={colors.danger} size={18} />
+            <T size={13} weight="heavy" color={colors.danger}>Kill all</T>
+          </Pressable>
+        </Link>
+      </View>
       <Segmented<Env> value={env} onChange={setEnv}
         options={[{ value: 'ALL', label: 'All' }, { value: 'PAPER', label: 'Paper' }, { value: 'LIVE', label: 'Live' }]} />
       <ErrorNote error={error} />
