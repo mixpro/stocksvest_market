@@ -399,6 +399,11 @@ def test_alpaca_fills_pagination_and_live_refused(monkeypatch):
     from stocksvest_app.brokers.registry import make_broker
     with pytest.raises(BrokerError, match="live trading is not enabled"):
         make_broker({"environment": "LIVE", "provider": "ALPACA", "credentialsRef": "ALPACA"})
+    monkeypatch.setenv("ALLOW_LIVE", "1")
+    monkeypatch.setenv("ALPACA_LIVE_KEY", "k")
+    monkeypatch.setenv("ALPACA_LIVE_SECRET", "s")
+    assert make_broker({"environment": "LIVE", "provider": "ALPACA", "credentialsRef": "ALPACA_LIVE"}).base == "https://api.alpaca.markets"
+    monkeypatch.delenv("ALLOW_LIVE")
     monkeypatch.delenv("NOPE_KEY", raising=False)
     with pytest.raises(BrokerError, match="NOPE_KEY"):
         make_broker({"environment": "PAPER", "provider": "ALPACA", "credentialsRef": "NOPE"})

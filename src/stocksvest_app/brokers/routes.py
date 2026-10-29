@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from ..deps import AppContext
 from .base import BrokerError
-from .registry import PROVIDERS
+from .registry import PROVIDERS, live_allowed
 from . import store
 
 
@@ -18,7 +18,7 @@ class BrokerAccountIn(BaseModel):
     Attributes:
         name: display name.
         provider: ALPACA (IBKR later; refused until available).
-        environment: PAPER only (live trading is not enabled).
+        environment: PAPER, or LIVE when ALLOW_LIVE=1.
         credentialsRef: names the .env variables <REF>_KEY and <REF>_SECRET.
 
     Used by: router.create_account.
@@ -31,13 +31,13 @@ class BrokerAccountIn(BaseModel):
     @field_validator("environment")
     @classmethod
     def paper_only(cls, v):
-        """Refuse LIVE accounts.
+        """Refuse LIVE accounts unless registry.live_allowed().
 
         Args:
             v: the environment.
         """
-        if v != "PAPER":
-            raise ValueError("live trading is not enabled; only PAPER accounts can be added")
+        if v != "PAPER" and not live_allowed():
+            raise ValueError("live trading is not enabled (ALLOW_LIVE=1); only PAPER accounts can be added")
         return v
 
     @field_validator("provider")
