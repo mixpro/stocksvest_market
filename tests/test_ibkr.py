@@ -2,7 +2,7 @@
 
 import math
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -245,7 +245,7 @@ def test_live_bars_backfill_stream_and_expiry(settings, seeded, monkeypatch):  #
     monkeypatch.setattr("stocksvest_market.ibkr.asyncio.sleep", _fast_sleep)
     monkeypatch.setitem(FakeIB.book, "S0001", (12.0, 12.1, 12.05, 1))
     monkeypatch.setitem(FakeIB.book, "S0002", (5.0, 5.1, 5.05, 1))
-    t0 = datetime(2026, 10, 26, 14, 30, tzinfo=timezone.utc)
+    t0 = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(minutes=10)  # recent: older minutes are dropped
     monkeypatch.setattr(FakeIB, "history", {"S0001": [SimpleNamespace(date=t0, open=12.0, high=12.2, low=11.9,
                                                                        close=12.1, volume=300)]})
     q = started(replace(settings, ibkr_live_bars_max=1))
@@ -257,7 +257,7 @@ def test_live_bars_backfill_stream_and_expiry(settings, seeded, monkeypatch):  #
         wait_for(lambda: live_rows(settings))
         assert live_rows(settings) == [("id-S0001", int(t0.timestamp()), 12.0, 12.2, 11.9, 12.1, 300.0)]  # backfill
         bars = q._ib.streams["S0001"]
-        t1 = datetime(2026, 10, 26, 14, 31, tzinfo=timezone.utc)
+        t1 = t0 + timedelta(minutes=1)
         bars.push(t1, 12.1, 12.3, 12.1, 12.25, 100)
         bars.push(t1.replace(second=5), 12.25, 12.4, 12.0, 12.05, 50)  # same minute: rolled up
         wait_for(lambda: len(live_rows(settings)) == 2)
