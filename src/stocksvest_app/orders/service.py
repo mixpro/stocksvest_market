@@ -320,7 +320,8 @@ def finalize(conn, row: sqlite3.Row) -> None:
     """
     ts = now_iso()
     if row["status"] == "FILLED":
-        store.update_order(conn, row["id"], filled_at=ts)
+        last = conn.execute("SELECT MAX(executed_at) FROM fills WHERE order_id = ?", (row["id"],)).fetchone()[0]
+        store.update_order(conn, row["id"], filled_at=last or ts)  # the broker's fill time, once imported
     else:
         store.update_order(conn, row["id"], cancelled_at=ts)
     left = D(row["reserved"])
@@ -555,6 +556,9 @@ def sync_account(conn, broker: Broker, account: dict) -> dict:
     from ..brokers import store as brokers_store
 
     snap = broker.account_snapshot()
+    # Cash in no portfolio before this sync (may be negative), to find the broker's cent rounding below.
+    loose_before = (D(str(account["cash"])) - pf.assigned_cash(conn, account["id"])
+                    if account.get("cash") is not None else None)
     brokers_store.set_balances(conn, account["id"], snap.cash, snap.buying_power, snap.equity)
     portfolios = pf.list_portfolios(conn, account["id"])
     previous = store.last_sync(conn, account["id"])
@@ -562,7 +566,8 @@ def sync_account(conn, broker: Broker, account: dict) -> dict:
     # Fills first, so final orders release only what their fills did not use.
     since_str = store.last_fill_time(conn, account["id"]) or account["createdAt"]
     since = datetime.fromisoformat(since_str) - timedelta(days=1)
-    fills_imported = external = 0
+    fills_imported = external = other_cash = 0
+    traded: list[str] = []  # portfolio of each fill imported now
     mismatches = []
     for f in broker.list_fills(since):
         with immediate(conn):  # two syncs at once can't both apply the same fill
@@ -577,6 +582,7 @@ def sync_account(conn, broker: Broker, account: dict) -> dict:
                 external += 1
                 continue
             mismatches += apply_fill(conn, row, f)
+            traded.append(row["portfolio_id"])
         fills_imported += 1
 
     # Account fees booked apart from the fills (after the fills, so they can be split by who traded).
@@ -591,6 +597,7 @@ def sync_account(conn, broker: Broker, account: dict) -> dict:
             if store.fee_exists(conn, fee.broker_fee_id):
                 continue
             charged = apply_account_fee(conn, account, pf.list_portfolios(conn, account["id"]), fee)
+            other_cash += 1
         audit.record(conn, "ACCOUNT_FEE", "BROKER_ACCOUNT", account["id"], source="SYNC",
                      details={"brokerFeeId": fee.broker_fee_id, "date": fee.date, "amount": str(fee.amount),
                               "description": fee.description, "chargedTo": charged})
@@ -605,6 +612,7 @@ def sync_account(conn, broker: Broker, account: dict) -> dict:
             if store.dividend_exists(conn, d.broker_dividend_id):
                 continue
             credited = apply_dividend(conn, account, pf.list_portfolios(conn, account["id"]), d)
+            other_cash += 1
         audit.record(conn, "DIVIDEND", "BROKER_ACCOUNT", account["id"], source="SYNC",
                      details={"brokerDividendId": d.broker_dividend_id, "symbol": d.symbol, "kind": d.kind,
                               "date": d.date, "amount": str(d.amount), "creditedTo": credited})
@@ -646,6 +654,17 @@ def sync_account(conn, broker: Broker, account: dict) -> dict:
             mismatches.append({"kind": "POSITION_QUANTITY", "symbol": symbol, "appValue": float(a),
                                "brokerValue": float(b), "detail": "portfolios hold more shares than the broker"})
     assigned = pf.assigned_cash(conn, account["id"])
+    if traded and loose_before is not None and not (external or other_cash or awaiting_fills):
+        # The broker rounds each trade's cash to cents (Alpaca: in its favour), so its cash moves a few cents more
+        # than the fills say. That gap would land in unassigned cash; charge it to the portfolios that traded.
+        # ponytail: a gap over 2 cents per fill is taken as something else (a deposit) and stays unassigned.
+        gap = (snap.cash - assigned) - loose_before
+        if gap and abs(gap) <= D("0.02") * len(traded):
+            with conn:
+                for pid in sorted(set(traded)):
+                    pf.change_cash(conn, pid, "ROUNDING", gap * traded.count(pid) / len(traded),
+                                   note="broker cash rounding")
+            assigned = pf.assigned_cash(conn, account["id"])
     if assigned > snap.cash and not awaiting_fills:
         mismatches.append({"kind": "CASH", "appValue": float(assigned), "brokerValue": float(snap.cash),
                            "detail": "portfolios hold more cash than the broker account"})

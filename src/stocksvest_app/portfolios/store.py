@@ -230,7 +230,7 @@ def change_cash(conn, portfolio_id: str, type_: str, amount: Decimal, *, allocat
     Args:
         conn: app DB connection.
         portfolio_id: the portfolio's id.
-        type_: entry type: ALLOCATE, WITHDRAW, BUY_FILL, SELL_FILL, FEE or DIVIDEND.
+        type_: entry type: ALLOCATE, WITHDRAW, BUY_FILL, SELL_FILL, FEE, DIVIDEND or ROUNDING.
         amount: signed change of cash.
         allocated: signed change of the allocated capital (ALLOCATE / WITHDRAW).
         automation_id: the automation it concerns.
@@ -240,7 +240,7 @@ def change_cash(conn, portfolio_id: str, type_: str, amount: Decimal, *, allocat
         budget_id: the budget it concerns.
 
     Used by: create_portfolio, orders.service.apply_fill / apply_account_fee / apply_dividend,
-    portfolios.routes.allocate / withdraw.
+    portfolios.routes.allocate / withdraw, orders.service.sync_account.
     """
     r = conn.execute("SELECT cash, allocated FROM portfolios WHERE id = ?", (portfolio_id,)).fetchone()
     cash = D(r["cash"]) + amount

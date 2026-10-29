@@ -510,6 +510,10 @@ Each entry has `cashAfter` and `reservedAfter`, and links to its order, fill, ru
   shares between the budgets and manual shares that held the stock: lots open on the pay date plus lots sold in the
   30 days before it (the broker gives no ex-date). Shares held outside the app keep their part unassigned. They show
   as `DIVIDEND` entries (negative = withheld) in the portfolio and budget ledgers. Alpaca paper pays no dividends.
+- **Cash rounding:** the broker rounds each trade's cash to cents (Alpaca live: in its favour), so its cash moves a
+  little more than the fills say. When a sync imports fills and nothing else moved cash, a gap of up to 2 cents per
+  fill is charged to the portfolios that traded, as a `ROUNDING` portfolio entry. Larger gaps stay unassigned.
+- An order's `filledAt` is the broker's time of its last fill.
 - **Stocks no longer halal:** after each sync, during the regular session, shares of symbols removed as
   `NON_COMPLIANT` are sold at market (DAY), each budget and the manual shares selling their own, unless an open sell
   order already covers them. Other removal reasons (`PENDING`, `ERROR`, `NOT_IN_HALAL_DB`, `NOT_TRADABLE`) are not
