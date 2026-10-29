@@ -1,9 +1,8 @@
 // Portfolio page: broker accounts, portfolios with their capital, history chart, positions (by budget and buyer),
 // budgets with their automations, manual orders, orders and fills.
 
-const pf = { accounts: [], portfolios: [], automations: {}, selectedId: null, data: null, range: "1M", view: "Value" };
+const pf = { accounts: [], portfolios: [], automations: {}, selectedId: null, data: null, range: "1M", returnRange: "3M" };
 const RANGES = [["1W", 7], ["1M", 30], ["3M", 90], ["1Y", 365], ["All", null]];
-const VIEWS = [["Value"], ["Return %"]];
 const ALPACA_PERIOD = { "1W": "1W", "1M": "1M", "3M": "3M", "1Y": "1A", All: "1A" };
 
 function setError(message) {
@@ -84,30 +83,38 @@ async function openPortfolio(id) {
   pf.selectedId = id;
   pf.data = await api(`/v1/portfolios/${id}`);
   render();
-  await Promise.all([showOrders(), drawHistory()]);
+  await Promise.all([showOrders(), drawHistory(), drawReturns()]);
+}
+
+// A collapsible chart section (<details>); whether it is open is remembered per browser.
+function chartSection(key, title, controls, boxId, draw) {
+  let open = true;
+  try { open = localStorage.getItem(`svOpen:${key}`) !== "0"; } catch {}
+  return el("details", { class: "chart-section", open, ontoggle: (e) => {
+    try { localStorage.setItem(`svOpen:${key}`, e.target.open ? "1" : "0"); } catch {}
+    if (e.target.open) guard(draw);
+  } }, el("summary", {}, el("h3", {}, title)), el("div", { class: "row" }, controls), el("div", { id: boxId, class: "chart-box" }));
+}
+
+// Total return % (equity vs capital) over time: one point per close, every 15 minutes on 1W.
+async function drawReturns() {
+  const box = $("#returns");
+  if (!box?.closest("details").open) return;
+  const start = sinceDays(Object.fromEntries(RANGES)[pf.returnRange]);
+  const query = new URLSearchParams({ ...(start ? { start } : {}), ...(pf.returnRange !== "1W" ? { kind: "CLOSE" } : {}) });
+  const { points, current } = await api(`/v1/portfolios/${pf.selectedId}/history?${query}`);
+  const pctText = (v) => `${v > 0 ? "+" : ""}${Number(v).toFixed(2)}%`;
+  lineChart(box, [{ name: "Total return", data: [...points, current].map((p) => ({ at: p.at, value: p.totalReturnPct, gain: p.totalReturn })),
+    hover: (p) => `${pctText(p.value)} (${signed(p.gain)})` }], { format: pctText, zeroLine: true });
+  if (points.length < 2) box.append(el("p", { class: "muted" }, "Builds up from now: one point after each close (every 15 minutes on 1W)."));
 }
 
 async function drawHistory() {
   const box = $("#history");
-  if (!box) return;
-  const days = Object.fromEntries(RANGES)[pf.range];
-  const start = sinceDays(days);
-  const returns = pf.view === "Return %";
-  // Return % over a month or more: one point per day (the close), so the line stays readable.
-  const query = new URLSearchParams({ ...(start ? { start } : {}), ...(returns && pf.range !== "1W" ? { kind: "CLOSE" } : {}) });
-  const { points, current } = await api(`/v1/portfolios/${pf.selectedId}/history?${query}`);
+  if (!box?.closest("details").open) return;
+  const start = sinceDays(Object.fromEntries(RANGES)[pf.range]);
+  const { points, current } = await api(`/v1/portfolios/${pf.selectedId}/history?${new URLSearchParams(start ? { start } : {})}`);
   const all = [...points, current];
-  if (returns) {
-    const pctText = (v) => `${v > 0 ? "+" : ""}${Number(v).toFixed(2)}%`;
-    lineChart(box, [
-      { name: "Total return", data: all.map((p) => ({ at: p.at, value: p.totalReturnPct, gain: p.totalReturn })),
-        hover: (p) => `${pctText(p.value)} (${signed(p.gain)})` },
-      { name: "Open positions", data: all.map((p) => ({ at: p.at, value: p.unrealizedPct, gain: p.unrealizedPnL })),
-        hover: (p) => `${pctText(p.value)} (${signed(p.gain)})` },
-    ], { format: pctText, zeroLine: true });
-    if (points.length < 2) box.append(el("p", { class: "muted" }, "History builds up from now: one point after each close (every 15 minutes on 1W)."));
-    return;
-  }
   const series = [
     { name: "Equity", data: all.map((p) => ({ at: p.at, value: p.equity })) },
     { name: "Cash", data: all.map((p) => ({ at: p.at, value: p.cash })) },
@@ -148,6 +155,7 @@ function capitalControls(p) {
     await loadAll();
     render();
     drawHistory();
+    drawReturns();
   });
   return el("div", { class: "row" }, "capital",
     el("input", { type: "number", min: 0, step: "0.01", value: form.amount, style: "width:100px", oninput: (e) => (form.amount = Number(e.target.value)) }),
@@ -192,7 +200,7 @@ function render() {
   const sync = p.lastSync;
   setChildren($("#editor"), 
     el("div", { class: "section-head" }, el("h2", {}, p.name),
-      el("button", { onclick: () => guard(async () => { const r = await api(`/v1/portfolios/${p.id}/sync`, { method: "POST" }); pf.data = r.portfolio; render(); showOrders(); drawHistory(); }) }, "Sync now")),
+      el("button", { onclick: () => guard(async () => { const r = await api(`/v1/portfolios/${p.id}/sync`, { method: "POST" }); pf.data = r.portfolio; render(); showOrders(); drawHistory(); drawReturns(); }) }, "Sync now")),
     el("dl", { class: "kv" },
       el("dt", {}, "Capital"), el("dd", {}, `${money(p.allocated)} ${p.currency} · from ${p.account.name}`),
       el("dt", {}, "Cash"), el("dd", {}, money(p.cash)),
@@ -206,11 +214,13 @@ function render() {
       el("dt", {}, "Tax records"), el("dd", {}, el("button", { class: "link", onclick: () => guard(() => downloadSales(p)) },
         `Sales ${new Date().getFullYear()} (CSV)`))),
     capitalControls(p),
-    el("div", { class: "section-head" }, el("h3", {}, "History"),
-      el("span", {}, rangeButtons(VIEWS, pf.view, (_, label) => { pf.view = label; render(); drawHistory(); }), " ",
-        rangeButtons(RANGES, pf.range, (d, label) => { pf.range = label; render(); drawHistory(); }), " ",
-        pf.view === "Value" ? el("label", { class: "muted" }, el("input", { type: "checkbox", id: "with-account", onchange: () => guard(drawHistory) }), " whole account") : null)),
-    el("div", { id: "history", class: "chart-box" }),
+    chartSection("returns", "Total return %",
+      [rangeButtons(RANGES, pf.returnRange, (d, label) => { pf.returnRange = label; render(); drawHistory(); drawReturns(); })],
+      "returns", drawReturns),
+    chartSection("history", "History: equity and cash",
+      [rangeButtons(RANGES, pf.range, (d, label) => { pf.range = label; render(); drawHistory(); drawReturns(); }),
+        el("label", { class: "muted" }, el("input", { type: "checkbox", id: "with-account", onchange: () => guard(drawHistory) }), " whole account")],
+      "history", drawHistory),
     sync?.mismatches?.length ? el("div", { class: "error" }, "Differences with the broker:\n" +
       sync.mismatches.map((m) => `${m.kind} ${m.symbol || ""} app ${m.appValue ?? ""} broker ${m.brokerValue ?? ""} ${m.detail || ""}`).join("\n")) : null,
     el("h3", {}, "Positions"),

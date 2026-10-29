@@ -95,3 +95,6 @@ main.wide { grid-template-columns: minmax(0, 1.6fr) minmax(320px, 1fr); }
 dialog { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); }
 dialog input { width: 320px; }
 dialog menu { padding: 0; display: flex; justify-content: flex-end; }
+details.chart-section > summary { cursor: pointer; margin: 16px 0 4px; }
+details.chart-section > summary h3 { display: inline; margin: 0; }
+details.chart-section .chart-box { margin-top: 8px; }
