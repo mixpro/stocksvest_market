@@ -57,6 +57,14 @@ CREATE TABLE IF NOT EXISTS sync_state (
     value TEXT NOT NULL
 );
 
+-- Symbols that left the universe and why (NON_COMPLIANT, NOT_TRADABLE, NOT_IN_HALAL_DB, PENDING, ...). A symbol
+-- that comes back is taken out. Lets the app sell or flag shares it still holds.
+CREATE TABLE IF NOT EXISTS removed_symbols (
+    ticker      TEXT PRIMARY KEY,
+    reason      TEXT NOT NULL,
+    removed_at  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS halal_imports (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     imported_at     TEXT NOT NULL,

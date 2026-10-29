@@ -16,6 +16,7 @@ from ..config import Settings
 ENDPOINTS = {
     "symbols": "/v1/symbols",
     "symbol": "/v1/symbols/{symbol}",
+    "removed_symbols": "/v1/symbols/removed",
     "sectors": "/v1/sectors",
     "bars": "/v1/bars/{symbol}",
     "multi_bars": "/v1/bars",
@@ -91,6 +92,10 @@ class MarketAPI(Protocol):
 
     def sectors(self) -> dict:
         """GET /v1/sectors: {"sectors": [{key, name, symbols}], "unassigned"}."""
+        ...
+
+    def removed_symbols(self) -> dict:
+        """GET /v1/symbols/removed: {"symbols": [{ticker, reason, removedAt}]}, symbols that left the universe."""
         ...
 
     def bars(self, symbol: str, timeframe: str | None = None, start: str | None = None, end: str | None = None,
@@ -289,6 +294,10 @@ class MarketClient:
     def sectors(self) -> dict:
         """GET /v1/sectors."""
         return self._get("sectors")
+
+    def removed_symbols(self) -> dict:
+        """GET /v1/symbols/removed."""
+        return self._get("removed_symbols")
 
     def bars(self, symbol, timeframe=None, start=None, end=None, limit=None, session=None) -> dict:
         """GET /v1/bars/{symbol} (see MarketAPI.bars).

@@ -415,8 +415,9 @@ def router(ctx: AppContext) -> APIRouter:
 
     @r.post("/{portfolio_id}/orders", status_code=201)
     def place_manual_order(portfolio_id: str, body: ManualOrderIn, conn: Conn):
-        """Place an order by hand (paper account). Only halal symbols. With budgetId, a buy uses that budget's
-        money and a sell its shares; without it, unallocated cash and manual shares.
+        """Place an order by hand. Only halal symbols, except selling shares of a symbol that left the universe.
+        With budgetId, a buy uses that budget's money and a sell its shares; without it, unallocated cash and manual
+        shares.
         \f
         Args:
             portfolio_id: the portfolio's id (path).
@@ -426,10 +427,13 @@ def router(ctx: AppContext) -> APIRouter:
         p = load(conn, portfolio_id)
         symbol = body.symbol.upper()
         try:
-            if symbol not in ctx.market.universe():
+            if symbol in ctx.market.universe():
+                snap = ctx.market.snapshots({symbol}).get(symbol, {})
+                quote = ctx.market.live_quotes({symbol}).get(symbol, {})
+            elif body.side == "SELL" and symbol in {r["ticker"] for r in ctx.market_api.removed_symbols()["symbols"]}:
+                snap, quote = {}, {}  # held shares of a symbol that left the universe can be sold; no prices for it
+            else:
                 raise HTTPException(422, f"{symbol} is not in the halal universe")
-            snap = ctx.market.snapshots({symbol}).get(symbol, {})
-            quote = ctx.market.live_quotes({symbol}).get(symbol, {})
         except MarketError as e:
             raise HTTPException(502, e.detail)
         estimate = snap.get("latestPrice")

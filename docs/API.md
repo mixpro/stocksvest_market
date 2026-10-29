@@ -96,6 +96,18 @@ They are approximate GICS sectors, mapped from SEC SIC codes.
 
 `GET /v1/symbols/{symbol}` returns the same object as one item of the list above.
 
+### Removed symbols
+
+`GET /v1/symbols/removed` lists symbols that left the universe (their price history is deleted) and why:
+
+```json
+{"symbols": [{"ticker": "XYZ", "reason": "NON_COMPLIANT", "removedAt": "2026-11-02T06:00:00+00:00"}]}
+```
+
+`reason`: `NON_COMPLIANT` (screened out by the halal DB), `NOT_TRADABLE` (still compliant but no longer listed or
+tradable at Alpaca), `NOT_IN_HALAL_DB`, or another halal DB status upper-cased (`PENDING`, `ERROR`, ...).
+A symbol that comes back leaves this list.
+
 ---
 
 ## Bars (chart data)

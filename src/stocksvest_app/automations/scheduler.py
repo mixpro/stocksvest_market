@@ -230,6 +230,8 @@ class AutomationScheduler:
                 if not self._last_broker_sync or now - self._last_broker_sync >= BROKER_SYNC_EVERY:
                     sync_brokers(self.ctx, conn)  # before runs, so budgets and positions are current
                     watch_held_symbols(self.ctx, conn)  # real-time bars for what the portfolios hold
+                    from ..orders import halal_exit
+                    halal_exit.run(self.ctx, conn, now)  # sell what is held of stocks no longer halal
                     self._last_broker_sync = now
                 tick(self.ctx, conn)
                 from ..performance import snapshots

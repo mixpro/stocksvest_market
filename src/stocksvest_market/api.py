@@ -546,6 +546,17 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
             "unassigned": unassigned,
         }
 
+    @app.get("/v1/symbols/removed", tags=["symbols"], dependencies=read)
+    def removed_symbols(conn: Conn):
+        """Symbols that left the halal universe and why: NON_COMPLIANT (screened out), NOT_TRADABLE (no longer listed
+        or tradable at Alpaca), NOT_IN_HALAL_DB, or another screening status (PENDING, ERROR, ...).
+        \f
+        Args:
+            conn: market DB connection (one per request, injected).
+        """
+        rows = conn.execute("SELECT ticker, reason, removed_at FROM removed_symbols ORDER BY ticker")
+        return {"symbols": [{"ticker": r["ticker"], "reason": r["reason"], "removedAt": r["removed_at"]} for r in rows]}
+
     @app.get("/v1/symbols/{symbol}", tags=["symbols"], dependencies=read)
     def get_symbol(symbol: str, conn: Conn):
         """Look up by ticker or by id (the symbolId used in the UML designs).

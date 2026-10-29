@@ -171,3 +171,21 @@ def test_mailer_needs_relay_login_and_recipient(monkeypatch):
     monkeypatch.setenv("ALERT_EMAIL_TO", "me@example.com")
     s = Settings()
     assert Mailer(s).configured is True and "secret" not in repr(s)
+
+
+def test_holdings_no_longer_halal_are_emailed_daily(env, monkeypatch):
+    ctx, conn, market, mailer = env
+    from decimal import Decimal
+    from stocksvest_app.orders import halal_exit
+    held = [{"portfolio": {"name": "P"}, "budgetId": None, "symbol": "AAA", "quantity": Decimal(2),
+             "reason": "NON_COMPLIANT", "removedAt": "2026-10-19T06:00:00+00:00"},
+            {"portfolio": {"name": "P"}, "budgetId": None, "symbol": "BBB", "quantity": Decimal(1),
+             "reason": "PENDING", "removedAt": "2026-10-19T06:00:00+00:00"}]
+    monkeypatch.setattr(halal_exit, "held_removed", lambda ctx, conn: held)
+    checks.check(ctx, conn, at(11))
+    checks.check(ctx, conn, at(12))  # once a day
+    halal = [t for s, t in mailer.sent if "no longer halal" in s]
+    assert len(halal) == 1 and "2 AAA, NON_COMPLIANT" in halal[0] and "Sold at market" in halal[0]
+    assert "BBB, PENDING" in halal[0] and "sell by hand" in halal[0]
+    checks.check(ctx, conn, at(11, day=21))  # and again the next day while still held
+    assert len([s for s in mailer.subjects() if "no longer halal" in s]) == 2

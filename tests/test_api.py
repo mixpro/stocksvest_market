@@ -257,6 +257,8 @@ def test_halal_upload_adds_and_removes(settings, seeded, tmp_path, monkeypatch):
             time.sleep(0.05)
         assert c.get("/v1/bars/S0003", headers=READ).json()["bars"][0]["c"] == 50.0
         assert c.get("/v1/symbols/S0002", headers=READ).status_code == 404
+        removed = c.get("/v1/symbols/removed", headers=READ).json()["symbols"]
+        assert [(r["ticker"], r["reason"]) for r in removed] == [("S0002", "NON_COMPLIANT")]
         assert c.get("/v1/status", headers=READ).json()["lastHalalImport"]["compliant_count"] == 2
     assert settings.halal_db_path.exists()
 

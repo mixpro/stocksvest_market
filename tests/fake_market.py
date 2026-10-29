@@ -77,6 +77,12 @@ class FakeMarket:
             raise MarketError(404, f"unknown symbol '{symbol}'")
         return UNIVERSE[symbol]
 
+    def removed_symbols(self):
+        """Symbols that left the universe, from self.removed ({ticker: reason})."""
+        self._check()
+        return {"symbols": [{"ticker": t, "reason": r, "removedAt": "2026-10-28T06:00:00+00:00"}
+                            for t, r in sorted(getattr(self, "removed", {}).items())]}
+
     def sectors(self):
         self._check()
         return {"sectors": [{"key": "TECHNOLOGY", "name": "Technology", "symbols": 2},

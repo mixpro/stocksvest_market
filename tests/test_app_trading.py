@@ -543,6 +543,42 @@ def test_alpaca_dividend_activities():
     assert "DIVNRA" in rec.calls[0][2]["activity_types"]
 
 
+# ------------------------------------------------------------------ holdings no longer halal
+
+
+def test_holdings_no_longer_halal_are_sold(client, portfolio, automation, budget, broker, market, settings, monkeypatch):
+    from datetime import datetime, timedelta
+    import fake_market
+    from stocksvest_app import db
+    from stocksvest_app.deps import AppContext
+    from stocksvest_app.orders import halal_exit
+    bid = budget["id"]
+    client.post(f"/v1/budgets/{bid}/allocate", headers=KEY, json={"amount": 1000})
+    for q, kw in ((3, {"budgetId": bid}), (2, {})):
+        o = buy(client, portfolio, quantity=q, **kw).json()
+        broker.fill(o["brokerOrderId"], q, 10)
+    sync(client, portfolio)
+    ctx, conn = AppContext(settings, market, broker_factory=lambda a: broker), db.connect(settings.db_path)
+    opens = datetime.fromisoformat(market.calendar()["days"][0]["regularOpen"])
+
+    market.removed = {"AAA": "PENDING"}  # a screening glitch: reported, never sold
+    assert [(h["symbol"], h["budgetId"], h["quantity"]) for h in halal_exit.held_removed(ctx, conn)] == [
+        ("AAA", None, 2), ("AAA", bid, 3)]
+    assert halal_exit.run(ctx, conn, opens + timedelta(minutes=1)) == []
+
+    market.removed = {"AAA": "NON_COMPLIANT"}
+    monkeypatch.setattr("stocksvest_app.market.data.UNIVERSE_TTL_SECONDS", 0)
+    monkeypatch.delitem(fake_market.UNIVERSE, "AAA")  # gone from the universe: no buys, but held shares can be sold
+    assert buy(client, portfolio, quantity=1).status_code == 422
+    assert buy(client, portfolio, side="SELL", quantity=1).status_code == 201
+    assert halal_exit.run(ctx, conn, opens - timedelta(minutes=1)) == []  # only in the regular session
+    orders = halal_exit.run(ctx, conn, opens + timedelta(minutes=1))
+    assert sorted((o["budgetId"] or "", o["quantity"], o["type"]) for o in orders) == [
+        ("", 1, "MARKET"), (bid, 3, "MARKET")]  # the manual share already being sold is left alone
+    assert halal_exit.run(ctx, conn, opens + timedelta(minutes=2)) == []  # open sells cover everything
+    conn.close()
+
+
 def test_split_cents():
     from decimal import Decimal
     from stocksvest_app.orders.service import split_cents

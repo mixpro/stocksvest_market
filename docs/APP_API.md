@@ -448,7 +448,8 @@ Alpaca paper account  $100,000
 {"symbol": "AAPL", "side": "BUY", "type": "LIMIT", "quantity": 5, "limitPrice": 180, "timeInForce": "DAY"}
 ```
 
-- Only **halal symbols** are accepted.
+- Only **halal symbols** are accepted, except a `SELL` of a symbol that left the universe (market
+  `GET /v1/symbols/removed`), so held shares can always be sold by hand.
 - The order's `estimatedPrice` is the live ask (buy) or bid (sell) when a live quote is available.
 - Without `budgetId`, a buy uses unallocated cash and a sell uses manual shares.
 - With `budgetId` (a budget of this portfolio), a buy uses its money and a sell its shares.
@@ -507,6 +508,10 @@ Each entry has `cashAfter` and `reservedAfter`, and links to its order, fill, ru
   shares between the budgets and manual shares that held the stock: lots open on the pay date plus lots sold in the
   30 days before it (the broker gives no ex-date). Shares held outside the app keep their part unassigned. They show
   as `DIVIDEND` entries (negative = withheld) in the portfolio and budget ledgers. Alpaca paper pays no dividends.
+- **Stocks no longer halal:** after each sync, during the regular session, shares of symbols removed as
+  `NON_COMPLIANT` are sold at market (DAY), each budget and the manual shares selling their own, unless an open sell
+  order already covers them. Other removal reasons (`PENDING`, `ERROR`, `NOT_IN_HALAL_DB`, `NOT_TRADABLE`) are not
+  sold automatically. Every holding of a removed symbol is in a daily alert email while it is held.
 - Differences with the broker are recorded in `lastSync.mismatches`, only where the portfolios hold more shares or cash than the broker.
 
 ### History

@@ -43,6 +43,9 @@ def test_classify_rejects_non_common():
 def test_halal_only_compliant_and_dash_to_dot(tmp_path):
     path = make_halal_db(tmp_path / "h.db", {"BRK-B": "COMPLIANT", "AAPL": "NON_COMPLIANT", "XYZ": "pending"})
     assert halal.compliant_tickers(path) == {"BRK.B"}
+    reasons = {t: sync.removal_reason(st) for t, st in halal.statuses(path).items()}
+    assert reasons == {"BRK.B": "NOT_TRADABLE", "AAPL": "NON_COMPLIANT", "XYZ": "PENDING"}
+    assert sync.removal_reason(None) == "NOT_IN_HALAL_DB"
 
 
 def test_halal_rejects_wrong_file(tmp_path):

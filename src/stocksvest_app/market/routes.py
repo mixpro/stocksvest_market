@@ -86,6 +86,11 @@ def router(ctx: AppContext) -> APIRouter:
         """
         return call(lambda: api.symbols(search, exchange, asset_type, _split(sector), limit, offset))
 
+    @r.get("/symbols/removed")
+    def removed_symbols():
+        """Symbols that left the halal universe and why (market `GET /v1/symbols/removed`)."""
+        return call(api.removed_symbols)
+
     @r.get("/symbols/{symbol}")
     def symbol(symbol: str):
         """One symbol by ticker or id (market `GET /v1/symbols/{symbol}`).

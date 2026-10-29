@@ -9,6 +9,7 @@ Problems (one email when it starts, after its grace period, and one when it is r
 Events (one email per check with everything new):
   automation runs that ended FAILED or PARTIAL
 Daily:
+  holdings of stocks that left the halal universe (orders.halal_exit), every day while any are held
   a summary SUMMARY_AFTER the regular close: portfolios, budgets, runs, orders and the open problems.
 
 State lives in app_settings (keys "alert:*"), so a restart neither repeats nor forgets an alert.
@@ -25,7 +26,7 @@ from ..brokers import store as brokers_store
 from ..budgets import store as budget_store
 from ..db import iso
 from ..market.client import MarketError
-from ..orders import store as orders_store
+from ..orders import halal_exit, store as orders_store
 from ..portfolios import store as portfolios_store
 from ..runs import store as runs_store
 
@@ -145,6 +146,17 @@ def condition(conn, mailer, key: str, title: str, problem: str | None, now: date
 # ------------------------------------------------------------------ the checks
 
 
+def _owner(conn, budget_id: str | None) -> str:
+    """A budget's name, or "manual shares".
+
+    Args:
+        conn: app DB connection.
+        budget_id: the budget's id or None.
+    """
+    b = budget_store.get_budget(conn, budget_id) if budget_id else None
+    return b["name"] if b else "manual shares"
+
+
 def _failed_runs(conn, since: str) -> list[str]:
     """Readable lines for automation runs that ended FAILED or PARTIAL at or after `since`.
 
@@ -203,8 +215,21 @@ def check(ctx, conn, now: datetime | None = None) -> None:
                 f"{m.get('detail') or ''}" for m in last_sync["mismatches"])
         condition(conn, mailer, f"broker:{account['id']}", f"Broker account {account['name']}", problem, now)
 
-    # The market service, its sync and the live quotes.
+    # Shares of stocks that left the halal universe: one email a day while any are held.
     today = now.astimezone(ET).date().isoformat()
+    if (_get(conn, "alert:halal") or {}).get("date") != today:
+        try:
+            held = halal_exit.held_removed(ctx, conn)
+        except MarketError:
+            held = []  # the market check below reports it
+        lines = [f"- {h['portfolio']['name']} / {_owner(conn, h['budgetId'])}: {h['quantity']} {h['symbol']}, "
+                 f"{h['reason']} since {h['removedAt'][:10]}. "
+                 + ("Sold at market in the regular session." if h["reason"] in halal_exit.SELL_REASONS
+                    else "Not sold automatically: check it and sell by hand if needed.") for h in held]
+        if lines and _send(conn, mailer, f"{len(lines)} holding(s) no longer halal", "\n".join(lines)):
+            _put(conn, "alert:halal", {"date": today})
+
+    # The market service, its sync and the live quotes.
     try:
         status = ctx.market_api.status()
         day = ctx.market.trading_day(today)

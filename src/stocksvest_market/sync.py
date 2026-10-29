@@ -7,6 +7,7 @@ import sqlite3
 import threading
 import time as monotime
 from datetime import date, datetime, time, timedelta, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from . import db, fundamentals, halal, sectors, symbols
@@ -322,16 +323,17 @@ def sync_symbols(
     conn: sqlite3.Connection,
     client: AlpacaClient,
     settings: Settings,
-    compliant: set[str] | None = None,
+    halal_path=None,
     force: bool = False,
 ) -> dict:
-    """Rebuild the symbol universe: NASDAQ/NYSE listings, Alpaca tradable assets, and halal compliance.
+    """Rebuild the symbol universe: NASDAQ/NYSE listings, Alpaca tradable assets, and halal compliance. Symbols that
+    leave are recorded in removed_symbols with the reason (and taken out again if they come back).
 
     Args:
         conn: market DB connection.
         client: Alpaca client (assets).
         settings: halal_db_path and other_exchanges.
-        compliant: compliant tickers to use; None = read the current halal.db.
+        halal_path: the halal DB to use; None = the current halal.db.
         force: allow removing more than half the symbols (see symbols.reconcile).
 
     Returns:
@@ -339,16 +341,42 @@ def sync_symbols(
 
     Raises:
         SymbolSyncError: no halal.db yet, a bad download, or too many removals.
-        HalalDbError: halal.db is unreadable.
+        HalalDbError: halal.db is unreadable or has no compliant symbols.
 
     Used by: run_nightly, import_halal.
     """
-    if compliant is None:
-        if not settings.halal_db_path.exists():
-            raise symbols.SymbolSyncError(f"no halal DB at {settings.halal_db_path}; upload one first")
-        compliant = halal.compliant_tickers(settings.halal_db_path)
+    halal_path = halal_path or settings.halal_db_path
+    if not halal_path.exists():
+        raise symbols.SymbolSyncError(f"no halal DB at {halal_path}; upload one first")
+    status = halal.statuses(halal_path)
+    compliant = {t for t, s in status.items() if s == "COMPLIANT"}
+    if not compliant:
+        raise halal.HalalDbError("halal DB has no COMPLIANT symbols")
     listings = symbols.fetch_listings(["NASDAQ"] + settings.other_exchanges)
-    return symbols.reconcile(conn, listings, client.assets(), compliant, force=force)
+    summary = symbols.reconcile(conn, listings, client.assets(), compliant, force=force)
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:  # why each one left: the app sells held NON_COMPLIANT ones and alerts on the rest
+        conn.executemany("INSERT OR REPLACE INTO removed_symbols(ticker, reason, removed_at) VALUES (?, ?, ?)",
+                         [(t, removal_reason(status.get(t)), now) for t in summary["removed"]])
+        conn.execute("DELETE FROM removed_symbols WHERE ticker IN (SELECT ticker FROM symbols)")
+    return summary
+
+
+def removal_reason(status: str | None) -> str:
+    """Why a symbol left the universe, from its halal DB status.
+
+    Args:
+        status: overall_status in the halal DB, or None when it isn't there.
+
+    Returns:
+        NON_COMPLIANT; NOT_TRADABLE (still compliant, so no longer listed or tradable at Alpaca); NOT_IN_HALAL_DB;
+        or the status upper-cased (PENDING, ERROR, ...).
+
+    Used by: sync_symbols.
+    """
+    if status is None:
+        return "NOT_IN_HALAL_DB"
+    return "NOT_TRADABLE" if status == "COMPLIANT" else status.upper()
 
 
 def import_halal(conn: sqlite3.Connection, client: AlpacaClient, settings: Settings, path, force: bool = False) -> dict:
@@ -371,10 +399,7 @@ def import_halal(conn: sqlite3.Connection, client: AlpacaClient, settings: Setti
 
     Used by: api.upload_halal (POST /admin/halal), __main__.main (import-halal).
     """
-    compliant = halal.compliant_tickers(path)
-    if not compliant:
-        raise halal.HalalDbError("halal DB has no COMPLIANT symbols")
-    summary = sync_symbols(conn, client, settings, compliant=compliant, force=force)
+    summary = sync_symbols(conn, client, settings, halal_path=Path(path), force=force)
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     staged = settings.halal_db_path.with_suffix(".staged")
     shutil.copyfile(path, staged)
@@ -384,7 +409,7 @@ def import_halal(conn: sqlite3.Connection, client: AlpacaClient, settings: Setti
             "INSERT INTO halal_imports(imported_at, compliant_count, added, removed) VALUES (?, ?, ?, ?)",
             (
                 datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                len(compliant),
+                summary["compliant_in_halal_db"],
                 len(summary["added"]),
                 len(summary["removed"]),
             ),
