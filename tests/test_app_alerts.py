@@ -139,6 +139,19 @@ def test_broker_differences(env):
     assert mailer.subjects()[-1] == "Resolved: Broker account Paper"
 
 
+def test_negative_broker_cash(env):
+    ctx, conn, market, mailer = env
+    from stocksvest_app.brokers import store as brokers_store
+    acct = brokers_store.create_account(conn, {"name": "Live", "provider": "ALPACA", "environment": "LIVE",
+                                               "credentialsRef": "ALPACA_LIVE"}, "CONNECTED", None)
+    brokers_store.set_balances(conn, acct["id"], -0.03, 0, 100)
+    checks.check(ctx, conn, at(11))
+    assert mailer.subjects() == ["Problem: Negative cash in Live"] and "margin interest" in mailer.sent[0][1]
+    brokers_store.set_balances(conn, acct["id"], 5, 5, 100)
+    checks.check(ctx, conn, at(11, 6))
+    assert mailer.subjects()[-1] == "Resolved: Negative cash in Live"
+
+
 def test_daily_summary_once_after_the_close(env):
     ctx, conn, market, mailer = env
     market.last_sync = at(16, 5).isoformat()

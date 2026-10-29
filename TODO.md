@@ -5,7 +5,7 @@ Status: `[ ]` open · `[~]` in progress · `[x]` done · `[-]` dropped.
 
 Longer write-ups for an item can go in `todos/` (e.g. `todos/001-sec-user-agent-for-sectors.md`).
 
-Prefixes: **RISK** drawdown control · **BT** backtester · **DATA** market data · **STRAT** strategies to test · **FEAT** new filter/automation features · **OPS** production and fixes · **IDEA** parked ideas.
+Prefixes: **LIVE** real money · **RISK** drawdown control · **BT** backtester · **DATA** market data · **STRAT** strategies to test · **FEAT** new filter/automation features · **OPS** production and fixes · **IDEA** parked ideas.
 
 Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 → rest.
 
@@ -316,6 +316,28 @@ Shared base: price > $10, 20-day dollar volume > $50M, max spread 0.30%, buy at 
 - [x] **OPS-3: `claude-lite` defaults to DeepSeek**: `ANTHROPIC_MODEL` now defaults to Kimi in `~/.local/bin/claude-lite` (`--model haiku` still gives DeepSeek) (2026-10-25)
   - Add `export ANTHROPIC_MODEL="my-kimi-k3.1-pro-highspeed"` to `~/.local/bin/claude-lite`, or keep using `--model sonnet`.
 - [x] **OPS-4: Ponytail statusline badge** (optional): `statusLine` added to `~/.claude/settings.json` (2026-10-25)
+
+## LIVE: Real money (started 2026-10-29; rules in `docs/LIVE-RULES.md`)
+
+Decisions: Israel tax resident, Alpaca (margin account at 1×, no borrowing; scholar OK), no ETFs for now, start
+~$10k. Full research: the real-money report (2026-10-29).
+
+- [x] **LIVE-1: Live broker accounts behind `ALLOW_LIVE=1`**, live keys only on tinkergw (`ALPACA_LIVE_*`) (2026-10-29)
+- [x] **LIVE-2: Alpaca live account locked down**: margin multiplier 1, `no_shorting` true, no options, 2FA (2026-10-29)
+- [x] **LIVE-3: Dividends imported** (DIV…, DIVNRA withholding) into budgets; yearly report `/dividends` (2026-10-29)
+- [x] **LIVE-4: Stocks that leave the halal list**: market records removals with the reason; NON_COMPLIANT holdings are sold next session; daily email; manual sells allowed (2026-10-29)
+- [x] **LIVE-5: Kill all** button in the header (typed SELL ALL): switch off, cancel buys, sell every holding (2026-10-29)
+- [x] **LIVE-6: Kill rule**: buys paused at `KILL_DRAWDOWN_PERCENT` (30) below a portfolio's peak, once per peak (2026-10-29)
+- [x] **LIVE-7: Negative cash alert** (borrowing = margin interest); keep ~1% of the account unallocated (2026-10-29)
+- [x] **LIVE-8: Yearly sales CSV** per lot with buy date, for the accountant (`/sales`, portfolio page) (2026-10-29)
+- [~] **LIVE-9: $50 end-to-end test**: buy ~$10 SHLS at 10:07 ET 2026-10-29, reconcile, then sell and reconcile
+- [ ] **LIVE-10: First real dividend reconciled** (paper pays none): check the DIVIDEND entries and `/dividends` against Alpaca
+- [ ] **LIVE-11: Israeli accountant**: capital vs business income (trading frequency), semi-annual payments, sale
+  records in USD vs NIS (add USD/ILS rates to the CSV if needed), W-8BEN / 25% treaty withholding
+- [ ] **LIVE-12: Fund $10k**: 5B $5,000 (5 × $1,000 tranches), Core 40 $5,000, ~1% unallocated; one portfolio per
+  strategy on the LIVE account. Scale steps and checks in `docs/LIVE-RULES.md`
+- [ ] **LIVE-13: Monthly 12-month review vs the universe median** (by hand from the performance page; automate if it becomes a chore)
+- [ ] **LIVE-14: US estate tax above ~$60k** of US stocks for a non-US person: settle with the accountant before scaling past ~$55k
 
 ## IDEA: Parked
 

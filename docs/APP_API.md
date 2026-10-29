@@ -433,6 +433,7 @@ Alpaca paper account  $100,000
 | `GET /v1/portfolios/{id}` | Capital (`allocated`), `cash`, `unallocatedCash` (not in budgets), `positionsValue`, `equity`, unrealized and realized P&L, positions (per symbol, budget and buying automation; valued at live prices where available, see each position's `priceSource`), budgets, the account's unassigned cash, last sync |
 | `POST /v1/portfolios/{id}/capital/allocate` / `withdraw` | `{"amount": 5000}`: move money between the account's unassigned cash and the portfolio. A withdrawal can only take unallocated cash |
 | `GET /v1/portfolios/{id}/ledger` | Every change of the portfolio's cash, newest first |
+| `GET /v1/portfolios/{id}/sales?year=2026` | CSV of every lot sold in the year: sell and buy time (UTC), shares, buy and sell price, cost, proceeds, gain (USD), budget. For tax records (fills imported from 2026-10-29 on) |
 | `GET /v1/portfolios/{id}/dividends?year=2026` | Dividends credited in the year, per symbol: `received`, `withheld` (negative), `net`, plus totals. For purification and tax records |
 | `DELETE /v1/portfolios/{id}` | Only when empty: no shares, no open orders, no budgets, and no filter using it (input or `POSITION` action). Its cash goes back to the account |
 | `POST /v1/portfolios/{id}/sync` | Sync now. This also runs every minute in the background |
@@ -513,6 +514,8 @@ Each entry has `cashAfter` and `reservedAfter`, and links to its order, fill, ru
   `NON_COMPLIANT` are sold at market (DAY), each budget and the manual shares selling their own, unless an open sell
   order already covers them. Other removal reasons (`PENDING`, `ERROR`, `NOT_IN_HALAL_DB`, `NOT_TRADABLE`) are not
   sold automatically. Every holding of a removed symbol is in a daily alert email while it is held.
+- **Kill rule:** a portfolio `KILL_DRAWDOWN_PERCENT` (default 30, 0 = off) below its peak equity ÷ allocated (after-close
+  snapshots) gets its buy automations paused, once per peak, with an email. See `docs/LIVE-RULES.md`.
 - Differences with the broker are recorded in `lastSync.mismatches`, only where the portfolios hold more shares or cash than the broker.
 
 ### History

@@ -236,6 +236,8 @@ class AutomationScheduler:
                 tick(self.ctx, conn)
                 from ..performance import snapshots
                 snapshots.scheduled(self.ctx, conn, now)
+                from . import kill_rule
+                kill_rule.check(self.ctx, conn)  # after the close snapshot: pause buys of a portfolio past its limit
                 self.last_error = None
                 try:  # alerts never get in the way of trading
                     from ..alerts import checks

@@ -177,6 +177,16 @@ async function showLedger() {
     el("button", { class: "link", onclick: () => guard(showOrders) }, "Back to orders"));
 }
 
+// This year's sold lots as a CSV file (sent with the API key, so it works with or without the login proxy).
+async function downloadSales(p) {
+  const year = new Date().getFullYear();
+  const res = await fetch(`/v1/portfolios/${p.id}/sales?year=${year}`, { headers: { "X-API-Key": apiKey() } });
+  if (!res.ok) throw new Error(`${res.status}: sales export failed`);
+  const a = el("a", { href: URL.createObjectURL(await res.blob()), download: `${p.name}-sales-${year}.csv` });
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 function render() {
   const p = pf.data;
   const sync = p.lastSync;
@@ -192,7 +202,9 @@ function render() {
       el("dt", {}, "Open positions"), el("dd", {}, `${money(p.positionsCost)} → ${money(p.positionsValue)} · `,
         el("span", { class: tone(p.unrealizedPnL) }, signed(p.unrealizedPnL) + signedPct(p.unrealizedPct)), el("span", { class: "muted" }, " cost → value")),
       el("dt", {}, "Realized P&L"), el("dd", { class: tone(p.realizedPnL) }, signed(p.realizedPnL)),
-      el("dt", {}, "Last sync"), el("dd", {}, sync ? `${when(sync.ranAt)}${sync.error ? ` · ${sync.error}` : ""}` : "—")),
+      el("dt", {}, "Last sync"), el("dd", {}, sync ? `${when(sync.ranAt)}${sync.error ? ` · ${sync.error}` : ""}` : "—"),
+      el("dt", {}, "Tax records"), el("dd", {}, el("button", { class: "link", onclick: () => guard(() => downloadSales(p)) },
+        `Sales ${new Date().getFullYear()} (CSV)`))),
     capitalControls(p),
     el("div", { class: "section-head" }, el("h3", {}, "History"),
       el("span", {}, rangeButtons(VIEWS, pf.view, (_, label) => { pf.view = label; render(); drawHistory(); }), " ",

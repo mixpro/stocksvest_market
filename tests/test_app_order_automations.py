@@ -408,3 +408,33 @@ def test_top_n_still_counts_held_symbols_when_skip_buy_if_held_is_off(client, se
     fill_all(broker)
     again = run(client, a)
     assert intents(again) == [("AAA", 2, "PLACE", None)] and "alreadyHeld" not in section(again)
+
+
+def test_kill_rule_pauses_buys_once_per_peak(client, setup, tmp_path):
+    from stocksvest_app import db
+    from stocksvest_app.automations import kill_rule
+    from stocksvest_app.config import Settings
+    from stocksvest_app.deps import AppContext
+    from stocksvest_app.performance import store as perf
+    buyer = make(client, setup, order_action("BUY"))
+    seller = automation(client, setup, order_action("SELL", [{"mode": "PERCENT_OF_POSITION", "value": 100}]), name="S")
+    client.post(f"/v1/budgets/{buyer['budget']['id']}/automations", headers=KEY, json={"automationId": seller["id"]})
+    ctx, conn = AppContext(Settings(), FakeMarket()), db.connect(tmp_path / "app.db")
+    pid = setup["portfolio"]["id"]
+
+    def close(day, equity, allocated=10000):
+        with conn:
+            perf.insert_portfolio(conn, pid, f"2026-10-{day}T20:30:00+00:00", f"2026-10-{day}", "CLOSE",
+                                  {f: 0 for f in perf.PORTFOLIO_FIELDS} | {"equity": equity, "allocated": allocated})
+
+    close(10, 10000)
+    close(11, 12000)  # the peak: 1.2 per dollar
+    close(12, 9000, 10000)  # 25% down: under the 30% limit
+    assert kill_rule.check(ctx, conn) == []
+    close(13, 16000, 20000)  # 0.8 per dollar: 33% down, the extra 10k put in doesn't hide it
+    assert kill_rule.check(ctx, conn) == [{"portfolio": "Paper", "drawdownPercent": 33.33, "paused": ["Bot"]}]
+    status = {a["name"]: a["status"] for a in client.get("/v1/automations", headers=KEY).json()["automations"]}
+    assert status == {"Bot": "PAUSED", "S": "ACTIVE"}  # sells keep running
+    client.post(f"/v1/automations/{buyer['id']}/resume", headers=KEY)
+    assert kill_rule.check(ctx, conn) == []  # resumed by hand: not paused again for the same peak
+    conn.close()

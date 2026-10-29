@@ -366,7 +366,9 @@ def apply_fill(conn, row: sqlite3.Row, fill: BrokerFill) -> list[dict]:
             budget.buy_fill(conn, owner, cost, used, row["id"], fill_id, buyer)
             store.update_order(conn, row["id"], reserved=D(row["reserved"]) - used)
     else:
-        taken, basis, pnl = pf.close_lots_fifo(conn, portfolio_id, fill.symbol, owner, fill.quantity, fill.price)
+        sold = {"fill_id": fill_id, "sold_at": iso(fill.executed_at)}
+        taken, basis, pnl = pf.close_lots_fifo(conn, portfolio_id, fill.symbol, owner, fill.quantity, fill.price,
+                                               **sold)
         if owner:
             budget.sell_fill(conn, owner, taken * fill.price, basis, pnl, row["id"], fill_id, buyer)
         if taken < fill.quantity:
@@ -374,7 +376,7 @@ def apply_fill(conn, row: sqlite3.Row, fill: BrokerFill) -> list[dict]:
             extra = D0
             if owner:
                 extra, _, extra_pnl = pf.close_lots_fifo(conn, portfolio_id, fill.symbol, None, fill.quantity - taken,
-                                                         fill.price)
+                                                         fill.price, **sold)
                 pnl += extra_pnl
             if taken + extra < fill.quantity:
                 mismatches.append({"kind": "POSITION_QUANTITY", "symbol": fill.symbol,

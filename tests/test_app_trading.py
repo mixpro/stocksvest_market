@@ -596,6 +596,26 @@ def test_kill_all_stops_automations_cancels_buys_and_sells_everything(client, po
     assert client.get(f"/v1/orders/{pending_sell['id']}", headers=KEY).json()["status"] != "CANCELLED"
 
 
+def test_sales_export_has_each_lot_with_its_buy_date(client, portfolio, automation, budget, broker):
+    import csv, io
+    bid = budget["id"]
+    client.post(f"/v1/budgets/{bid}/allocate", headers=KEY, json={"amount": 1000})
+    for price in (10, 11):  # two lots
+        o = buy(client, portfolio, quantity=2, budgetId=bid).json()
+        broker.fill(o["brokerOrderId"], 2, price)
+        sync(client, portfolio)
+    o = buy(client, portfolio, side="SELL", quantity=3, budgetId=bid).json()
+    broker.fill(o["brokerOrderId"], 3, 12)
+    sync(client, portfolio)
+    year = today_et()[:4]
+    r = client.get(f"/v1/portfolios/{portfolio['id']}/sales", headers=KEY, params={"year": year})
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv")
+    rows = list(csv.DictReader(io.StringIO(r.text)))
+    assert [(x["quantity"], x["buy_price"], x["gain_usd"], x["budget"]) for x in rows] == [
+        ("2", "10", "4.00", "Main"), ("1", "11", "1.00", "Main")]  # oldest lot first, then part of the second
+    assert rows[0]["bought_at"] <= rows[1]["bought_at"] <= rows[0]["sold_at"]
+
+
 def test_split_cents():
     from decimal import Decimal
     from stocksvest_app.orders.service import split_cents

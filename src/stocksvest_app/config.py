@@ -19,6 +19,8 @@ class Settings:
         run_retention_days: how long the run history is kept (RUN_RETENTION_DAYS, default 183 = ~6 months).
         run_scheduler: start the automation scheduler with the API (APP_RUN_SCHEDULER; off in tests).
         scheduler_tick_seconds: time between scheduler passes (SCHEDULER_TICK_SECONDS).
+        kill_drawdown_percent: a portfolio this far below its peak gets its buy automations paused
+            (KILL_DRAWDOWN_PERCENT, default 30; 0 = off). See automations.kill_rule and docs/LIVE-RULES.md.
         alerts_enabled: email alerts and the daily summary (ALERTS_ENABLED; off by default and in tests).
         alert_email_to: who receives them (ALERT_EMAIL_TO).
         alert_email_from: the sender (ALERT_EMAIL_FROM; default "StocksVest <alerts@stocksvest.net>").
@@ -46,6 +48,10 @@ class Settings:
         default_factory=lambda: os.environ.get("APP_RUN_SCHEDULER", "true").lower() in ("1", "true", "yes")
     )
     scheduler_tick_seconds: int = field(default_factory=lambda: int(os.environ.get("SCHEDULER_TICK_SECONDS", "30")))
+
+    # The kill rule (automations/kill_rule.py): pause a portfolio's buys this far below its peak.
+    kill_drawdown_percent: float = field(
+        default_factory=lambda: float(os.environ.get("KILL_DRAWDOWN_PERCENT", "30")))
 
     # Email alerts (alerts/): problems once when they start and once when resolved, plus a summary after the close.
     alerts_enabled: bool = field(

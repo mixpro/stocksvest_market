@@ -1,10 +1,13 @@
 """/v1/portfolios: portfolios, their positions, orders and fills, manual orders, and broker sync."""
 
+import csv
+import io
 import sqlite3
 from decimal import Decimal
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from ..budgets import store as budget
@@ -339,6 +342,29 @@ def router(ctx: AppContext) -> APIRouter:
         """
         load(conn, portfolio_id)
         return {"entries": store.entries(conn, portfolio_id, limit)}
+
+    @r.get("/{portfolio_id}/sales", response_class=PlainTextResponse)
+    def sales(portfolio_id: str, conn: Conn, year: Annotated[int, Query(ge=2000, le=2100)]):
+        """Every lot sold in the year as CSV, for tax: sell and buy date (UTC), shares, prices, cost, proceeds, gain
+        in USD, and the budget. The broker's account fees and dividends are in the ledger and /dividends.
+        \f
+        Args:
+            portfolio_id: the portfolio's id (path).
+            conn: app DB connection (injected).
+            year: calendar year of the sell date (query).
+        """
+        load(conn, portfolio_id)
+        names = {b["id"]: b["name"] for b in budget.list_budgets(conn, portfolio_id)}
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["sold_at", "symbol", "quantity", "bought_at", "buy_price", "sell_price", "cost_usd", "proceeds_usd",
+                    "gain_usd", "budget"])
+        for x in store.sales(conn, portfolio_id, year):
+            w.writerow([x["soldAt"], x["symbol"], x["quantity"], x["boughtAt"], x["buyPrice"], x["sellPrice"],
+                        round(x["cost"], 2), round(x["proceeds"], 2), round(x["gain"], 2),
+                        names.get(x["budgetId"], x["budgetId"] or "manual")])
+        return PlainTextResponse(buf.getvalue(), media_type="text/csv", headers={
+            "Content-Disposition": f'attachment; filename="sales-{year}.csv"'})
 
     @r.get("/{portfolio_id}/dividends")
     def dividends(portfolio_id: str, conn: Conn, year: Annotated[int, Query(ge=2000, le=2100)]):

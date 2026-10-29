@@ -58,6 +58,22 @@ CREATE TABLE IF NOT EXISTS position_lots (
     closed_at          TEXT,
     budget_id          TEXT                      -- owner: the budget that paid (NULL = the portfolio's manual shares)
 );
+
+-- Which lots each sell fill closed, with the buy date and price: one row per lot per fill (tax records). Kept
+-- permanently; written for fills imported from the broker (not for backtests).
+CREATE TABLE IF NOT EXISTS lot_sales (
+    fill_id         TEXT NOT NULL,
+    lot_id          TEXT NOT NULL,
+    portfolio_id    TEXT NOT NULL,
+    budget_id       TEXT,
+    symbol          TEXT NOT NULL,
+    quantity        TEXT NOT NULL,
+    bought_at       TEXT NOT NULL,
+    cost_per_share  TEXT NOT NULL,
+    sold_at         TEXT NOT NULL,
+    price           TEXT NOT NULL,
+    PRIMARY KEY (fill_id, lot_id)
+);
 CREATE INDEX IF NOT EXISTS lots_open ON position_lots(portfolio_id, symbol, automation_id, closed_at);
 """
 
@@ -339,7 +355,8 @@ def held(conn, portfolio_id: str, symbol: str, budget_id: str | None = None, any
 
 
 def close_lots_fifo(conn, portfolio_id: str, symbol: str, budget_id: str | None, quantity: Decimal,
-                    price: Decimal) -> tuple[Decimal, Decimal, Decimal]:
+                    price: Decimal, fill_id: str | None = None, sold_at: str | None = None
+                    ) -> tuple[Decimal, Decimal, Decimal]:
     """Sell `quantity` from the owner's lots, oldest first, whoever bought them (inside the caller's transaction).
 
     Args:
@@ -349,6 +366,8 @@ def close_lots_fifo(conn, portfolio_id: str, symbol: str, budget_id: str | None,
         budget_id: the owning budget; None = manual shares.
         quantity: shares sold.
         price: sell price.
+        fill_id: the sell fill; with sold_at, each closed lot is recorded in lot_sales.
+        sold_at: the fill's time, ISO.
 
     Returns:
         (quantity actually taken from lots, their cost basis, realized P&L).
@@ -367,6 +386,11 @@ def close_lots_fifo(conn, portfolio_id: str, symbol: str, budget_id: str | None,
             (str(remaining - take), str(D(lot["realized_pnl"]) + lot_pnl),
              now_iso() if remaining - take == 0 else None, lot["id"]),
         )
+        if fill_id:
+            conn.execute("INSERT OR IGNORE INTO lot_sales(fill_id, lot_id, portfolio_id, budget_id, symbol, quantity, "
+                         "bought_at, cost_per_share, sold_at, price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                         (fill_id, lot["id"], portfolio_id, budget_id, symbol, str(take), lot["opened_at"],
+                          str(cost), sold_at, str(price)))
         basis += cost * take
         pnl += lot_pnl
         left -= take
@@ -407,6 +431,26 @@ def positions(conn, portfolio_id: str, budget_id: str | None = None, by_owner: b
         p["averageCost"] = p["costBasis"] / p["quantity"] if p["quantity"] else D0
         rows.append(p)
     return rows
+
+
+def sales(conn, portfolio_id: str, year: int) -> list[dict]:
+    """Every lot sold in a year (by sell date, UTC): buy and sell date and price, shares, cost, proceeds, gain.
+
+    Args:
+        conn: app DB connection.
+        portfolio_id: the portfolio's id.
+        year: calendar year.
+
+    Used by: routes.sales (CSV for the accountant).
+    """
+    out = []
+    for r in conn.execute("SELECT * FROM lot_sales WHERE portfolio_id = ? AND sold_at LIKE ? ORDER BY sold_at, symbol",
+                          (portfolio_id, f"{year}-%")):
+        q, cost, price = D(r["quantity"]), D(r["cost_per_share"]), D(r["price"])
+        out.append({"soldAt": r["sold_at"], "symbol": r["symbol"], "quantity": q, "boughtAt": r["bought_at"],
+                    "buyPrice": cost, "sellPrice": price, "cost": q * cost, "proceeds": q * price,
+                    "gain": q * (price - cost), "budgetId": r["budget_id"]})
+    return out
 
 
 def realized_pnl(conn, portfolio_id: str, budget_id: str | None = None) -> Decimal:

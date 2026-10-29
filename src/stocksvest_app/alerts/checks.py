@@ -2,6 +2,7 @@
 
 Problems (one email when it starts, after its grace period, and one when it is resolved):
   broker:<account>   the broker sync failed, or found differences with the broker
+  broker-cash:<acct> the broker account's cash is below zero (borrowing: margin interest)
   market:reachable   the market service doesn't answer
   market:sync        the market service reports a sync error
   market:stale       during the regular session, the market data hasn't synced for STALE_AFTER
@@ -214,6 +215,11 @@ def check(ctx, conn, now: datetime | None = None) -> None:
                 f"- {m.get('kind')} {m.get('symbol') or ''}: app {m.get('appValue')}, broker {m.get('brokerValue')}. "
                 f"{m.get('detail') or ''}" for m in last_sync["mismatches"])
         condition(conn, mailer, f"broker:{account['id']}", f"Broker account {account['name']}", problem, now)
+        cash = account.get("cash")
+        condition(conn, mailer, f"broker-cash:{account['id']}", f"Negative cash in {account['name']}",
+                  f"The broker reports cash of {cash}: that is borrowing, and the broker charges margin interest on "
+                  f"it. Add money or sell, and keep about 1% of the account unallocated." if cash is not None
+                  and cash < 0 else None, now)
 
     # Shares of stocks that left the halal universe: one email a day while any are held.
     today = now.astimezone(ET).date().isoformat()
