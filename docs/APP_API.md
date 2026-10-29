@@ -441,6 +441,7 @@ Alpaca paper account  $100,000
 | `POST /v1/portfolios/{id}/orders` | Manual order (see below) |
 | `GET /v1/orders/{id}` | One order with its fills |
 | `POST /v1/orders/{id}/cancel` | Cancel an open order |
+| `POST /v1/orders/kill-all` | Emergency stop, `{"confirm": "SELL ALL"}`: switches all scheduled automation runs off, cancels open buys and sells every share held in every portfolio (paper and live) at market (outside market hours the sells wait for the open). Shares not in a portfolio are left alone. Returns `cancelled`, `sells`, `errors`. The UI's **Kill all** button in the header calls it after a typed confirmation |
 
 **Manual orders:**
 

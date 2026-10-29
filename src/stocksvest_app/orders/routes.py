@@ -1,14 +1,26 @@
-"""/v1/orders/{id}: one order with its fills, and cancelling."""
+"""/v1/orders/{id}: one order with its fills, and cancelling. /v1/orders/kill-all: the emergency stop."""
 
 import sqlite3
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from ..brokers import store as brokers_store
 from ..brokers.base import BrokerError
 from ..deps import AppContext
-from . import service, store
+from . import kill_all as kill, service, store
+
+
+class KillAllIn(BaseModel):
+    """Body of POST /v1/orders/kill-all.
+
+    Attributes:
+        confirm: must be exactly "SELL ALL".
+
+    Used by: router.kill_all.
+    """
+    confirm: str
 
 
 def router(ctx: AppContext) -> APIRouter:
@@ -33,6 +45,23 @@ def router(ctx: AppContext) -> APIRouter:
         if not o:
             raise HTTPException(404, f"order '{order_id}' not found")
         return o
+
+    @r.post("/kill-all")
+    def kill_all(body: KillAllIn, conn: Conn):
+        """Emergency stop: switch all scheduled automation runs off, cancel open buys, and sell every share held in
+        every portfolio (paper and live) at market. Outside market hours the sells wait for the open. 422 unless
+        `confirm` is "SELL ALL".
+        \f
+        Args:
+            body: the confirmation.
+            conn: app DB connection (injected).
+        """
+        if body.confirm != "SELL ALL":
+            raise HTTPException(422, 'type "SELL ALL" to confirm')
+        out = kill.kill_all(ctx, conn)
+        return {"cancelled": out["cancelled"], "errors": out["errors"],
+                "sells": [{k: o[k] for k in ("id", "portfolioId", "budgetId", "symbol", "quantity", "status")}
+                          for o in out["sells"]]}
 
     @r.get("/{order_id}")
     def get_order(order_id: str, conn: Conn):

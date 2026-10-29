@@ -14,6 +14,7 @@ header nav a { color: var(--muted); text-decoration: none; padding: 2px 8px; bor
 header nav a.active { color: var(--text); background: var(--bg); font-weight: 600; }
 header .spacer { flex: 1; }
 header #bell { text-decoration: none; }
+header button.danger { border-color: var(--down); font-weight: 600; }
 main { display: grid; grid-template-columns: 240px minmax(380px, 1fr) minmax(420px, 1.2fr); gap: 12px; padding: 12px; height: calc(100vh - 46px); }
 main > * { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow: auto; }
 h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0; }
@@ -69,6 +70,9 @@ tbody tr:hover, tbody tr.active { background: var(--bg); }
 }
 @media (max-width: 700px) {
   main { grid-template-columns: minmax(0, 1fr); padding: 8px; }
+  header { flex-wrap: wrap; gap: 6px 12px; padding: 8px; }
+  header nav { order: 9; width: 100%; flex-wrap: wrap; }  /* page links on their own line, all visible */
+  #market-status { display: none; }
 }
 .switch { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 8px; border-radius: 6px; margin-bottom: 12px; }
 .switch.on { background: color-mix(in srgb, var(--up) 15%, transparent); }

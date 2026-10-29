@@ -579,6 +579,23 @@ def test_holdings_no_longer_halal_are_sold(client, portfolio, automation, budget
     conn.close()
 
 
+def test_kill_all_stops_automations_cancels_buys_and_sells_everything(client, portfolio, automation, budget, broker):
+    bid = budget["id"]
+    client.post(f"/v1/budgets/{bid}/allocate", headers=KEY, json={"amount": 1000})
+    for q, kw in ((3, {"budgetId": bid}), (2, {})):
+        o = buy(client, portfolio, quantity=q, **kw).json()
+        broker.fill(o["brokerOrderId"], q, 10)
+    sync(client, portfolio)
+    pending_sell = buy(client, portfolio, side="SELL", quantity=1).json()  # already being sold: not sold twice
+    open_buy = buy(client, portfolio, quantity=1, budgetId=bid).json()
+    assert client.post("/v1/orders/kill-all", headers=KEY, json={"confirm": "yes"}).status_code == 422
+    out = client.post("/v1/orders/kill-all", headers=KEY, json={"confirm": "SELL ALL"}).json()
+    assert out["cancelled"] == [open_buy["id"]] and out["errors"] == []
+    assert sorted((s["budgetId"] or "", s["quantity"]) for s in out["sells"]) == [("", 1), (bid, 3)]
+    assert client.get("/v1/automations/switch", headers=KEY).json()["automationsEnabled"] is False
+    assert client.get(f"/v1/orders/{pending_sell['id']}", headers=KEY).json()["status"] != "CANCELLED"
+
+
 def test_split_cents():
     from decimal import Decimal
     from stocksvest_app.orders.service import split_cents

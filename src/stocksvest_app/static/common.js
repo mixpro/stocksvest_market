@@ -92,10 +92,27 @@ function initHeader(page) {
     el("span", { id: "market-status", class: "muted" }),
     el("span", { class: "spacer" }),
     el("a", { id: "bell", href: "automations.html#inbox", title: "Notifications" }, "🔔"),
+    el("button", { class: "danger", title: "Sell everything and stop all automations", onclick: killAll }, "Kill all"),
     el("button", { class: "link", onclick: async () => { await askKey(); location.reload(); } }, "API key"),
   );
   refreshBell();
   setInterval(refreshBell, 60000);
+}
+
+// The emergency stop: typed confirmation, then switch automations off, cancel buys and sell every holding.
+async function killAll() {
+  const typed = prompt("KILL ALL: switch every automation off, cancel open buys and SELL EVERY STOCK held by the app, "
+    + "in paper AND live accounts, at market.\n\nType SELL ALL to confirm:");
+  if (typed === null) return;
+  if (typed.trim() !== "SELL ALL") return alert("Not confirmed: nothing was done.");
+  try {
+    const out = await api("/v1/orders/kill-all", { method: "POST", body: { confirm: "SELL ALL" } });
+    alert(`Automations switched off. ${out.cancelled.length} buy order(s) cancelled, ${out.sells.length} sell order(s) placed.`
+      + (out.errors.length ? `\n\nProblems:\n${out.errors.join("\n")}` : ""));
+  } catch (e) {
+    alert(`Kill all failed: ${e.message}`);
+  }
+  location.reload();
 }
 
 async function loadMarketStatus() {
