@@ -10,3 +10,4 @@ __pycache__/
 deploy/**/secrets/
 deploy/**/users.yml
 deploy/**/notifications.txt
+uv.lock
