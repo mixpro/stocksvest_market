@@ -14,6 +14,7 @@ from stocksvest_app.brokers.base import (
     SUBMITTED,
     AccountSnapshot,
     BrokerError,
+    BrokerDividend,
     BrokerFee,
     BrokerFill,
     BrokerOrder,
@@ -28,6 +29,7 @@ class FakeBroker:
         self.orders: dict[str, BrokerOrder] = {}
         self.fills: list[BrokerFill] = []
         self.fees: list[BrokerFee] = []
+        self.dividends: list[BrokerDividend] = []
         self.ids = itertools.count(1)
         self.fail_next: BrokerError | None = None
         self.submitted: list = []
@@ -94,6 +96,15 @@ class FakeBroker:
 
     def list_fees(self, since):
         return list(self.fees)
+
+    def pay_dividend(self, symbol, amount, date: str, kind="DIV", quantity=None):
+        """Simulate a dividend (positive) or tax withheld from one (negative)."""
+        self.cash += Decimal(str(amount))
+        self.dividends.append(BrokerDividend(f"div{next(self.ids)}", symbol, Decimal(str(amount)), date, kind,
+                                             None if quantity is None else Decimal(str(quantity)), kind))
+
+    def list_dividends(self, since):
+        return list(self.dividends)
 
     def positions(self):
         return [BrokerPosition(symbol=s, quantity=q, average_cost=p, market_value=None)

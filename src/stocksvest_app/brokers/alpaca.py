@@ -16,6 +16,7 @@ from .base import (
     SUBMITTED,
     AccountSnapshot,
     BrokerCapabilities,
+    BrokerDividend,
     BrokerError,
     BrokerFee,
     BrokerFill,
@@ -26,6 +27,8 @@ from .base import (
 
 log = logging.getLogger(__name__)
 
+# Alpaca activity types that move cash because of a held stock. Used by: AlpacaBroker.list_dividends
+DIVIDEND_TYPES = "DIV,DIVCGL,DIVCGS,DIVFEE,DIVFT,DIVNRA,DIVROC,DIVTW,DIVTXEX"
 # Used by: AlpacaBroker.__init__
 BASE_URLS = {"PAPER": "https://paper-api.alpaca.markets", "LIVE": "https://api.alpaca.markets"}
 
@@ -250,27 +253,51 @@ class AlpacaBroker:
                 return fills
             params["page_token"] = page[-1]["id"]
 
+    def _activities(self, types: str, since: datetime | None) -> list[dict]:
+        """Non-trade activities of these types, oldest first, all pages.
+
+        Args:
+            types: comma-separated Alpaca activity types.
+            since: only ones after this time; None = all.
+        """
+        params = {"activity_types": types, "direction": "asc", "page_size": 100}
+        if since:
+            params["after"] = since.isoformat()
+        out = []
+        while True:
+            page = self._call("GET", "/v2/account/activities", params=params) or []
+            out += page
+            if len(page) < params["page_size"]:
+                return out
+            params["page_token"] = page[-1]["id"]
+
     def list_fees(self, since: datetime | None) -> list[BrokerFee]:
-        """FEE and PTC (pass-through charge) activities, oldest first, all pages. Alpaca books regulatory fees
+        """FEE and PTC (pass-through charge) activities, oldest first. Alpaca books regulatory fees
         (e.g. the daily CAT fee for the day's trades) this way instead of on the fills.
 
         Args:
             since: only fees after this time; None = all.
         """
-        params = {"activity_types": "FEE,PTC", "direction": "asc", "page_size": 100}
-        if since:
-            params["after"] = since.isoformat()
         fees = []
-        while True:
-            page = self._call("GET", "/v2/account/activities", params=params) or []
-            for a in page:
-                amount = -_dec(a.get("net_amount") or "0")
-                if amount:  # a refund comes back negative and is imported as a negative fee
-                    fees.append(BrokerFee(broker_fee_id=a["id"], amount=amount, date=a.get("date", "")[:10],
-                                          description=a.get("description") or a["activity_type"]))
-            if len(page) < params["page_size"]:
-                return fees
-            params["page_token"] = page[-1]["id"]
+        for a in self._activities("FEE,PTC", since):
+            amount = -_dec(a.get("net_amount") or "0")
+            if amount:  # a refund comes back negative and is imported as a negative fee
+                fees.append(BrokerFee(broker_fee_id=a["id"], amount=amount, date=a.get("date", "")[:10],
+                                      description=a.get("description") or a["activity_type"]))
+        return fees
+
+    def list_dividends(self, since: datetime | None) -> list[BrokerDividend]:
+        """Dividend activities (cash, capital gain, return of capital, tax exempt) and the tax withheld from them
+        (DIVNRA, DIVFT, DIVTW), oldest first. net_amount is already signed.
+
+        Args:
+            since: only ones after this time; None = all.
+        """
+        return [BrokerDividend(broker_dividend_id=a["id"], symbol=a["symbol"], amount=_dec(a["net_amount"]),
+                               date=a.get("date", "")[:10], kind=a["activity_type"],
+                               quantity=_dec(a["qty"]) if a.get("qty") else None,
+                               description=a.get("description") or a["activity_type"])
+                for a in self._activities(DIVIDEND_TYPES, since) if a.get("symbol") and _dec(a.get("net_amount") or "0")]
 
     def equity_history(self, period: str = "1M", timeframe: str = "1D") -> list[dict]:
         """The whole account's equity over time: [{at, equity, profitLoss}]. Leading zeros from before the account

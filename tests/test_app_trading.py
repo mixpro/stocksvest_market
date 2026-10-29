@@ -492,6 +492,57 @@ def test_fees_from_before_the_account_was_added_are_ignored(client, portfolio, b
     assert sync(client, portfolio)["portfolio"]["cash"] == 10000
 
 
+# ------------------------------------------------------------------ dividends
+
+
+def tomorrow_et() -> str:
+    from datetime import date, timedelta
+    return (date.fromisoformat(today_et()) + timedelta(days=1)).isoformat()
+
+
+def test_dividend_goes_to_whoever_held_the_shares(client, portfolio, automation, budget, broker):
+    bid, pid = budget["id"], portfolio["id"]
+    client.post(f"/v1/budgets/{bid}/allocate", headers=KEY, json={"amount": 1000})
+    for q, kw in ((3, {"budgetId": bid}), (1, {})):  # the budget holds 3 shares, the manual shares 1
+        o = buy(client, portfolio, quantity=q, **kw).json()
+        broker.fill(o["brokerOrderId"], q, 10)
+    broker.pay_dividend("AAA", "0.40", tomorrow_et(), quantity=4)
+    broker.pay_dividend("AAA", "-0.12", tomorrow_et(), kind="DIVNRA", quantity=4)  # tax withheld
+    out = sync(client, portfolio)
+    assert out["sync"]["mismatches"] == [] and out["portfolio"]["cash"] == pytest.approx(10000 - 40 + 0.28)
+    assert [e for e in ledger(client, budget) if e[0] == "DIVIDEND"] == [("DIVIDEND", 0.3), ("DIVIDEND", -0.09)]
+    sync(client, portfolio)  # imported once
+    rep = client.get(f"/v1/portfolios/{pid}/dividends", headers=KEY, params={"year": tomorrow_et()[:4]}).json()
+    assert rep["symbols"] == [{"symbol": "AAA", "received": 0.4, "withheld": -0.12, "net": 0.28}]
+    assert rep["net"] == 0.28
+
+
+def test_dividend_after_the_shares_were_sold_and_outside_shares(client, portfolio, automation, budget, broker):
+    bid = budget["id"]
+    client.post(f"/v1/budgets/{bid}/allocate", headers=KEY, json={"amount": 1000})
+    o = buy(client, portfolio, quantity=2, budgetId=bid).json()
+    broker.fill(o["brokerOrderId"], 2, 10)
+    sync(client, portfolio)
+    o = buy(client, portfolio, side="SELL", quantity=2, budgetId=bid).json()
+    broker.fill(o["brokerOrderId"], 2, 10)
+    broker.pay_dividend("AAA", "1.00", tomorrow_et(), quantity=4)  # sold before the pay date; 2 shares not the app's
+    out = sync(client, portfolio)
+    assert [e for e in ledger(client, budget) if e[0] == "DIVIDEND"] == [("DIVIDEND", 0.5)]
+    assert out["portfolio"]["cash"] == pytest.approx(10000.5)  # the other half stays unassigned
+
+
+def test_alpaca_dividend_activities():
+    rec = Recorder([(200, [
+        {"id": "d1", "activity_type": "DIV", "date": "2026-11-02", "symbol": "AAA", "qty": "4", "net_amount": "0.4",
+         "per_share_amount": "0.1"},
+        {"id": "d2", "activity_type": "DIVNRA", "date": "2026-11-02", "symbol": "AAA", "qty": "4",
+         "net_amount": "-0.12"}])])
+    divs = AlpacaBroker("k", "s", session=rec).list_dividends(None)
+    assert [(d.broker_dividend_id, d.kind, str(d.amount), d.quantity) for d in divs] == [
+        ("d1", "DIV", "0.4", 4), ("d2", "DIVNRA", "-0.12", 4)]
+    assert "DIVNRA" in rec.calls[0][2]["activity_types"]
+
+
 def test_split_cents():
     from decimal import Decimal
     from stocksvest_app.orders.service import split_cents

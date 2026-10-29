@@ -187,6 +187,30 @@ class BrokerFee:
 
 
 @dataclass(frozen=True)
+class BrokerDividend:
+    """Cash a held stock paid (a dividend, positive) or tax taken from it (withholding, negative).
+
+    Attributes:
+        broker_dividend_id: the broker's id (imported once by this id).
+        symbol: the stock.
+        amount: signed cash change: positive = received, negative = withheld.
+        date: the day it was paid, "YYYY-MM-DD".
+        kind: the broker's type, e.g. Alpaca's DIV or DIVNRA (non-resident tax withheld).
+        quantity: shares it was paid on, if the broker says.
+        description: the broker's text.
+
+    Used by: Broker.list_dividends (returned), orders.service.apply_dividend.
+    """
+    broker_dividend_id: str
+    symbol: str
+    amount: Decimal
+    date: str
+    kind: str
+    quantity: Decimal | None
+    description: str
+
+
+@dataclass(frozen=True)
 class BrokerPosition:
     """Shares the broker account holds of one symbol.
 
@@ -299,6 +323,14 @@ class Broker(Protocol):
 
         Args:
             since: only fees after this time (None = all the broker keeps).
+        """
+        ...
+
+    def list_dividends(self, since: datetime | None) -> list[BrokerDividend]:
+        """Dividends paid and tax withheld from them, oldest first.
+
+        Args:
+            since: only ones after this time (None = all the broker keeps).
         """
         ...
 

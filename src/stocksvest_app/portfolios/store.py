@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS portfolios (
 CREATE TABLE IF NOT EXISTS portfolio_entries (
     id            TEXT PRIMARY KEY,
     portfolio_id  TEXT NOT NULL,
-    type          TEXT NOT NULL,             -- ALLOCATE WITHDRAW BUY_FILL SELL_FILL FEE ADJUSTMENT
+    type          TEXT NOT NULL,             -- ALLOCATE WITHDRAW BUY_FILL SELL_FILL FEE DIVIDEND ADJUSTMENT
     amount        TEXT NOT NULL,             -- signed change of cash
     cash_after    TEXT NOT NULL,
     automation_id TEXT,
@@ -214,7 +214,7 @@ def change_cash(conn, portfolio_id: str, type_: str, amount: Decimal, *, allocat
     Args:
         conn: app DB connection.
         portfolio_id: the portfolio's id.
-        type_: entry type: ALLOCATE, WITHDRAW, BUY_FILL, SELL_FILL or FEE.
+        type_: entry type: ALLOCATE, WITHDRAW, BUY_FILL, SELL_FILL, FEE or DIVIDEND.
         amount: signed change of cash.
         allocated: signed change of the allocated capital (ALLOCATE / WITHDRAW).
         automation_id: the automation it concerns.
@@ -223,7 +223,8 @@ def change_cash(conn, portfolio_id: str, type_: str, amount: Decimal, *, allocat
         note: free text.
         budget_id: the budget it concerns.
 
-    Used by: create_portfolio, orders.service.apply_fill, portfolios.routes.allocate / withdraw.
+    Used by: create_portfolio, orders.service.apply_fill / apply_account_fee / apply_dividend,
+    portfolios.routes.allocate / withdraw.
     """
     r = conn.execute("SELECT cash, allocated FROM portfolios WHERE id = ?", (portfolio_id,)).fetchone()
     cash = D(r["cash"]) + amount

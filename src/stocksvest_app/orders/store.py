@@ -84,6 +84,19 @@ CREATE TABLE IF NOT EXISTS broker_fees (
     created_at        TEXT NOT NULL
 );
 
+-- Dividends and the tax withheld from them, imported from the broker; credited to whoever held the shares.
+CREATE TABLE IF NOT EXISTS broker_dividends (
+    broker_dividend_id TEXT PRIMARY KEY,
+    broker_account_id  TEXT NOT NULL,
+    symbol             TEXT NOT NULL,
+    kind               TEXT NOT NULL,            -- the broker's type, e.g. DIV, DIVNRA
+    date               TEXT NOT NULL,            -- the day it was paid
+    amount             TEXT NOT NULL,            -- positive = received, negative = withheld
+    description        TEXT NOT NULL,
+    credited_to        TEXT NOT NULL,            -- JSON: [{portfolioId, budgetId, amount}], the rest is unassigned
+    created_at         TEXT NOT NULL
+);
+
 -- Fills of orders placed outside the app (e.g. in the broker's own UI). They belong to no portfolio:
 -- their shares and cash show up as "unassigned" on the broker account.
 CREATE TABLE IF NOT EXISTS external_fills (
@@ -361,6 +374,70 @@ def last_fee_date(conn, account_id: str) -> str | None:
     Used by: orders.service.sync_account (fees are fetched from a few days before).
     """
     return conn.execute("SELECT MAX(date) FROM broker_fees WHERE broker_account_id = ?", (account_id,)).fetchone()[0]
+
+
+def dividend_exists(conn, broker_dividend_id: str) -> bool:
+    """Whether a dividend (or withholding) was already imported.
+
+    Args:
+        conn: app DB connection.
+        broker_dividend_id: the broker's id.
+
+    Used by: orders.service.sync_account.
+    """
+    return conn.execute("SELECT 1 FROM broker_dividends WHERE broker_dividend_id = ?",
+                        (broker_dividend_id,)).fetchone() is not None
+
+
+def insert_dividend(conn, account_id: str, d, credited_to: list[dict]) -> None:
+    """Record an imported dividend and who it was credited to (inside the caller's transaction).
+
+    Args:
+        conn: app DB connection.
+        account_id: the broker account's id.
+        d: the BrokerDividend.
+        credited_to: [{portfolioId, budgetId, amount}].
+
+    Used by: orders.service.apply_dividend.
+    """
+    conn.execute("INSERT INTO broker_dividends(broker_dividend_id, broker_account_id, symbol, kind, date, amount, "
+                 "description, credited_to, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 (d.broker_dividend_id, account_id, d.symbol, d.kind, d.date, str(d.amount), d.description,
+                  json.dumps(credited_to), now_iso()))
+
+
+def last_dividend_date(conn, account_id: str) -> str | None:
+    """The newest imported dividend's date, or None.
+
+    Args:
+        conn: app DB connection.
+        account_id: the broker account's id.
+
+    Used by: orders.service.sync_account (dividends are fetched from a few days before).
+    """
+    return conn.execute("SELECT MAX(date) FROM broker_dividends WHERE broker_account_id = ?",
+                        (account_id,)).fetchone()[0]
+
+
+def dividend_report(conn, portfolio_id: str, year: int) -> list[dict]:
+    """A portfolio's dividends in a year per symbol: received, withheld and net (for purification and tax records).
+
+    Args:
+        conn: app DB connection.
+        portfolio_id: the portfolio's id.
+        year: calendar year of the pay date.
+
+    Used by: portfolios.routes.dividends.
+    """
+    by: dict = {}
+    for r in conn.execute("SELECT symbol, credited_to FROM broker_dividends WHERE date LIKE ? ORDER BY date",
+                          (f"{year}-%",)):
+        for c in json.loads(r["credited_to"]):
+            if c["portfolioId"] == portfolio_id:
+                row = by.setdefault(r["symbol"], {"symbol": r["symbol"], "received": Decimal(0), "withheld": Decimal(0)})
+                row["received" if c["amount"] > 0 else "withheld"] += Decimal(str(c["amount"]))
+    return [{**r, "received": float(r["received"]), "withheld": float(r["withheld"]),
+             "net": float(r["received"] + r["withheld"])} for r in sorted(by.values(), key=lambda r: r["symbol"])]
 
 
 def last_fill_time(conn, account_id: str) -> str | None:

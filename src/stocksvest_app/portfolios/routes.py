@@ -340,6 +340,21 @@ def router(ctx: AppContext) -> APIRouter:
         load(conn, portfolio_id)
         return {"entries": store.entries(conn, portfolio_id, limit)}
 
+    @r.get("/{portfolio_id}/dividends")
+    def dividends(portfolio_id: str, conn: Conn, year: Annotated[int, Query(ge=2000, le=2100)]):
+        """Dividends credited to the portfolio in a year, per symbol: received, tax withheld, net. For purification
+        and tax records.
+        \f
+        Args:
+            portfolio_id: the portfolio's id (path).
+            conn: app DB connection (injected).
+            year: calendar year of the pay date (query).
+        """
+        load(conn, portfolio_id)
+        rows = orders_store.dividend_report(conn, portfolio_id, year)
+        return {"year": year, "symbols": rows, "received": round(sum(r["received"] for r in rows), 2),
+                "withheld": round(sum(r["withheld"] for r in rows), 2), "net": round(sum(r["net"] for r in rows), 2)}
+
     @r.post("/{portfolio_id}/sync")
     def sync_now(portfolio_id: str, conn: Conn):
         """Sync the portfolio's broker account now (normally every minute).

@@ -433,6 +433,7 @@ Alpaca paper account  $100,000
 | `GET /v1/portfolios/{id}` | Capital (`allocated`), `cash`, `unallocatedCash` (not in budgets), `positionsValue`, `equity`, unrealized and realized P&L, positions (per symbol, budget and buying automation; valued at live prices where available, see each position's `priceSource`), budgets, the account's unassigned cash, last sync |
 | `POST /v1/portfolios/{id}/capital/allocate` / `withdraw` | `{"amount": 5000}`: move money between the account's unassigned cash and the portfolio. A withdrawal can only take unallocated cash |
 | `GET /v1/portfolios/{id}/ledger` | Every change of the portfolio's cash, newest first |
+| `GET /v1/portfolios/{id}/dividends?year=2026` | Dividends credited in the year, per symbol: `received`, `withheld` (negative), `net`, plus totals. For purification and tax records |
 | `DELETE /v1/portfolios/{id}` | Only when empty: no shares, no open orders, no budgets, and no filter using it (input or `POSITION` action). Its cash goes back to the account |
 | `POST /v1/portfolios/{id}/sync` | Sync now. This also runs every minute in the background |
 | `GET /v1/portfolios/{id}/orders?status=&automationId=&budgetId=&openOnly=true` | Orders, newest first. Each has `budgetId` (who pays) and `automationId` (who placed it) |
@@ -501,6 +502,11 @@ Each entry has `cashAfter` and `reservedAfter`, and links to its order, fill, ru
   day, by number of fills (a share for trades made outside the app stays unassigned). A fee for a day without app
   trades is split between the portfolios by their cash. They show as `FEE` entries in the portfolio and budget
   ledgers, with the broker's description.
+- **Dividends** (Alpaca `DIV`, `DIVCGL`, `DIVCGS`, `DIVROC`, `DIVTXEX`) and the tax withheld from them (`DIVNRA`,
+  `DIVFT`, `DIVTW`, `DIVFEE`) are imported too, from when the account was added. Each is split, in exact cents, by
+  shares between the budgets and manual shares that held the stock: lots open on the pay date plus lots sold in the
+  30 days before it (the broker gives no ex-date). Shares held outside the app keep their part unassigned. They show
+  as `DIVIDEND` entries (negative = withheld) in the portfolio and budget ledgers. Alpaca paper pays no dividends.
 - Differences with the broker are recorded in `lastSync.mismatches`, only where the portfolios hold more shares or cash than the broker.
 
 ### History

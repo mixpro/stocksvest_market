@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS budget_entries (
     id             TEXT PRIMARY KEY,
     budget_id      TEXT NOT NULL,
     automation_id  TEXT,                       -- the automation whose order caused it, if any
-    type           TEXT NOT NULL,              -- ALLOCATE WITHDRAW RESERVE RELEASE BUY_FILL SELL_FILL FEE ADJUSTMENT
+    type           TEXT NOT NULL,              -- ALLOCATE WITHDRAW RESERVE RELEASE BUY_FILL SELL_FILL FEE DIVIDEND ADJUSTMENT
     amount         TEXT NOT NULL,              -- signed change of cash (RESERVE/RELEASE: change of reserved)
     cash_after     TEXT NOT NULL,
     reserved_after TEXT NOT NULL,
@@ -200,7 +200,7 @@ def _apply(conn, budget_id: str, type_: str, amount: Decimal, *, cash: Decimal =
     Args:
         conn: app DB connection (caller manages the transaction).
         budget_id: the budget's id.
-        type_: ALLOCATE, WITHDRAW, RESERVE, RELEASE, BUY_FILL, SELL_FILL, FEE or ADJUSTMENT.
+        type_: ALLOCATE, WITHDRAW, RESERVE, RELEASE, BUY_FILL, SELL_FILL, FEE, DIVIDEND or ADJUSTMENT.
         amount: the entry's signed amount (change of cash; for RESERVE/RELEASE, change of reserved).
         cash: change of cash.
         reserved: change of reserved.
@@ -534,6 +534,21 @@ def fee(conn, budget_id: str, amount: Decimal, order_id: str | None, fill_id: st
     if amount:
         _apply(conn, budget_id, "FEE", -amount, cash=-amount, fees=amount, order_id=order_id, fill_id=fill_id,
                automation_id=automation_id, note=note)
+
+
+def dividend(conn, budget_id: str, amount: Decimal, note: str) -> None:
+    """The budget's share of a dividend (DIVIDEND entry; negative = tax withheld from it). No-op for 0.
+
+    Args:
+        conn: app DB connection (caller manages the transaction).
+        budget_id: the budget that held the shares.
+        amount: signed cash change.
+        note: symbol, broker type and text.
+
+    Used by: orders.service.apply_dividend.
+    """
+    if amount:
+        _apply(conn, budget_id, "DIVIDEND", amount, cash=amount, note=note)
 
 
 def entries(conn, budget_id: str, limit: int = 200) -> list[dict]:

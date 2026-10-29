@@ -12,6 +12,7 @@ from ..brokers.base import (
     REJECTED,
     Broker,
     BrokerError,
+    BrokerDividend,
     BrokerFee,
     BrokerFill,
     BrokerOrder,
@@ -394,7 +395,7 @@ def split_cents(amount: Decimal, weights: dict) -> dict:
     Returns:
         key -> share, in cents.
 
-    Used by: apply_account_fee.
+    Used by: apply_account_fee, apply_dividend.
     """
     sign = -1 if amount < 0 else 1
     total = sum(weights.values())
@@ -457,6 +458,51 @@ def apply_account_fee(conn, account: dict, portfolios: list[dict], fee: BrokerFe
     return charged
 
 
+def apply_dividend(conn, account: dict, portfolios: list[dict], d: BrokerDividend) -> list[dict]:
+    """Credit a dividend (or debit the tax withheld from it) to whoever held the shares: split by shares per budget
+    (or the portfolio's manual shares), in exact cents. The share of shares held outside the app stays with the
+    account's unassigned cash. Call inside db.immediate().
+
+    Args:
+        conn: app DB connection.
+        account: the broker account.
+        portfolios: the account's portfolios.
+        d: the dividend.
+
+    Returns:
+        [{portfolioId, budgetId, amount}] that were credited.
+
+    Used by: sync_account.
+    """
+    # ponytail: the broker gives the pay date, not the ex-date: holders = lots open then plus lots sold in the 30
+    # days before (the usual ex-to-pay gap). Exact would need the ex-date from the corporate actions API.
+    ids = {p["id"] for p in portfolios}
+    sold_from = (datetime.fromisoformat(d.date) - timedelta(days=30)).date().isoformat()
+    weights: dict = {}
+    for r in conn.execute("SELECT portfolio_id, budget_id, quantity, remaining_quantity, closed_at FROM position_lots "
+                          "WHERE symbol = ? AND opened_at < ? AND (closed_at IS NULL OR closed_at >= ?)",
+                          (d.symbol, d.date, sold_from)):
+        if r["portfolio_id"] in ids:
+            q = D(r["remaining_quantity"]) if r["closed_at"] is None else D(r["quantity"])
+            if q > 0:
+                weights[(r["portfolio_id"], r["budget_id"])] = weights.get((r["portfolio_id"], r["budget_id"]), D0) + q
+    held = sum(weights.values(), D0)
+    if d.quantity and d.quantity > held:
+        weights[None] = d.quantity - held  # shares held outside the app
+    credited = []
+    for key, share in split_cents(d.amount, weights or {None: 1}).items():
+        if key is None or not share:
+            continue
+        portfolio_id, budget_id = key
+        note = f"{d.symbol} {d.kind}: {d.description} ({d.date})"
+        pf.change_cash(conn, portfolio_id, "DIVIDEND", share, budget_id=budget_id, note=note)
+        if budget_id and budget.get_budget(conn, budget_id):
+            budget.dividend(conn, budget_id, share, note)
+        credited.append({"portfolioId": portfolio_id, "budgetId": budget_id, "amount": float(share)})
+    store.insert_dividend(conn, account["id"], d, credited)
+    return credited
+
+
 def cancel_order(conn, broker: Broker, order_id: str) -> dict:
     """Ask the broker to cancel an open order and record its new state.
 
@@ -488,7 +534,7 @@ def cancel_order(conn, broker: Broker, order_id: str) -> dict:
 def sync_account(conn, broker: Broker, account: dict) -> dict:
     """Sync one broker account and all its portfolios: balances, fills (assigned to portfolios through their
     orders; fills of orders placed outside the app are recorded as external), account fees (apply_account_fee),
-    order updates, then compare the app's positions and cash with the broker. Shares and cash not in any portfolio
+    dividends (apply_dividend), order updates, then compare the app's positions and cash with the broker. Shares and cash not in any portfolio
     are "unassigned".
 
     Args:
@@ -546,6 +592,20 @@ def sync_account(conn, broker: Broker, account: dict) -> dict:
         audit.record(conn, "ACCOUNT_FEE", "BROKER_ACCOUNT", account["id"], source="SYNC",
                      details={"brokerFeeId": fee.broker_fee_id, "date": fee.date, "amount": str(fee.amount),
                               "description": fee.description, "chargedTo": charged})
+
+    # Dividends and the tax withheld from them, from since the account was added (like the fees).
+    last_div = store.last_dividend_date(conn, account["id"]) or tracked_from
+    div_since = datetime.fromisoformat(last_div).replace(tzinfo=timezone.utc) - timedelta(days=3)
+    for d in broker.list_dividends(div_since):
+        if d.date < tracked_from:
+            continue
+        with immediate(conn):
+            if store.dividend_exists(conn, d.broker_dividend_id):
+                continue
+            credited = apply_dividend(conn, account, pf.list_portfolios(conn, account["id"]), d)
+        audit.record(conn, "DIVIDEND", "BROKER_ACCOUNT", account["id"], source="SYNC",
+                     details={"brokerDividendId": d.broker_dividend_id, "symbol": d.symbol, "kind": d.kind,
+                              "date": d.date, "amount": str(d.amount), "creditedTo": credited})
 
     orders_updated = 0
     awaiting_fills = []  # symbols whose fills the broker reported but hasn't listed yet
