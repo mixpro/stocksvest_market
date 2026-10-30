@@ -539,6 +539,22 @@ Automation snapshots are taken after each close. Snapshots are kept permanently.
 
 ---
 
+## Push notifications (phone app)
+
+| Method | Path | |
+|---|---|---|
+| GET | `/v1/push` | `{devices, alertsEnabled, categories: [{key, label, enabled}]}` |
+| POST | `/v1/push/devices` | `{"token": "ExponentPushToken[...]"}`: register a phone (again is fine) |
+| DELETE | `/v1/push/devices/{token}` | stop pushing to it (404 if unknown) |
+| PUT | `/v1/push/categories` | `{"fills": false, ...}`: switch categories; unnamed ones keep their state |
+| POST | `/v1/push/test` | send a test notification: `{sent}` |
+
+Sent through the Expo push service, only when `ALERTS_ENABLED`. Categories: `fills`, `rejected`, `kill` (kill
+rule, kill all), `money` (dividends, fees), from the activity log within a scheduler tick; `cash`, `problems`,
+`runs`, `halal`, `summary`, together with their alert email (after it is sent). All are on until switched off.
+
+---
+
 ## Activity log
 
 Everything that happens is recorded for the lifetime of the app, so problems can be traced.

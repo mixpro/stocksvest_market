@@ -1,12 +1,27 @@
 import { useState } from 'react';
 import { Pressable, TextInput, View } from 'react-native';
 
-import { Card, Screen, Segmented, T } from '@/components/ui';
-import { ThemePref, useApp } from '@/lib/app';
+import { Switch } from '@/components/Switch';
+import { Card, ErrorNote, Screen, Segmented, T } from '@/components/ui';
+import { ThemePref, useApi, useApp } from '@/lib/app';
 import { font } from '@/lib/theme';
 
+type PushState = { devices: number; alertsEnabled: boolean; categories: { key: string; label: string; enabled: boolean }[] };
+
 export default function Settings() {
-  const { serverUrl, apiKey, themePref, save, colors } = useApp();
+  const { serverUrl, apiKey, themePref, save, colors, api } = useApp();
+  const push = useApi<PushState>(apiKey ? '/v1/push' : null);
+  const [pushNote, setPushNote] = useState<string | null>(null);
+
+  async function toggle(key: string, on: boolean) {
+    await api('/v1/push/categories', { method: 'PUT', body: JSON.stringify({ [key]: on }) }).catch((e) => setPushNote(String(e.message ?? e)));
+    push.reload();
+  }
+
+  async function test() {
+    const r = await api<{ sent: number }>('/v1/push/test', { method: 'POST' }).catch(() => ({ sent: 0 }));
+    setPushNote(r.sent ? 'Sent. It should arrive in a few seconds.' : 'Not sent: no phone is registered yet.');
+  }
   const [url, setUrl] = useState(serverUrl);
   const [key, setKey] = useState(apiKey);
   const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
@@ -48,6 +63,24 @@ export default function Settings() {
         </Pressable>
         {status ? <T size={13} weight="bold" color={status.ok ? colors.up : colors.down}>{status.text}</T> : null}
       </Card>
+
+      <T size={12} weight="bold" color={colors.muted} style={{ marginTop: 8 }}>NOTIFICATIONS</T>
+      <ErrorNote error={push.error} />
+      {push.data ? (
+        <Card style={{ paddingVertical: 4 }}>
+          {push.data.categories.map((c) => (
+            <View key={c.key} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: 50 }}>
+              <T weight="semibold">{c.label}</T>
+              <Switch on={c.enabled} onChange={(on) => toggle(c.key, on)} label={c.label} />
+            </View>
+          ))}
+          <Pressable onPress={test} accessibilityRole="button" style={{ height: 48, justifyContent: 'center' }}>
+            <T weight="bold" color={colors.accent}>Send a test notification</T>
+          </Pressable>
+        </Card>
+      ) : null}
+      {push.data && !push.data.alertsEnabled ? <T size={12} color={colors.down}>Alerts are off on the server (ALERTS_ENABLED).</T> : null}
+      {pushNote ? <T size={12} weight="bold">{pushNote}</T> : null}
       <View style={{ height: 4 }} />
       <T size={12} color={colors.muted}>The key is kept in the phone's secure storage (Keychain on iPhone).</T>
     </Screen>

@@ -242,6 +242,9 @@ class AutomationScheduler:
                 try:  # alerts never get in the way of trading
                     from ..alerts import checks
                     checks.check(self.ctx, conn, now)
+                    if self.ctx.settings.alerts_enabled:
+                        from ..alerts import push
+                        push.events(conn)  # fills, rejections, kill rule, money: to the phone
                 except Exception:
                     log.exception("alert checks failed")
             except Exception as e:

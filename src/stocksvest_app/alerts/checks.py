@@ -90,14 +90,16 @@ def active(conn) -> list[dict]:
     return sorted(out, key=lambda x: x["since"])
 
 
-def _send(conn, mailer, subject: str, text: str) -> bool:
+def _send(conn, mailer, subject: str, text: str, category: str | None = None) -> bool:
     """Send an email and log it in the activity log. A failed send is logged and reported as False (retried later).
+    With a category, a sent email also goes to the phone (push.send), unless that category is off.
 
     Args:
         conn: app DB connection.
         mailer: the Mailer.
         subject: subject line.
         text: body.
+        category: push.CATEGORIES key, or None for email only.
     """
     try:
         mailer.send(subject, text)
@@ -107,6 +109,9 @@ def _send(conn, mailer, subject: str, text: str) -> bool:
                      details={"subject": subject})
         return False
     audit.record(conn, "ALERT_EMAIL_SENT", source="SYSTEM", details={"subject": subject})
+    if category:  # ponytail: only after the email went, so a failing relay (retried every check) can't repeat pushes
+        from . import push
+        push.send(conn, category, subject, text)
     return True
 
 
@@ -126,20 +131,22 @@ def condition(conn, mailer, key: str, title: str, problem: str | None, now: date
     Used by: check.
     """
     skey = f"alert:problem:{key}"
+    category = "cash" if key.startswith("broker-cash:") else "problems"
     state = _get(conn, skey)
     if problem:
         state = state or {"since": iso(now), "sent": False, "title": title}
         state["detail"] = problem
         if not state["sent"] and now - datetime.fromisoformat(state["since"]) >= grace:
             state["sent"] = _send(conn, mailer, f"Problem: {title}",
-                                  f"{title}\n\n{problem}\n\nSince {state['since']}. You'll get another email when it's resolved.")
+                                  f"{title}\n\n{problem}\n\nSince {state['since']}. You'll get another email when it's resolved.",
+                                  category)
         _put(conn, skey, state)
     elif state:
         if state.get("sent"):
             lasted = now - datetime.fromisoformat(state["since"])
             if not _send(conn, mailer, f"Resolved: {title}",
                          f"{title} is back to normal (the problem lasted about {int(lasted.total_seconds() // 60)} min).\n\n"
-                         f"It was: {state['detail']}"):
+                         f"It was: {state['detail']}", category):
                 return  # keep the state; the "resolved" email is retried at the next check
         _put(conn, skey, None)
 
@@ -202,7 +209,7 @@ def check(ctx, conn, now: datetime | None = None) -> None:
     # Automation runs that failed since the last check.
     lines = _failed_runs(conn, since)
     if lines:
-        _send(conn, mailer, f"{len(lines)} automation run(s) failed", "\n".join(lines))
+        _send(conn, mailer, f"{len(lines)} automation run(s) failed", "\n".join(lines), "runs")
 
     # Broker accounts: the last sync.
     for account in brokers_store.list_accounts(conn):
@@ -232,7 +239,7 @@ def check(ctx, conn, now: datetime | None = None) -> None:
                  f"{h['reason']} since {h['removedAt'][:10]}. "
                  + ("Sold at market in the regular session." if h["reason"] in halal_exit.SELL_REASONS
                     else "Not sold automatically: check it and sell by hand if needed.") for h in held]
-        if lines and _send(conn, mailer, f"{len(lines)} holding(s) no longer halal", "\n".join(lines)):
+        if lines and _send(conn, mailer, f"{len(lines)} holding(s) no longer halal", "\n".join(lines), "halal"):
             _put(conn, "alert:halal", {"date": today})
 
     # The market service, its sync and the live quotes.
@@ -259,7 +266,7 @@ def check(ctx, conn, now: datetime | None = None) -> None:
     # The daily summary, once per trading day after the close.
     if day and now >= datetime.fromisoformat(day["regularClose"]) + SUMMARY_AFTER:
         if (_get(conn, "alert:summary") or {}).get("date") != today:
-            if _send(conn, mailer, f"Daily summary {today}", summary(ctx, conn, today)):
+            if _send(conn, mailer, f"Daily summary {today}", summary(ctx, conn, today), "summary"):
                 _put(conn, "alert:summary", {"date": today})
 
 
