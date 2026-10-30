@@ -16,6 +16,8 @@
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": { "appName": "StocksVest Trader" }
+    }
   }
 }
