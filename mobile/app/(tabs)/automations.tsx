@@ -5,7 +5,7 @@ import { Switch } from '@/components/Switch';
 import { Card, ErrorNote, Screen, T } from '@/components/ui';
 import { useApi, useApp } from '@/lib/app';
 import { done, tap } from '@/lib/confirm';
-import { cardColors } from '@/lib/theme';
+import { cardColors, gradient } from '@/lib/theme';
 
 type Schedule = { type: string; onDays?: string[]; atTimes?: string[]; everyNWeeks?: number; timezone: string };
 type Automation = {
@@ -64,7 +64,7 @@ export default function Automations() {
     <Screen title="Automations" onRefresh={() => { list.reload(); master.reload(); }} refreshing={list.loading}>
       <ErrorNote error={list.error ?? master.error} />
       <View style={{ padding: 18, borderRadius: 22, flexDirection: 'row', alignItems: 'center', gap: 14,
-        backgroundColor: on ? cardColors[0][1] : '#5F6384' }}>
+        backgroundColor: on ? cardColors[0][1] : '#5F6384', backgroundImage: gradient(on ? cardColors[0] : ['#8A8DA8', '#5F6384']) }}>
         <View style={{ flex: 1 }}>
           <T size={12} weight="semibold" color="#FFFFFF">All scheduled runs</T>
           <T size={20} weight="heavy" color="#FFFFFF">{on ? 'Running' : 'Switched off'}</T>

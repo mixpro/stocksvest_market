@@ -6,7 +6,7 @@ import { LineChart, Range, RANGES, sinceDays } from '@/components/LineChart';
 import { Card, ErrorNote, money, pct, Pills, Screen, Section, signedMoney, T } from '@/components/ui';
 import { useApi, useApp } from '@/lib/app';
 import type { Portfolio } from '@/lib/portfolios';
-import { cardColors } from '@/lib/theme';
+import { cardColors, gradient } from '@/lib/theme';
 
 type HistoryPoint = { at: string; equity: number; cash: number; totalReturnPct: number };
 
@@ -49,7 +49,8 @@ export default function PortfolioScreen() {
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
         {tiles.map(([label, value], i) => (
           <View key={label} style={{ width: '47%', flexGrow: 1, height: 88, padding: 14, borderRadius: 20,
-            justifyContent: 'space-between', backgroundColor: [cardColors[0], cardColors[2], cardColors[1], cardColors[3]][i][1] }}>
+            justifyContent: 'space-between', backgroundColor: cardColors[[0, 2, 1, 3][i]][1],
+            backgroundImage: gradient(cardColors[[0, 2, 1, 3][i]]) }}>
             <T size={12} weight="semibold" color="#FFFFFF">{label}</T>
             <T size={19} weight="heavy" color="#FFFFFF">{label === 'Unrealized' || label === 'Realized' ? signedMoney(value) : money(value)}</T>
           </View>

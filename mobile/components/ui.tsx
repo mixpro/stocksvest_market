@@ -56,8 +56,11 @@ export function T({ children, size = 14, weight = 'regular', color, style, cente
 }
 
 export function Card({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
-  const { colors } = useApp();
-  return <View style={[{ backgroundColor: colors.card, borderRadius: 18, padding: 16 }, style]}>{children}</View>;
+  const { colors, scheme } = useApp();
+  return (
+    <View style={[{ backgroundColor: colors.card, borderRadius: 18, padding: 16,
+      boxShadow: scheme === 'dark' ? undefined : '0 2px 10px rgba(40, 40, 90, 0.05)' }, style]}>{children}</View>
+  );
 }
 
 export function Segmented<V extends string>({ options, value, onChange }: {

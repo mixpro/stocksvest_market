@@ -6,6 +6,7 @@ import { LineChart, Range, RANGES, sinceDays } from '@/components/LineChart';
 import { Card, ErrorNote, money, pct, Pills, Screen, signedMoney, T } from '@/components/ui';
 import { useApi, useApp } from '@/lib/app';
 import type { Portfolio } from '@/lib/portfolios';
+import { cardColors, gradient } from '@/lib/theme';
 
 const TIMEFRAME: Record<Range, string> = { '1W': '1Hour', '1M': '1Day', '3M': '1Day', '1Y': '1Day', All: '1Week' };
 
@@ -45,8 +46,9 @@ export default function HoldingScreen() {
           <Pressable accessibilityRole="button" disabled={side === 'SELL' && !shares}
             style={{ flex: 1, height: 56, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
               backgroundColor: side === 'BUY' ? colors.accent : colors.card, borderWidth: side === 'SELL' ? 2 : 0,
+              ...(side === 'BUY' ? { backgroundImage: gradient(cardColors[0]), boxShadow: '0 10px 22px rgba(80, 70, 229, 0.3)' } : {}),
               borderColor: colors.text, opacity: side === 'SELL' && !shares ? 0.4 : 1 }}>
-            <T size={16} weight="heavy" color={side === 'BUY' ? colors.card : colors.text}>{side === 'BUY' ? 'Buy more' : 'Sell'}</T>
+            <T size={16} weight="heavy" color={side === 'BUY' ? '#FFFFFF' : colors.text}>{side === 'BUY' ? 'Buy more' : 'Sell'}</T>
           </Pressable>
         </Link>
       ))}>

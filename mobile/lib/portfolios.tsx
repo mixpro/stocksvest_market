@@ -6,7 +6,7 @@ import { Pressable, View } from 'react-native';
 
 import { money, pct, T } from '@/components/ui';
 import { useApp } from '@/lib/app';
-import { cardColors } from '@/lib/theme';
+import { cardColors, gradient } from '@/lib/theme';
 
 export type Position = {
   symbol: string; budgetId: string | null; quantity: number; averageCost: number; costBasis: number;
@@ -50,7 +50,9 @@ export function PortfolioCard({ p, index, wide }: { p: Portfolio; index: number;
   return (
     <Link href={{ pathname: '/portfolio/[id]', params: { id: p.id } }} asChild>
       <Pressable accessibilityRole="button" style={{ width: wide ? undefined : 168, height: wide ? 110 : 128, padding: 16,
-        borderRadius: 22, justifyContent: 'space-between', backgroundColor: cardColors[index % cardColors.length][1] }}>
+        borderRadius: 22, justifyContent: 'space-between', backgroundColor: cardColors[index % cardColors.length][1],
+        backgroundImage: gradient(cardColors[index % cardColors.length]),
+        boxShadow: `0 10px 22px ${cardColors[index % cardColors.length][1]}44` }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
           <T size={13} weight="semibold" color="#FFFFFF" style={{ flexShrink: 1 }}>{p.name}</T>
           <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6,

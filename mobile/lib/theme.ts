@@ -54,3 +54,6 @@ export const font = {
   bold: 'PlusJakartaSans_700Bold',
   heavy: 'PlusJakartaSans_800ExtraBold',
 };
+
+/** A card gradient as a style background (the mock-up's 140° two-stop fill); keep backgroundColor as the fallback. */
+export const gradient = ([from, to]: [string, string]) => `linear-gradient(140deg, ${from}, ${to})`;
