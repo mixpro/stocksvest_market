@@ -4,7 +4,7 @@
     "slug": "stocksvest-mobile",
     "version": "0.1.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/icon-light.png",
     "scheme": "stocksvest",
     "userInterfaceStyle": "automatic",
     "ios": {
@@ -19,13 +19,17 @@
       },
       "runtimeVersion": {
         "policy": "appVersion"
+      },
+      "icon": {
+        "light": "./assets/images/icon-light.png",
+        "dark": "./assets/images/icon-dark.png"
       }
     },
     "android": {
       "package": "com.stocksvest.trader",
       "adaptiveIcon": {
-        "backgroundColor": "#0A0E17",
-        "foregroundImage": "./assets/images/icon.png"
+        "backgroundColor": "#4A3FE0",
+        "foregroundImage": "./assets/images/icon-light.png"
       },
       "predictiveBackGestureEnabled": false
     },
@@ -36,7 +40,7 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/icon.png",
+          "image": "./assets/images/icon-light.png",
           "imageWidth": 120,
           "resizeMode": "contain",
           "backgroundColor": "#F4F5FB",
