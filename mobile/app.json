@@ -16,6 +16,9 @@
           "NSAllowsArbitraryLoads": true
         },
         "ITSAppUsesNonExemptEncryption": false
+      },
+      "runtimeVersion": {
+        "policy": "appVersion"
       }
     },
     "android": {
@@ -55,6 +58,9 @@
       "eas": {
         "projectId": "de1f0ec1-23ec-4741-be83-43ff54cc8a1b"
       }
+    },
+    "updates": {
+      "url": "https://u.expo.dev/de1f0ec1-23ec-4741-be83-43ff54cc8a1b"
     }
   }
 }
