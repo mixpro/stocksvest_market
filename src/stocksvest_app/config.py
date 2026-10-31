@@ -21,6 +21,8 @@ class Settings:
         scheduler_tick_seconds: time between scheduler passes (SCHEDULER_TICK_SECONDS).
         kill_drawdown_percent: a portfolio this far below its peak gets its buy automations paused
             (KILL_DRAWDOWN_PERCENT, default 30; 0 = off). See automations.kill_rule and docs/LIVE-RULES.md.
+        litellm_url, litellm_key, news_model: the model that reads news (LITELLM_URL, LITELLM_KEY, NEWS_MODEL;
+            haiku-news). Without a key the news watcher reports an error and reads nothing.
         alerts_enabled: email alerts and the daily summary (ALERTS_ENABLED; off by default and in tests).
         alert_email_to: who receives them (ALERT_EMAIL_TO).
         alert_email_from: the sender (ALERT_EMAIL_FROM; default "StocksVest <alerts@stocksvest.net>").
@@ -57,6 +59,9 @@ class Settings:
     alerts_enabled: bool = field(
         default_factory=lambda: os.environ.get("ALERTS_ENABLED", "false").lower() in ("1", "true", "yes")
     )
+    litellm_url: str = field(default_factory=lambda: os.environ.get("LITELLM_URL", "https://litellm.hardansaeed.com"))
+    litellm_key: str = field(default_factory=lambda: os.environ.get("LITELLM_KEY", ""), repr=False)
+    news_model: str = field(default_factory=lambda: os.environ.get("NEWS_MODEL", "haiku-news"))
     alert_email_to: str = field(default_factory=lambda: os.environ.get("ALERT_EMAIL_TO", ""))
     alert_email_from: str = field(
         default_factory=lambda: os.environ.get("ALERT_EMAIL_FROM", "StocksVest <alerts@stocksvest.net>")

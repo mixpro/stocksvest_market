@@ -107,7 +107,7 @@ def test_failing_watcher_records_its_error_once_and_others_still_run(tmp_path, m
     thread.tick(ctx, conn, at("2026-11-02", "11:00"))
     thread.tick(ctx, conn, at("2026-11-02", "11:10"))
     assert store.config(conn, thread.holdings_drop)["lastError"] == "snapshots down"
-    assert conn.execute("SELECT COUNT(*) FROM audit_log WHERE action = 'WATCHER_ERROR'").fetchone()[0] == 2  # one per watcher
+    assert conn.execute("SELECT COUNT(*) FROM audit_log WHERE action = 'WATCHER_ERROR'").fetchone()[0] == len(thread.WATCHERS)  # one per watcher
     market.broken = False
     thread.tick(ctx, conn, at("2026-11-02", "11:20"))
     assert store.config(conn, thread.holdings_drop)["lastError"] is None

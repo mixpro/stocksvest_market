@@ -1,4 +1,4 @@
-"""Watcher: a held stock is down `dropPercent` or more today, pre-market and after hours included (WATCH-4).
+"""Watcher: a held stock is down dropPercent or more today, pre-market and after hours included (WATCH-4).
 Prices: the live last trade (market GET /v1/quotes), else the newest minute bar from the snapshots.
 
 The drop is the worse of: latest price vs the previous close, and (after hours) latest price vs today's close.
@@ -7,6 +7,8 @@ It fires again at each further step (8%, 16%, 24%... with the default), once per
 
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+
+from . import store
 
 NAME = "holdings-drop"
 EVERY = timedelta(minutes=1)
@@ -21,10 +23,7 @@ def _pct(a, b) -> float | None:
 
 
 def check(ctx, conn, now, settings, state) -> list[dict]:
-    held: dict[str, list[str]] = {}
-    for r in conn.execute("SELECT DISTINCT l.symbol, p.name FROM position_lots l JOIN portfolios p "
-                          "ON p.id = l.portfolio_id WHERE l.closed_at IS NULL"):
-        held.setdefault(r["symbol"], []).append(r["name"])
+    held = store.held(conn)
     step = float(settings["dropPercent"])
     today = now.astimezone(ET).date().isoformat()
     live = ctx.market.live_quotes(set(held))  # the last trade right now (Alpaca real-time SIP)

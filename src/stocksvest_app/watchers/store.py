@@ -125,3 +125,15 @@ def save_config(conn, watcher, **changes) -> dict:
     c["settings"] = {k: v for k, v in c["settings"].items() if k in watcher.DEFAULTS}
     _put(conn, f"watcher:{watcher.NAME}", c)
     return c
+
+
+def held(conn) -> dict[str, list[str]]:
+    """symbol -> names of the portfolios holding it (open lots).
+
+    Used by: holdings_drop, news.
+    """
+    out: dict[str, list[str]] = {}
+    for r in conn.execute("SELECT DISTINCT l.symbol, p.name FROM position_lots l JOIN portfolios p "
+                          "ON p.id = l.portfolio_id WHERE l.closed_at IS NULL"):
+        out.setdefault(r["symbol"], []).append(r["name"])
+    return out

@@ -573,6 +573,7 @@ Each finding is stored once (unique `key`) and pushed to the phone (category `ev
 |---|---|---|
 | `holdings-drop` | every minute, 04:00–20:00 ET | a held stock down `dropPercent` (8) today, vs the previous close or (after hours) today's close; again at each further step |
 | `market` | every 5 minutes, regular session | median daily change of the halal stocks that traded today at or below −`marketDropPercent` (2), or of a sector (at least `minSectorStocks`, 10) at or below −`sectorDropPercent` (3) |
+| `news` | every 2 minutes, day and night | new Alpaca news about a held stock (not roundups of more than 5 stocks), read by the news model (`NEWS_MODEL`, `haiku-news` through LiteLLM, `LITELLM_KEY`). Kind `NEWS_<KIND>` (`TRIAL_DATA`, `TRIAL_EVENT_SCHEDULED`, `EARNINGS_RESULTS`, `EARNINGS_DATE`, `FDA_DECISION`, `OFFERING`, `GUIDANCE`, `MERGER_ACQUISITION`, `LEGAL_REGULATORY`, `ANALYST`, `OTHER`). The model's quote must be in the article word for word, or the answer counts as 1. Code sets the severity: at least 3 for trial data, FDA decisions, results and offerings; +1 for a scheduled event today or tomorrow. Stored at `minSeverity` (3) or above; the same stock again within `repeatHours` (6) only at a higher severity. `data` keeps the article text and the model's answer |
 
 
 **Automations triggered by events.** An automation with an `eventTrigger` runs when a matching event is found
