@@ -21,7 +21,8 @@
   "submit": {
     "production": {
       "ios": {
-        "appName": "StocksVest Trader"
+        "appName": "StocksVest Trader",
+        "ascAppId": "6828743913"
       }
     }
   }
