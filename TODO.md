@@ -380,7 +380,9 @@ Suggested order: WATCH-2 → WATCH-3 → WATCH-4 → WATCH-5 → WATCH-6 → WAT
 - [ ] **WATCH-9: Earnings watcher**: dates from FEAT-6 (estimated as last + 91 days) and, better, the company's own
   "will report on" release from WATCH-8. Note FEAT-6's backtest: skipping buys before every earnings cost return
   (+287% vs +409%), so target the risky combination (big run-up + report tomorrow), not all earnings
-- [ ] **WATCH-10: Phone**: events list with reason and outcome, watcher on/off and settings, confirm screen for LIVE
+- [x] **WATCH-10: Phone**: events list with reason and outcome, watcher on/off and settings, confirm screen for LIVE
+  - Done: Events screen (`mobile/app/events.tsx`) from a Home card that turns red while a LIVE run waits; Confirm asks
+    for Face ID; tapping an events push opens it. Event automations are still created through the API only
 - [ ] **WATCH-11: Proof before LIVE**: replay Alpaca news history (from 2015) and bars through the watchers; compare
   the next days' returns of flagged vs unflagged holdings, and what the rules would have saved or cost
 - [ ] **WATCH-12: Clinical-stage biotech size cap**: smaller max position for biotechs without product revenue,

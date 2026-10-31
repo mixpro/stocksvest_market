@@ -44,6 +44,8 @@ export default function Home() {
   const [env, setEnv] = useState<Env>('ALL');
   const { portfolios, error, loading, reload } = usePortfolios();
   const automations = useApi<{ automations: { status: string }[] }>('/v1/automations');
+  const waiting = useApi<{ events: unknown[] }>('/v1/events?status=AWAITING_CONFIRM');
+  const confirms = waiting.data?.events.length ?? 0;
 
   const shown = portfolios.filter((p) => env === 'ALL' || p.env === env);
   const equity = shown.reduce((s, p) => s + p.equity, 0);
@@ -55,7 +57,7 @@ export default function Home() {
   const returns = useCombinedReturns(shown.map((p) => p.id).join(','), range);
 
   return (
-    <Screen onRefresh={() => { reload(); automations.reload(); }} refreshing={loading}>
+    <Screen onRefresh={() => { reload(); automations.reload(); waiting.reload(); }} refreshing={loading}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <T size={22} weight="heavy">StocksVest</T>
         <Link href="/kill-all" asChild>
@@ -94,6 +96,24 @@ export default function Home() {
         contentContainerStyle={{ paddingHorizontal: 20, gap: 12 }}>
         {shown.map((p, i) => <PortfolioCard key={p.id} p={p} index={i} />)}
       </ScrollView>
+
+      <Link href="/events" asChild>
+        <Pressable accessibilityRole="button">
+          <Card style={{ marginTop: 4, flexDirection: 'row', alignItems: 'center', gap: 12,
+            ...(confirms ? { borderWidth: 2, borderColor: colors.danger } : {}) }}>
+            <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: confirms ? colors.dangerSoft : colors.accentSoft,
+              alignItems: 'center', justifyContent: 'center' }}>
+              <SymbolView name={{ ios: 'bell.fill', android: 'notifications', web: 'notifications' }}
+                tintColor={confirms ? colors.danger : colors.accent} size={18} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <T weight="bold">{confirms ? `${confirms} live run${confirms > 1 ? 's' : ''} waiting for you` : 'Watcher events'}</T>
+              <T size={12} color={colors.muted}>Drops found by the watchers, and what was done</T>
+            </View>
+            <SymbolView name={{ ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' }} tintColor={colors.muted} size={16} />
+          </Card>
+        </Pressable>
+      </Link>
 
       <Link href="/automations" asChild>
         <Pressable accessibilityRole="button">

@@ -2,10 +2,25 @@
 
 import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
+import { router } from 'expo-router';
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
 
 import { useApp } from '@/lib/app';
+
+/** Tapping a watcher-event push opens the Events screen (where a LIVE run is confirmed). */
+export function usePushTaps() {
+  useEffect(() => {
+    const open = (r: Notifications.NotificationResponse | null) => {
+      if (r?.notification.request.content.data?.category !== 'events') return;
+      router.push('/events');
+      Notifications.clearLastNotificationResponse();
+    };
+    open(Notifications.getLastNotificationResponse()); // the tap that started the app
+    const sub = Notifications.addNotificationResponseReceivedListener(open);
+    return () => sub.remove();
+  }, []);
+}
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false }),

@@ -3,7 +3,7 @@ import { SymbolView } from 'expo-symbols';
 import type { ComponentProps } from 'react';
 
 import { useApp } from '@/lib/app';
-import { usePushRegistration } from '@/lib/push';
+import { usePushRegistration, usePushTaps } from '@/lib/push';
 import { font } from '@/lib/theme';
 
 type Name = ComponentProps<typeof SymbolView>['name'];
@@ -19,6 +19,7 @@ const TABS: { name: string; title: string; icon: Name }[] = [
 export default function TabLayout() {
   const { colors, scheme } = useApp();
   usePushRegistration();
+  usePushTaps();
   return (
     <Tabs
       screenOptions={{
