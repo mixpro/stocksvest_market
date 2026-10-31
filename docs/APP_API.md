@@ -678,6 +678,7 @@ endpoint, and parameters are the same as in the [market API](API.md):
 | `GET /v1/market/snapshots?symbols=A,B` | `GET /v1/snapshots` |
 | `GET /v1/market/price-change?periodAmount=&periodUnit=&symbols=` | `GET /v1/price-change` |
 | `GET /v1/market/quotes?symbols=` | `GET /v1/quotes` (live prices) |
+| `GET /v1/market/news?symbols=&start=&end=&limit=&pageToken=&content=` | `GET /v1/news` (press releases, Benzinga) |
 | `GET /v1/market/calendar?start=&end=` | `GET /v1/calendar` |
 | `GET /v1/market/status` | `GET /v1/status` |
 

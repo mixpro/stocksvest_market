@@ -1,5 +1,6 @@
 """/v1/events and /v1/watchers: what the watchers found, and switching them on/off and tuning them."""
 
+import re
 import sqlite3
 from typing import Annotated, Literal
 
@@ -31,6 +32,13 @@ class WatcherIn(BaseModel):
     settings: dict[str, float] | None = None
 
 
+def _describe(w) -> str:
+    """The docstring's first sentence without "Watcher:" and the ticket: "A held stock is down ... today"."""
+    first = " ".join((w.__doc__ or "").split()).split(". ")[0]
+    first = re.sub(r"\s*\(WATCH-\d+\)\.?$", "", first.removeprefix("Watcher: "))
+    return first[:1].upper() + first[1:]
+
+
 def router(ctx: AppContext) -> APIRouter:
     """The /v1/events and /v1/watchers routes.
 
@@ -40,7 +48,7 @@ def router(ctx: AppContext) -> APIRouter:
     Conn = Annotated[sqlite3.Connection, Depends(ctx.conn)]
 
     def view(w, c: dict) -> dict:
-        return {"name": w.NAME, "description": (w.__doc__ or "").strip().split("\n")[0], "hours": w.HOURS,
+        return {"name": w.NAME, "description": _describe(w), "hours": w.HOURS,
                 "everySeconds": int(w.EVERY.total_seconds()), "enabled": c["enabled"], "settings": c["settings"],
                 "lastRunAt": c["lastRunAt"], "lastError": c["lastError"]}
 

@@ -210,6 +210,21 @@ def router(ctx: AppContext) -> APIRouter:
         """
         return call(lambda: api.quotes(_split(symbols)))
 
+    @r.get("/news")
+    def news(symbols: str | None = None, start: str | None = None, end: str | None = None,
+             limit: Annotated[int, Query(ge=1, le=50)] = 50,
+             page_token: Annotated[str | None, Query(alias="pageToken")] = None, content: bool = False):
+        """News articles, newest first: press releases and Benzinga stories (market `GET /v1/news`).
+        \f
+        Args:
+            symbols: comma-separated tickers or ids; empty = all news.
+            start, end: date or datetime window.
+            limit: articles per page (1..50).
+            page_token: nextPageToken of the previous page.
+            content: include the full text (HTML).
+        """
+        return call(lambda: api.news(_split(symbols) if symbols else None, start, end, limit, page_token, content))
+
     @r.get("/live")
     def live():
         """Whether real-time IBKR bars are running for the watched symbols (market `GET /v1/live`)."""

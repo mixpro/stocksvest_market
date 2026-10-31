@@ -75,6 +75,8 @@ def test_every_endpoint_has_a_function_and_the_fake_matches():
     (lambda m: m.price_change(5, "DAYS", ["AAPL", "MSFT"]), "/v1/price-change",
      {"periodAmount": 5, "periodUnit": "DAYS", "symbols": "AAPL,MSFT"}),
     (lambda m: m.quotes(["AAPL", "JRSH"]), "/v1/quotes", {"symbols": "AAPL,JRSH"}),
+    (lambda m: m.news(["IOVA"], "2026-10-28", None, 10, "tok", True), "/v1/news",
+     {"symbols": "IOVA", "start": "2026-10-28", "limit": 10, "pageToken": "tok", "content": "true"}),
     (lambda m: m.live_status(), "/v1/live", None),
     (lambda m: m.calendar("2026-10-16", "2026-10-16"), "/v1/calendar", {"start": "2026-10-16", "end": "2026-10-16"}),
     (lambda m: m.status(), "/v1/status", None),

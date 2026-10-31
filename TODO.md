@@ -366,10 +366,12 @@ Suggested order: WATCH-2 → WATCH-3 → WATCH-4 → WATCH-5 → WATCH-6 → WAT
   X% today, including pre-market and after hours
 - [x] **WATCH-5: Market and sector watcher** (2026-10-31, `market`: median 2% / sector 3%): share of the universe falling and median move, overall and per sector;
   regular session only (too few stocks trade in extended hours for breadth to mean much)
-- [ ] **WATCH-6: News source**: market service `GET /v1/news` over Alpaca news (`include_content`, cursor). First
-  check whether Alpaca carried Iovance's 2026-10-28 press release and when (you found it on Yahoo, a Stocktwits
-  piece from 8:57pm ET, after the after-hours close). If Alpaca misses releases, add newswire RSS (GlobeNewswire,
-  Business Wire, PR Newswire). Yahoo has no official API: fallback only
+- [x] **WATCH-6: News source**: market service `GET /v1/news` over Alpaca news (`content`, `pageToken`); app
+  `GET /v1/market/news` (2026-10-31)
+  - Checked: Alpaca carries Iovance's own releases (GlobeNewswire, through fiscal.ai and Benzinga) within minutes:
+    Oct 26 trial data (07:05 and 18:02 ET), Oct 27 Q3 date, Oct 29 07:21 ET lung data. Iovance released nothing on
+    Wed Oct 28: the Yahoo piece was commentary on the Oct 26 data. So no newswire RSS (GlobeNewswire also blocks
+    automated access). Add one only if a missed release shows up
 - [ ] **WATCH-7: SEC filings watcher**: new 8-Ks (by item), S-3 / 424B (share offerings), going-concern warnings in
   10-Q/10-K for held stocks, every 5 min (uses `SEC_USER_AGENT`)
 - [ ] **WATCH-8: News reader (model)**: model `haiku-news` through LiteLLM (`https://litellm.hardansaeed.com`),

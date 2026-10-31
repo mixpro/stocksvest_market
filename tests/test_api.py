@@ -266,3 +266,22 @@ def test_halal_upload_adds_and_removes(settings, seeded, tmp_path, monkeypatch):
         bad = c.post("/admin/halal", headers=ADMIN, files={"file": ("x.db", b"garbage" * 1000)})
         assert bad.status_code == 400
         assert c.post("/admin/halal", headers=READ, files={"file": ("x.db", b"x")}).status_code == 401
+
+
+def test_news(settings, seeded):
+    fake = FakeAlpaca()
+    with TestClient(create_app(settings, client_factory=lambda s: fake)) as client:
+        news_checks(client, fake)
+
+
+def news_checks(client, fake):
+    r = client.get("/v1/news?symbols=S0001&start=2026-10-28&limit=5", headers=READ)
+    assert r.status_code == 200, r.text
+    [n] = r.json()["news"]
+    assert (n["headline"], n["time"], "content" not in n) == ("AAA trial data", "2026-10-29T11:21:01Z", True)
+    assert r.json()["nextPageToken"] == "tok"
+    assert fake.news_calls[0] == (["S0001"], datetime(2026, 10, 28, 4, tzinfo=timezone.utc), None, 5, None, False)
+    full = client.get("/v1/news?pageToken=tok&content=true", headers=READ).json()
+    assert full["news"][0]["content"] == "<p>Full</p>" and full["nextPageToken"] is None
+    assert client.get("/v1/news?symbols=NOPE", headers=READ).status_code == 404
+    assert client.get("/v1/news?limit=51", headers=READ).status_code == 422

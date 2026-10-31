@@ -149,6 +149,30 @@ class AlpacaClient:
             params["page_token"] = token
 
 
+    def news(self, symbols: list[str], start: datetime | None, end: datetime | None, limit: int,
+             page_token: str | None, content: bool) -> dict:
+        """One page of news articles, newest first (GET /v1beta1/news): company press releases (GlobeNewswire,
+        Business Wire, ... through fiscal.ai and Benzinga) and Benzinga's own stories, within minutes of publication.
+
+        Args:
+            symbols: tickers; empty = all news.
+            start, end: created_at window (inclusive), timezone-aware; None = Alpaca's default.
+            limit: articles per page (1..50).
+            page_token: next_page_token of the previous page.
+            content: include the full text (HTML).
+
+        Returns:
+            {"news": [{id, headline, summary, content, author, source, url, symbols, created_at, updated_at}],
+             "next_page_token"}.
+
+        Used by: api.create_app (GET /v1/news).
+        """
+        params = {"symbols": ",".join(symbols) or None, "start": start.isoformat() if start else None,
+                  "end": end.isoformat() if end else None, "limit": limit, "sort": "desc",
+                  "include_content": str(content).lower(), "page_token": page_token}
+        return self._get(f"{self.settings.alpaca_data_url}/v1beta1/news", {k: v for k, v in params.items() if v is not None})
+
+
 def _alpaca_time(t: str) -> datetime:
     """An Alpaca timestamp (nanoseconds, "Z") as an aware datetime. Used by: AlpacaQuotes.quotes."""
     head, _, frac = t.rstrip("Z").partition(".")

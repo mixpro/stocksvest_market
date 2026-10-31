@@ -24,6 +24,13 @@ class FakeAlpaca:
     def calendar(self, start, end):
         return self.calendar_days
 
+    def news(self, symbols, start, end, limit, page_token, content):
+        self.news_calls = getattr(self, "news_calls", []) + [(symbols, start, end, limit, page_token, content)]
+        items = [{"id": 2, "headline": "AAA trial data", "summary": "", "content": "<p>Full</p>", "author": "x",
+                  "source": "benzinga", "url": "u", "symbols": ["AAA"], "created_at": "2026-10-29T11:21:01Z",
+                  "updated_at": "2026-10-29T11:21:01Z"}]
+        return {"news": items[:limit], "next_page_token": "tok" if not page_token else None}
+
     def bars(self, symbols, timeframe, start, end):
         self.bar_calls.append((tuple(symbols), timeframe, start, end))
         for t in symbols:

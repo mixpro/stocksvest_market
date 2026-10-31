@@ -118,6 +118,13 @@ class FakeMarket:
                           "ageSeconds": 960}
         return {"quotes": out, "liveQuotes": {"enabled": bool(live), "connected": bool(live)}}
 
+    def news(self, symbols=None, start=None, end=None, limit=50, page_token=None, content=False):
+        """Articles set in self.news_items (newest first), filtered by symbol."""
+        self._check()
+        self.calls.append(("news", symbols, start, end, limit, page_token, content))
+        items = [n for n in getattr(self, "news_items", []) if not symbols or set(n["symbols"]) & set(symbols)]
+        return {"news": items[:limit], "nextPageToken": None}
+
     def price_change(self, period_amount, period_unit, symbols=None):
         self._check()
         self.calls.append(("price_change", period_amount, period_unit, symbols))

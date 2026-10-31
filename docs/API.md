@@ -324,6 +324,21 @@ from Interactive Brokers when `IBKR_ENABLED=true` (`source: IBKR`). Without eith
   `IBKR_HOST` (127.0.0.1), `IBKR_PORT` (4002 = paper login), `IBKR_CLIENT_ID` (31).
 - `GET /v1/status` shows the same `liveQuotes` block.
 
+### News
+
+`GET /v1/news?symbols=IOVA&start=2026-10-26&end=&limit=50&pageToken=&content=false`: news articles from Alpaca,
+newest first. They include the companies' own press releases (GlobeNewswire, Business Wire, ... through fiscal.ai and
+Benzinga) and Benzinga stories, a few minutes after publication. Empty `symbols` gives all news. `content=true` adds
+the full text (HTML). Follow `nextPageToken` for older pages. Unknown symbols give `404`, and a missing key or an
+Alpaca failure gives `503`.
+
+```json
+{"news": [{"id": 48213377, "time": "2026-10-29T11:21:01Z", "updatedAt": "2026-10-29T11:21:01Z",
+           "headline": "Iovance Biotherapeutics Announced Updated Results From Cohorts 1 And 2 ...", "summary": "",
+           "source": "benzinga", "author": "Benzinga Newsdesk", "url": "https://...", "symbols": ["IOVA"]}],
+ "nextPageToken": "MTc..."}
+```
+
 ### Live bars
 
 `PUT /v1/live/watch` with `{"symbols": ["AAPL", "CSX"], "ttlMinutes": 10}`

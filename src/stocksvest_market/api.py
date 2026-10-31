@@ -16,7 +16,7 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Upload
 from pydantic import BaseModel, Field
 
 from . import aggregate, db, fundamentals, halal, indicators as ind, sectors, sync
-from .alpaca import AlpacaClient, AlpacaQuotes
+from .alpaca import AlpacaClient, AlpacaError, AlpacaQuotes
 from .config import Settings
 from .scheduler import Scheduler
 from .symbols import SymbolSyncError
@@ -491,6 +491,42 @@ def create_app(settings: Settings | None = None, client_factory: Callable[[Setti
                                 "time": _iso(bar["ts"]) if bar else None,
                                 "ageSeconds": int(now.timestamp()) - bar["ts"] if bar else None}
         return {"quotes": out, "liveQuotes": quotes_status()}
+
+    @app.get("/v1/news", tags=["news"], dependencies=read)
+    def news(conn: Conn,
+             symbols: Annotated[str | None, Query(description="Comma-separated tickers/ids; empty = all news")] = None,
+             start: str | None = None, end: str | None = None, limit: Annotated[int, Query(ge=1, le=50)] = 50,
+             page_token: Annotated[str | None, Query(alias="pageToken")] = None, content: bool = False):
+        """News articles from Alpaca, newest first: company press releases (through fiscal.ai and Benzinga) and Benzinga
+        stories, within minutes of publication. `content=true` adds the full text (HTML). Follow `nextPageToken` for
+        older pages.
+        \f
+        Args:
+            conn: market DB connection (one per request, injected).
+            symbols: tickers or ids (404 for unknown ones).
+            start, end: date or datetime (New York time without a zone); default: Alpaca's (newest).
+            limit: articles per page (1..50).
+            page_token: nextPageToken of the previous page.
+            content: include the full text.
+
+        Raises:
+            HTTPException: 503 when Alpaca keys are missing or Alpaca fails.
+        """
+        tickers = [r["ticker"] for r in symbol_rows(conn, symbols)] if symbols else []
+        when = lambda v: datetime.fromtimestamp(_parse_time(v, now), timezone.utc) if v else None  # noqa: E731
+        now = datetime.now(timezone.utc)
+        try:
+            if "alpaca" not in state:
+                state["alpaca"] = client_factory(settings)
+            data = state["alpaca"].news(tickers, when(start), when(end), limit, page_token, content)
+        except AlpacaError as e:
+            raise HTTPException(503, f"news unavailable: {e}")
+        return {"news": [{"id": n["id"], "time": n["created_at"], "updatedAt": n["updated_at"], "headline": n["headline"],
+                          "summary": n.get("summary") or "", "source": n.get("source"), "author": n.get("author"),
+                          "url": n.get("url"), "symbols": n.get("symbols", []),
+                          **({"content": n.get("content") or ""} if content else {})}
+                         for n in data.get("news", [])],
+                "nextPageToken": data.get("next_page_token")}
 
     @app.get("/v1/symbols", tags=["symbols"], dependencies=read)
     def list_symbols(

@@ -26,6 +26,7 @@ ENDPOINTS = {
     "indicators": "/v1/indicators",
     "returns": "/v1/returns",
     "quotes": "/v1/quotes",
+    "news": "/v1/news",
     "live_status": "/v1/live",
     "live_watch": "/v1/live/watch",
     "calendar": "/v1/calendar",
@@ -180,6 +181,20 @@ class MarketAPI(Protocol):
 
         Args:
             symbols: tickers or ids (at most 100).
+        """
+        ...
+
+    def news(self, symbols: list[str] | None = None, start: str | None = None, end: str | None = None,
+             limit: int = 50, page_token: str | None = None, content: bool = False) -> dict:
+        """GET /v1/news: {"news": [{id, time, updatedAt, headline, summary, source, author, url, symbols, content?}],
+        "nextPageToken"}, newest first (Alpaca news: press releases and Benzinga, within minutes).
+
+        Args:
+            symbols: tickers or ids; None = all news.
+            start, end: date or datetime window.
+            limit: articles per page (1..50).
+            page_token: nextPageToken of the previous page.
+            content: include the full text (HTML).
         """
         ...
 
@@ -379,6 +394,15 @@ class MarketClient:
             symbols: tickers or ids (at most 100).
         """
         return self._get("quotes", query=_query(symbols=symbols))
+
+    def news(self, symbols=None, start=None, end=None, limit=50, page_token=None, content=False) -> dict:
+        """GET /v1/news.
+
+        Args:
+            symbols, start, end, limit, page_token, content: see MarketAPI.news.
+        """
+        return self._get("news", query=_query(symbols=symbols, start=start, end=end, limit=limit, pageToken=page_token,
+                                              content=str(content).lower()))
 
     def live_status(self) -> dict:
         """GET /v1/live."""
