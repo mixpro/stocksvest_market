@@ -1,0 +1,17 @@
+stateDiagram-v2
+  [*] --> NEW : watcher inserts
+  NEW --> IGNORED : no rule matches
+  NEW --> SUPPRESSED : cooldown or daily cap
+  NEW --> ACTING : rule matches, PAPER or notify only
+  NEW --> AWAITING_CONFIRM : rule matches, LIVE trade
+  AWAITING_CONFIRM --> ACTING : you confirm
+  AWAITING_CONFIRM --> DECLINED : you decline
+  AWAITING_CONFIRM --> EXPIRED : no answer in time, or price moved too far
+  ACTING --> DONE
+  ACTING --> FAILED
+  IGNORED --> [*]
+  SUPPRESSED --> [*]
+  DECLINED --> [*]
+  EXPIRED --> [*]
+  DONE --> [*]
+  FAILED --> [*]

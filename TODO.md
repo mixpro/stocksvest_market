@@ -5,7 +5,7 @@ Status: `[ ]` open · `[~]` in progress · `[x]` done · `[-]` dropped.
 
 Longer write-ups for an item can go in `todos/` (e.g. `todos/001-sec-user-agent-for-sectors.md`).
 
-Prefixes: **LIVE** real money · **RISK** drawdown control · **BT** backtester · **DATA** market data · **STRAT** strategies to test · **FEAT** new filter/automation features · **OPS** production and fixes · **IDEA** parked ideas.
+Prefixes: **LIVE** real money · **RISK** drawdown control · **BT** backtester · **DATA** market data · **STRAT** strategies to test · **FEAT** new filter/automation features · **OPS** production and fixes · **WATCH** watchers and events · **IDEA** parked ideas.
 
 Suggested order: BT-1 → BT-2 → STRAT-1..3 → DATA-1 → FEAT-1 → BT-4 → rest.
 
@@ -338,6 +338,51 @@ Decisions: Israel tax resident, Alpaca (margin account at 1×, no borrowing; sch
   strategy on the LIVE account. Scale steps and checks in `docs/LIVE-RULES.md`
 - [ ] **LIVE-13: Monthly 12-month review vs the universe median** (by hand from the performance page; automate if it becomes a chore)
 - [ ] **LIVE-14: US estate tax above ~$60k** of US stocks for a non-US person: settle with the accountant before scaling past ~$55k
+
+## WATCH: Watchers and events (designed 2026-10-31)
+
+Why: INTC (−23% after earnings, 2026-10-29) and IOVA (−35%, trial data before the open, 2026-10-29) were both held
+through drops that happened outside the regular session. IOVA's readout was announced the evening before (+12% after
+hours on the news), so there was time to sell in extended hours. Design: `UML/Watchers.mmd` (classes),
+`UML/WatchersFlow.mmd` (components), `UML/WatchersIOVA.mmd` (the IOVA case), `UML/WatcherTick.mmd` (one pass),
+`UML/EventLifecycle.mmd`, `UML/NewsReading.mmd`.
+
+Rules: watchers only detect and insert events (unique key, so each finding fires once); the dispatcher acts by your
+rules. LIVE trades always wait for a confirm on the phone. Nothing acts on LIVE before WATCH-11 shows it helps.
+
+Suggested order: WATCH-2 → WATCH-3 → WATCH-4 → WATCH-5 → WATCH-6 → WATCH-8 → WATCH-11 → rest.
+
+- [x] **WATCH-1: Design**: UML diagrams above (2026-10-31)
+- [ ] **WATCH-2: Events core**: `events` table (unique `key`), `watcher_config` (enabled, settings, state, last run,
+  last error), `WATCHERS` registry (one file per watcher + one line), a watcher thread apart from the automation
+  scheduler (15 s pass, a time limit per watcher, own on/off switch), `GET /v1/events`, `GET/PUT /v1/watchers`,
+  push category `events`
+- [ ] **WATCH-3: Dispatcher + EVENT trigger for automations**: match by watcher, kind, min severity, held only;
+  cooldown and daily cap; event statuses (`UML/EventLifecycle.mmd`). PAPER acts; LIVE sends a push and waits for
+  `POST /v1/events/{id}/confirm`, expiring after a time limit or when the price moved too far
+- [ ] **WATCH-4: Holdings drop watcher**: a held stock down X% today, including pre-market and after hours (prices
+  the scheduler already watches)
+- [ ] **WATCH-5: Market and sector watcher**: share of the universe falling and median move, overall and per sector;
+  regular session only (too few stocks trade in extended hours for breadth to mean much)
+- [ ] **WATCH-6: News source**: market service `GET /v1/news` over Alpaca news (`include_content`, cursor). First
+  check whether Alpaca carried Iovance's 2026-10-28 press release and when (you found it on Yahoo, a Stocktwits
+  piece from 8:57pm ET, after the after-hours close). If Alpaca misses releases, add newswire RSS (GlobeNewswire,
+  Business Wire, PR Newswire). Yahoo has no official API: fallback only
+- [ ] **WATCH-7: SEC filings watcher**: new 8-Ks (by item), S-3 / 424B (share offerings), going-concern warnings in
+  10-Q/10-K for held stocks, every 5 min (uses `SEC_USER_AGENT`)
+- [ ] **WATCH-8: News reader (model)**: Claude Haiku through the Anthropic API, key on tinkergw only
+  (`ANTHROPIC_API_KEY`). Code filters first (held or watched, not seen, clear cases by rules); the model answers in a
+  fixed schema (kind, date, date certainty, before/after the open, severity, quote); the quote must appear word for
+  word in the text or the item stays a low-severity note. Raw text and answer stored. Code, not the model, decides
+  the risk (event under 24 h, run-up size, clinical-stage biotech)
+- [ ] **WATCH-9: Earnings watcher**: dates from FEAT-6 (estimated as last + 91 days) and, better, the company's own
+  "will report on" release from WATCH-8. Note FEAT-6's backtest: skipping buys before every earnings cost return
+  (+287% vs +409%), so target the risky combination (big run-up + report tomorrow), not all earnings
+- [ ] **WATCH-10: Phone**: events list with reason and outcome, watcher on/off and settings, confirm screen for LIVE
+- [ ] **WATCH-11: Proof before LIVE**: replay Alpaca news history (from 2015) and bars through the watchers; compare
+  the next days' returns of flagged vs unflagged holdings, and what the rules would have saved or cost
+- [ ] **WATCH-12: Clinical-stage biotech size cap**: smaller max position for biotechs without product revenue,
+  since much of their news is unscheduled (test with the backtester like RISK-1/RISK-2)
 
 ## IDEA: Parked
 

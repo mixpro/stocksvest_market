@@ -1,0 +1,14 @@
+flowchart LR
+  A[New news item<br/>or filing] --> B{About a stock<br/>you hold or watch?}
+  B -- no --> X1([Drop])
+  B -- yes --> C{Seen this id?}
+  C -- yes --> X2([Drop])
+  C -- no --> D{Code rules decide?<br/>filing type, keywords}
+  D -- clear --> F[Event from rules]
+  D -- needs reading --> M[Model, fixed schema:<br/>kind, date, date certainty,<br/>before/after the open,<br/>severity, quote]
+  M --> V{Quote found word for word?<br/>date valid?}
+  V -- no --> X3([Keep as low-severity note])
+  V -- yes --> F2[Event with facts + quote + link]
+  F --> EV[(events)]
+  F2 --> EV
+  EV --> R[Code decides the risk:<br/>event under 24h, run-up size,<br/>clinical-stage biotech]

@@ -1,0 +1,30 @@
+sequenceDiagram
+  autonumber
+  participant CO as Iovance (newswire)
+  participant MS as Market service
+  participant NW as NewsWatcher
+  participant M as Model (Haiku)
+  participant EV as events
+  participant D as Dispatcher
+  participant P as Phone
+  participant B as Alpaca
+
+  Note over CO: Wed 2026-10-28, after the 4pm ET close (exact time: check Alpaca news history)
+  CO->>MS: press release appears in Alpaca news
+  NW->>MS: GET /v1/news?symbols=held&after=cursor (every 60s)
+  MS-->>NW: 1 new item: IOVA
+  NW->>M: headline + full text + schema
+  M-->>NW: TRIAL_READOUT, Thu 2026-10-29, pre-market, quote
+  NW->>NW: check: quote is in the text, date parses
+  NW->>EV: insert key catalyst:IOVA:2026-10-29
+  D->>EV: NEW events since cursor
+  D->>D: rule: readout under 24h, held, up over 30% in 3 months
+  alt PAPER portfolio
+    D->>B: SELL limit near price, extended hours
+  else LIVE portfolio
+    D->>P: push: IOVA readout tomorrow before the open. Sell 12 at about $16.40?
+    P-->>D: Confirm
+    D->>B: SELL limit near price, extended hours
+  end
+  B-->>D: fill (broker sync), activity log, push
+  Note over CO,B: Thu about 7am ET: data out, stock about $9.90. Closed $9.56 (Wed close $14.81).

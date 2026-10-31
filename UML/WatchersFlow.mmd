@@ -1,0 +1,40 @@
+flowchart LR
+  subgraph EXT[Outside sources]
+    AN[Alpaca News API<br/>Benzinga + press releases]
+    WIRE[Newswire RSS<br/>if Alpaca misses releases]
+    SEC[SEC EDGAR<br/>8-K, S-3, 424B, 10-Q]
+    BARS[Bars: Alpaca / IBKR]
+  end
+  subgraph MKT[Market service :8000]
+    NEWS[/v1/news/]
+    ERN[earnings dates<br/>FEAT-6]
+    MBARS[/v1/bars, snapshots, sectors/]
+  end
+  subgraph APP[App service :8100]
+    WT[[Watcher thread]]
+    REG[(WATCHERS registry<br/>+ watcher_config)]
+    LLM{{Model: Claude Haiku<br/>reads news}}
+    EV[(events)]
+    DSP[[Dispatcher]]
+    RULES[(Automations with<br/>EVENT trigger)]
+    ORD[Orders service]
+    PUSH[push.send]
+  end
+  PH[Phone app]
+
+  AN -- poll 60s --> NEWS
+  BARS --> MBARS
+  NEWS -- new items for held symbols --> WT
+  WIRE -- poll 60s --> WT
+  SEC -- poll 5 min --> WT
+  ERN -- daily --> WT
+  MBARS -- breadth, held prices --> WT
+  REG -- enabled watchers + settings --> WT
+  WT -- text of each new item --> LLM
+  LLM -- structured facts --> WT
+  WT -- insert, unique key --> EV
+  EV -- NEW since cursor --> DSP
+  RULES -- match --> DSP
+  DSP -- notify / ask --> PUSH --> PH
+  PH -- confirm or decline --> DSP
+  DSP -- sell / pause buys --> ORD

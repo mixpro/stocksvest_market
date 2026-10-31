@@ -1,0 +1,17 @@
+flowchart TD
+  T([Every 15 s]) --> S{Watchers master switch on?}
+  S -- no --> W([Wait])
+  S -- yes --> L[For each enabled watcher]
+  L --> DUE{lastRunAt + every passed?}
+  DUE -- no --> N[Next watcher]
+  DUE -- yes --> H{Inside its hours?<br/>REGULAR / EXTENDED / ALWAYS}
+  H -- no --> N
+  H -- yes --> C[check ctx, conn, now, state<br/>with a time limit]
+  C -- error or timeout --> E[Save lastError,<br/>activity log, problems push once]
+  C -- ok --> I[Insert events,<br/>skip if key exists]
+  I --> ST[Save state and lastRunAt]
+  E --> N
+  ST --> N
+  N --> L
+  L -- all done --> DS[Dispatcher.dispatch]
+  DS --> W
