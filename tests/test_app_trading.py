@@ -659,18 +659,20 @@ def test_manual_orders_and_positions_use_live_prices(client, portfolio, broker, 
 
 def test_broker_cent_rounding_goes_to_the_portfolio_and_filled_at_is_the_fill_time(client, portfolio, broker):
     import dataclasses
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
     order = buy(client, portfolio, quantity=1.25).json()
     sync(client, portfolio)  # balances known before the fill
     broker.fill(order["brokerOrderId"], "1.25", "7.7065")  # 9.633125
-    broker.fills[-1] = dataclasses.replace(broker.fills[-1], executed_at=datetime(2026, 10, 29, 14, 8, 24, tzinfo=timezone.utc))
+    # An hour ago (not a fixed date: sync only asks for fills from a day before the account was created).
+    executed = (datetime.now(timezone.utc) - timedelta(hours=1)).replace(microsecond=0)
+    broker.fills[-1] = dataclasses.replace(broker.fills[-1], executed_at=executed)
     broker.cash -= Decimal("0.016875")  # Alpaca took 9.65
     out = sync(client, portfolio)
     assert out["portfolio"]["cash"] == pytest.approx(10000 - 9.65)
     assert out["sync"]["unassigned"]["cash"] == 0 and out["sync"]["mismatches"] == []
     ledger = client.get(f"/v1/portfolios/{portfolio['id']}/ledger", headers=KEY).json()["entries"]
     assert [e["amount"] for e in ledger if e["type"] == "ROUNDING"] == [pytest.approx(-0.016875)]
-    assert client.get(f"/v1/orders/{order['id']}", headers=KEY).json()["filledAt"] == "2026-10-29T14:08:24Z"
+    assert client.get(f"/v1/orders/{order['id']}", headers=KEY).json()["filledAt"] == executed.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     broker.cash += 5  # a deposit is not rounding: it stays unassigned
     sell = client.post(f"/v1/portfolios/{portfolio['id']}/orders", headers=KEY,
