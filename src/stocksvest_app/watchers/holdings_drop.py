@@ -1,4 +1,5 @@
 """Watcher: a held stock is down `dropPercent` or more today, pre-market and after hours included (WATCH-4).
+Prices: the live last trade (market GET /v1/quotes), else the newest minute bar from the snapshots.
 
 The drop is the worse of: latest price vs the previous close, and (after hours) latest price vs today's close.
 It fires again at each further step (8%, 16%, 24%... with the default), once per step per day.
@@ -26,8 +27,12 @@ def check(ctx, conn, now, settings, state) -> list[dict]:
         held.setdefault(r["symbol"], []).append(r["name"])
     step = float(settings["dropPercent"])
     today = now.astimezone(ET).date().isoformat()
+    live = ctx.market.live_quotes(set(held))  # the last trade right now (Alpaca real-time SIP)
     out = []
     for symbol, s in ctx.market.snapshots(set(held)).items():
+        q = live.get(symbol) or {}
+        if q.get("last") is not None and q.get("time"):
+            s = {**s, "latestPrice": q["last"], "latestTime": q["time"]}
         latest_day = (datetime.fromisoformat(s["latestTime"].replace("Z", "+00:00")).astimezone(ET).date().isoformat()
                       if s.get("latestTime") else None)
         if latest_day != today:  # no trade yet today: yesterday's move was already reported yesterday

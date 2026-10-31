@@ -36,6 +36,13 @@ class Market(FakeMarket):
                           "dailyDate": "2026-10-30", "previousClose": 100.0, "dailyChangePercent": ch}
         return {"snapshots": out}
 
+    def quotes(self, symbols):
+        """Live last trades set in self.live; others only have the minute bar (source DELAYED)."""
+        live = getattr(self, "live", {})
+        return {"quotes": {t: {"source": "ALPACA" if t in live else "DELAYED", "bid": None, "ask": None,
+                               "last": live.get(t, 100 + self.changes[t]), "time": f"{self.day}T13:01:00Z"}
+                           for t in symbols if t in self.changes}}
+
 
 def setup(tmp_path, monkeypatch, market):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
@@ -73,6 +80,9 @@ def test_holding_drop_in_premarket_fires_once_per_step_and_pushes(tmp_path, monk
     assert thread.tick(ctx, conn, at("2026-11-02", "08:02")) == []  # same step again: nothing new
     market.changes["BBB"] = -25.0
     assert len(thread.tick(ctx, conn, at("2026-11-02", "08:04"))) == 1  # next step (24%) fires
+    market.live = {"BBB": 65.0}  # the live last trade wins over the minute bar
+    assert len(thread.tick(ctx, conn, at("2026-11-02", "08:06"))) == 1
+    assert store.list_events(conn)[0]["key"] == "drop:BBB:2026-11-02:4"
     assert thread.tick(ctx, conn, at("2026-11-02", "21:00")) == []  # after 8pm: outside its hours
     assert thread.tick(ctx, conn, at("2026-11-01", "10:00")) == []  # Sunday: market closed
 
