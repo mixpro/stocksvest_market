@@ -371,8 +371,8 @@ Suggested order: WATCH-2 → WATCH-3 → WATCH-4 → WATCH-5 → WATCH-6 → WAT
   Business Wire, PR Newswire). Yahoo has no official API: fallback only
 - [ ] **WATCH-7: SEC filings watcher**: new 8-Ks (by item), S-3 / 424B (share offerings), going-concern warnings in
   10-Q/10-K for held stocks, every 5 min (uses `SEC_USER_AGENT`)
-- [ ] **WATCH-8: News reader (model)**: Claude Haiku through the Anthropic API, key on tinkergw only
-  (`ANTHROPIC_API_KEY`). Code filters first (held or watched, not seen, clear cases by rules); the model answers in a
+- [ ] **WATCH-8: News reader (model)**: model `haiku-news` through LiteLLM (`https://litellm.hardansaeed.com`),
+  key `LITELLM_KEY`, set on tinkergw only. Code filters first (held or watched, not seen, clear cases by rules); the model answers in a
   fixed schema (kind, date, date certainty, before/after the open, severity, quote); the quote must appear word for
   word in the text or the item stays a low-severity note. Raw text and answer stored. Code, not the model, decides
   the risk (event under 24 h, run-up size, clinical-stage biotech)
