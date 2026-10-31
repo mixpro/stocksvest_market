@@ -551,7 +551,26 @@ Automation snapshots are taken after each close. Snapshots are kept permanently.
 
 Sent through the Expo push service, only when `ALERTS_ENABLED`. Categories: `fills`, `rejected`, `kill` (kill
 rule, kill all), `money` (dividends, fees), from the activity log within a scheduler tick; `cash`, `problems`,
-`runs`, `halal`, `summary`, together with their alert email (after it is sent). All are on until switched off.
+`runs`, `halal`, `summary`, together with their alert email (after it is sent); `events`, the watchers' finds
+(below). All are on until switched off.
+
+---
+
+## Watchers and events
+
+Background checks that find things worth reacting to, apart from the automation scheduler (a pass every 15 s).
+Each finding is stored once (unique `key`) and pushed to the phone (category `events`). Design: `UML/Watchers.mmd`.
+
+| Method | Path | |
+|---|---|---|
+| GET | `/v1/watchers` | `{watchers: [{name, description, hours, everySeconds, enabled, settings, lastRunAt, lastError}]}` |
+| PUT | `/v1/watchers/{name}` | `{"enabled": false}` and/or `{"settings": {"dropPercent": 10}}` (only known keys, above 0) |
+| GET | `/v1/events?status=&limit=` | `{events: [{id, key, watcher, kind, symbol, sector, severity, title, body, data, status, statusReason, createdAt}]}`, newest first |
+
+| Watcher | Runs | Finds |
+|---|---|---|
+| `holdings-drop` | every minute, 04:00–20:00 ET | a held stock down `dropPercent` (8) today, vs the previous close or (after hours) today's close; again at each further step |
+| `market` | every 5 minutes, regular session | median daily change of the halal stocks that traded today at or below −`marketDropPercent` (2), or of a sector (at least `minSectorStocks`, 10) at or below −`sectorDropPercent` (3) |
 
 ---
 

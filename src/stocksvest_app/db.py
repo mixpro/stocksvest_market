@@ -101,10 +101,11 @@ def init(conn: sqlite3.Connection) -> None:
     from .performance import store as performance_store
     from .portfolios import store as portfolios_store
     from .runs import store as runs_store
+    from .watchers import store as watchers_store
 
     for schema in (filters_store.SCHEMA, runs_store.SCHEMA, automations_store.SCHEMA, brokers_store.SCHEMA,
                    portfolios_store.SCHEMA, orders_store.SCHEMA, budgets_store.SCHEMA, performance_store.SCHEMA,
-                   audit_store.SCHEMA):
+                   audit_store.SCHEMA, watchers_store.SCHEMA):
         conn.executescript(schema)
     for table, columns in {**ADDED_COLUMNS, "broker_accounts": brokers_store.ADDED_COLUMNS}.items():
         existing = _columns(conn, table)

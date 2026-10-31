@@ -1,9 +1,10 @@
 """Push notifications to the phone app through the Expo push service (it hands them to Apple / Google).
 
 The phone registers its Expo push token (POST /v1/push/devices); each category can be switched off.
-Two sources:
+Three sources:
   - the email alerts (checks._send with a category): problems, negative cash, failed runs, halal, daily summary
   - activity log entries, picked up every scheduler tick (events): fills, rejections, kill rule / kill all, money
+  - watcher events (watchers.thread.dispatch): a holding or the market dropping
 
 State lives in app_settings: "push:devices" {tokens}, "push:off" {categories}, "push:cursor" {id}.
 """
@@ -28,6 +29,7 @@ CATEGORIES = {  # key: label. All on until switched off. Used by: routes, send
     "money": "Dividends and fees",
     "problems": "Broker or market problem",
     "runs": "Automation run failed",
+    "events": "Holding or market drop",
 }
 EVENTS = {"FILL_IMPORTED": "fills", "ORDER_REJECTED": "rejected", "KILL_RULE": "kill", "KILL_ALL": "kill",
           "DIVIDEND": "money", "ACCOUNT_FEE": "money"}  # activity log action: category. Used by: events

@@ -353,16 +353,17 @@ rules. LIVE trades always wait for a confirm on the phone. Nothing acts on LIVE 
 Suggested order: WATCH-2 → WATCH-3 → WATCH-4 → WATCH-5 → WATCH-6 → WATCH-8 → WATCH-11 → rest.
 
 - [x] **WATCH-1: Design**: UML diagrams above (2026-10-31)
-- [ ] **WATCH-2: Events core**: `events` table (unique `key`), `watcher_config` (enabled, settings, state, last run,
+- [x] **WATCH-2: Events core** (2026-10-31; every event is pushed for now, rules come with WATCH-3; master switch:
+  each watcher's own on/off): `events` table (unique `key`), `watcher_config` (enabled, settings, state, last run,
   last error), `WATCHERS` registry (one file per watcher + one line), a watcher thread apart from the automation
   scheduler (15 s pass, a time limit per watcher, own on/off switch), `GET /v1/events`, `GET/PUT /v1/watchers`,
   push category `events`
 - [ ] **WATCH-3: Dispatcher + EVENT trigger for automations**: match by watcher, kind, min severity, held only;
   cooldown and daily cap; event statuses (`UML/EventLifecycle.mmd`). PAPER acts; LIVE sends a push and waits for
   `POST /v1/events/{id}/confirm`, expiring after a time limit or when the price moved too far
-- [ ] **WATCH-4: Holdings drop watcher**: a held stock down X% today, including pre-market and after hours (prices
-  the scheduler already watches)
-- [ ] **WATCH-5: Market and sector watcher**: share of the universe falling and median move, overall and per sector;
+- [x] **WATCH-4: Holdings drop watcher** (2026-10-31, `holdings-drop`, 8% steps, market snapshots): a held stock down
+  X% today, including pre-market and after hours
+- [x] **WATCH-5: Market and sector watcher** (2026-10-31, `market`: median 2% / sector 3%): share of the universe falling and median move, overall and per sector;
   regular session only (too few stocks trade in extended hours for breadth to mean much)
 - [ ] **WATCH-6: News source**: market service `GET /v1/news` over Alpaca news (`include_content`, cursor). First
   check whether Alpaca carried Iovance's 2026-10-28 press release and when (you found it on Yahoo, a Stocktwits

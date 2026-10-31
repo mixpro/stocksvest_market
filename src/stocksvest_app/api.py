@@ -29,6 +29,8 @@ from .orders import routes as orders_routes
 from .performance import routes as performance_routes
 from .portfolios import routes as portfolios_routes
 from .runs import routes as runs_routes
+from .watchers import routes as watchers_routes
+from .watchers.thread import WatcherThread
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -73,7 +75,7 @@ def create_app(settings: Settings | None = None, market_factory: Callable[[Setti
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        """Startup: create/upgrade the DB, log APP_STARTED, start the scheduler. Shutdown: stop the scheduler.
+        """Startup: create/upgrade the DB, log APP_STARTED, start the scheduler and the watchers. Shutdown: stop them.
 
         Args:
             app: the FastAPI app.
@@ -82,12 +84,17 @@ def create_app(settings: Settings | None = None, market_factory: Callable[[Setti
         db.init(conn)
         audit_store.record(conn, "APP_STARTED", details={"version": app.version}, source="SYSTEM")
         conn.close()
+        watchers = None
         if settings.run_scheduler:
             ctx.scheduler = AutomationScheduler(ctx)
             ctx.scheduler.start()
+            watchers = WatcherThread(ctx)
+            watchers.start()
         yield
         if ctx.scheduler:
             ctx.scheduler.stop()
+        if watchers:
+            watchers.stop()
 
     app = FastAPI(
         title="StocksVest App",
@@ -116,6 +123,7 @@ def create_app(settings: Settings | None = None, market_factory: Callable[[Setti
     app.include_router(performance_routes.router(ctx))
     app.include_router(audit_routes.router(ctx))
     app.include_router(push_routes.router(ctx))
+    app.include_router(watchers_routes.router(ctx))
     audit_middleware.install(app, settings.db_path, settings.trusted_proxies)
     app.include_router(market_routes.router(ctx))
     app.mount("/ui", UIFiles(directory=STATIC_DIR, html=True), name="ui")
