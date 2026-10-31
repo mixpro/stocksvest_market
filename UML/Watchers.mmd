@@ -60,7 +60,7 @@ classDiagram
     - source: EventSource?
     - status: EventStatus
     - statusReason: string?
-    - automationId: string?
+    - outcomes: List~dict~
     - createdAt: datetime
   }
 
@@ -89,10 +89,8 @@ classDiagram
   class EventStatus {
     <<enumeration>>
     NEW
-    IGNORED
-    SUPPRESSED
-    AWAITING_CONFIRM
     ACTING
+    AWAITING_CONFIRM
     DONE
     FAILED
     DECLINED
@@ -109,16 +107,13 @@ classDiagram
     - watchers: List~string~
     - kinds: List~EventKind~
     - minSeverity: int
-    - heldOnly: bool
-    - cooldown: timedelta
-    - maxPerDay: int
-    - confirmLive: bool
-    - confirmWithin: timedelta
-    - maxPriceMovePercent: Decimal
+    - cooldownMinutes: int
+    - confirmWithinMinutes: int
   }
 
   class Automation {
-    - triggers: SCHEDULE or EVENT
+    - schedules: List~Schedule~
+    - eventTrigger: EventTrigger?
   }
 
   Watcher <|.. NewsWatcher
@@ -135,8 +130,8 @@ classDiagram
   Event "1" *-- "0..1" EventSource
   Dispatcher "1" --> "*" Event : reads NEW, sets status
   Dispatcher "1" --> "*" Automation : finds matching
-  Automation "1" *-- "*" EventTrigger
+  Automation "1" *-- "0..1" EventTrigger
 
   note for Watcher "A watcher only detects: it returns events and never places orders.\nAdding one = one file + one line in the WATCHERS registry.\nstate is saved for it between passes (e.g. the last news id seen)."
   note for Event "key is unique (e.g. catalyst:IOVA:2026-10-29, drop:INTC:2026-10-30): the same finding never fires twice.\nseverity 1..5. source keeps the text the model read and its answer, for the history and for replay tests."
-  note for EventTrigger "A new trigger type for automations (Automations.mmd), next to schedules, so rules reuse the existing actions, budgets, kill rule and run history.\nLIVE trades wait for a confirm on the phone; EXPIRED when not confirmed within confirmWithin or the price moved more than maxPriceMovePercent."
+  note for EventTrigger "A new trigger type for automations (Automations.mmd), next to schedules, so rules reuse the existing actions, budgets, kill rule and run history.\nLIVE trades always wait for a confirm on the phone; EXPIRED when not confirmed within confirmWithinMinutes. The run plans with the prices at confirm time."

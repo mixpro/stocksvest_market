@@ -1,6 +1,6 @@
 """The watcher thread: runs each enabled watcher when it is due and inside its hours, stores the events it returns
-(each key once), then dispatches the new ones. Apart from the automation scheduler, so a slow watcher never delays
-trading. Design: UML/WatchersFlow.mmd, UML/WatcherTick.mmd.
+(each key once), then dispatches the new ones (dispatch.py). Apart from the automation scheduler, so a slow watcher
+never delays trading. Design: UML/WatchersFlow.mmd, UML/WatcherTick.mmd.
 
 A watcher is a module with NAME, EVERY (timedelta), HOURS (REGULAR | EXTENDED | ALWAYS), ENABLED (default on/off),
 DEFAULTS (its settings) and check(ctx, conn, now, settings, state) -> list of events (see store.add). It may change
@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 from .. import db
 from ..audit import store as audit
 from ..market.client import MarketError
-from . import holdings_drop, market, store
+from . import dispatch, holdings_drop, market, store
 
 log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
@@ -77,23 +77,8 @@ def tick(ctx, conn, now: datetime | None = None) -> list[str]:
             continue
         store.save_config(conn, w, state=c["state"], lastRunAt=db.iso(now), lastError=None)
         found += [eid for ev in events if (eid := store.add(conn, w.NAME, ev))]
-    dispatch(ctx, conn)
+    dispatch.dispatch(ctx, conn, now)
     return found
-
-
-def dispatch(ctx, conn) -> None:
-    """Act on NEW events, oldest first. For now every event is pushed to the phone (category "events").
-    ponytail: push only; rules per event (automations with an EVENT trigger, LIVE confirms) come with WATCH-3.
-
-    Used by: tick.
-    """
-    from ..alerts import push
-    for ev in reversed(store.list_events(conn, status="NEW", limit=200)):
-        if not ctx.settings.alerts_enabled:
-            store.set_status(conn, ev["id"], "DONE", "alerts are off")
-            continue
-        sent = push.send(conn, "events", ev["title"], ev["body"])
-        store.set_status(conn, ev["id"], "DONE", f"pushed to {sent} phone(s)")
 
 
 class WatcherThread:

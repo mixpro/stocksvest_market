@@ -452,6 +452,29 @@ class OrderGuards(BaseModel):
     fractionalShares: bool = False
 
 
+class EventTrigger(BaseModel):
+    """Run the automation when a watcher finds a matching event (watchers/, UML/Watchers.mmd).
+
+    The run's symbols: the event's stock (HOLDING_DROP and other per-stock events), or the stocks the automation's
+    budgets hold (MARKET_DROP), or hold in that sector (SECTOR_DROP); with runTargets, only those the filters also
+    match. Runs that place orders for a LIVE budget always wait for a confirm on the phone.
+
+    Attributes:
+        watchers: watcher names (empty = any).
+        kinds: event kinds, e.g. HOLDING_DROP (empty = any).
+        minSeverity: 1..5.
+        cooldownMinutes: at most one event run per this many minutes.
+        confirmWithinMinutes: a LIVE confirm not given by then expires.
+
+    Used by: AutomationIn.eventTrigger, watchers.dispatch.
+    """
+    watchers: list[str] = []
+    kinds: list[str] = []
+    minSeverity: int = Field(default=3, ge=1, le=5)
+    cooldownMinutes: int = Field(default=60, ge=0, le=10080)
+    confirmWithinMinutes: int = Field(default=15, ge=1, le=240)
+
+
 # Any automation action; the "type" field picks the model. Used by: AutomationIn.actions, runner.run_automation.
 Action = Annotated[Union[NotifyAction, PlaceOrderAction, LaterAction], Field(discriminator="type")]
 
@@ -464,8 +487,9 @@ class AutomationIn(BaseModel):
         name: 1-100 characters.
         description: free text.
         orderGuards: OrderGuards; defaults applied when an action places orders.
-        runTargets: at least one RunTarget (union).
-        schedules: at least one Schedule.
+        runTargets: RunTargets (union); at least one unless eventTrigger is set.
+        schedules: Schedules; at least one unless eventTrigger is set.
+        eventTrigger: also (or only) run when a watcher event matches.
         actions: at least one Action, run in order.
 
     Used by: routes (create, update, preview), runner (via the stored definition).
@@ -473,13 +497,20 @@ class AutomationIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = ""
     orderGuards: OrderGuards | None = None  # defaults apply when an automation places orders
-    runTargets: list[RunTarget] = Field(min_length=1)
-    schedules: list[Schedule] = Field(min_length=1)
+    runTargets: list[RunTarget] = []
+    schedules: list[Schedule] = []
+    eventTrigger: EventTrigger | None = None
     actions: list[Action] = Field(min_length=1)
 
     @model_validator(mode="after")
     def check_trading(self):
-        """Order-placing automations can't use RUN_ALL, and get default guards."""
+        """Schedules and run targets are needed unless an event triggers it; order-placing automations can't use
+        RUN_ALL, and get default guards."""
+        if self.eventTrigger is None:
+            if not self.schedules:
+                raise ValueError("an automation needs at least one schedule or an eventTrigger")
+            if not self.runTargets:
+                raise ValueError("an automation needs at least one run target or an eventTrigger")
         if any(a.type == "PLACE_ORDER" for a in self.actions):
             if any(s.missedPolicy == MissedPolicy.RUN_ALL for s in self.schedules):
                 raise ValueError("missedPolicy RUN_ALL is not allowed for automations that place orders")

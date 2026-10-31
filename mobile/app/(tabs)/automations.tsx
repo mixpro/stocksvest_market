@@ -11,6 +11,7 @@ type Schedule = { type: string; onDays?: string[]; atTimes?: string[]; everyNWee
 type Automation = {
   id: string; name: string; status: string; schedules: Schedule[];
   actions: { type: string; side?: string }[]; budgets: { name: string; portfolioId: string }[];
+  eventTrigger: { kinds: string[] } | null;
 };
 type SwitchState = { automationsEnabled: boolean; reason: string | null };
 
@@ -18,7 +19,7 @@ const DAYS: Record<string, string> = { MON: 'Mon', TUE: 'Tue', WED: 'Wed', THU: 
 
 function when(a: Automation) {
   const s = a.schedules[0];
-  if (!s) return 'Run by hand';
+  if (!s) return a.eventTrigger ? 'When a watcher finds an event' : 'Run by hand';
   const times = (s.atTimes ?? []).map((t) => t.slice(0, 5)).join(', ');
   if (s.type === 'WEEKLY') return `${(s.onDays ?? []).map((d) => DAYS[d] ?? d).join(' ')} ${times} ET`;
   return `${s.type.charAt(0) + s.type.slice(1).toLowerCase()} ${times}`.trim();

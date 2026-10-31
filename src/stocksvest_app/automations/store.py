@@ -84,6 +84,7 @@ def automation_json(r: sqlite3.Row) -> dict:
         "status": r["status"],
         "configVersion": r["config_version"],
         "orderGuards": None,
+        "eventTrigger": None,
         **json.loads(r["definition"]),
         "createdAt": r["created_at"],
         "updatedAt": r["updated_at"],
@@ -120,14 +121,14 @@ def list_automations(conn, status: str | None = None) -> list[dict]:
 
 
 def _definition(data: dict) -> str:
-    """The stored JSON definition (orderGuards, runTargets, schedules, actions) of a validated body.
+    """The stored JSON definition (orderGuards, runTargets, schedules, eventTrigger, actions) of a validated body.
 
     Args:
         data: AutomationIn as dict.
 
     Used by: create_automation, update_automation.
     """
-    return json.dumps({k: data.get(k) for k in ("orderGuards", "runTargets", "schedules", "actions")})
+    return json.dumps({k: data.get(k) for k in ("orderGuards", "runTargets", "schedules", "eventTrigger", "actions")})
 
 
 def create_automation(conn, data: dict) -> dict:

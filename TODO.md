@@ -358,7 +358,8 @@ Suggested order: WATCH-2 → WATCH-3 → WATCH-4 → WATCH-5 → WATCH-6 → WAT
   last error), `WATCHERS` registry (one file per watcher + one line), a watcher thread apart from the automation
   scheduler (15 s pass, a time limit per watcher, own on/off switch), `GET /v1/events`, `GET/PUT /v1/watchers`,
   push category `events`
-- [ ] **WATCH-3: Dispatcher + EVENT trigger for automations**: match by watcher, kind, min severity, held only;
+- [x] **WATCH-3: Dispatcher + EVENT trigger for automations** (2026-10-31; no daily cap and no price-moved check: the
+  cooldown limits runs and a confirmed run plans with the prices at confirm time): match by watcher, kind, min severity, held only;
   cooldown and daily cap; event statuses (`UML/EventLifecycle.mmd`). PAPER acts; LIVE sends a push and waits for
   `POST /v1/events/{id}/confirm`, expiring after a time limit or when the price moved too far
 - [x] **WATCH-4: Holdings drop watcher** (2026-10-31, `holdings-drop`, 8% steps, market snapshots): a held stock down

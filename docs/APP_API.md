@@ -565,12 +565,38 @@ Each finding is stored once (unique `key`) and pushed to the phone (category `ev
 |---|---|---|
 | GET | `/v1/watchers` | `{watchers: [{name, description, hours, everySeconds, enabled, settings, lastRunAt, lastError}]}` |
 | PUT | `/v1/watchers/{name}` | `{"enabled": false}` and/or `{"settings": {"dropPercent": 10}}` (only known keys, above 0) |
-| GET | `/v1/events?status=&limit=` | `{events: [{id, key, watcher, kind, symbol, sector, severity, title, body, data, status, statusReason, createdAt}]}`, newest first |
+| GET | `/v1/events?status=&limit=` | `{events: [{id, key, watcher, kind, symbol, sector, severity, title, body, data, status, statusReason, outcomes, createdAt}]}`, newest first |
+| GET | `/v1/events/{id}` | one event |
+| POST | `/v1/events/{id}/confirm` | `{"confirm": true}` runs the LIVE automations waiting on it, `false` declines (404 unknown, 409 not waiting: answered or expired) |
 
 | Watcher | Runs | Finds |
 |---|---|---|
 | `holdings-drop` | every minute, 04:00–20:00 ET | a held stock down `dropPercent` (8) today, vs the previous close or (after hours) today's close; again at each further step |
 | `market` | every 5 minutes, regular session | median daily change of the halal stocks that traded today at or below −`marketDropPercent` (2), or of a sector (at least `minSectorStocks`, 10) at or below −`sectorDropPercent` (3) |
+
+
+**Automations triggered by events.** An automation with an `eventTrigger` runs when a matching event is found
+(schedules and run targets become optional):
+
+```json
+{"name": "Sell on a big drop",
+ "eventTrigger": {"watchers": ["holdings-drop"], "kinds": ["HOLDING_DROP"], "minSeverity": 3,
+                  "cooldownMinutes": 60, "confirmWithinMinutes": 15},
+ "actions": [{"type": "PLACE_ORDER", "side": "SELL", "orderType": "LIMIT", "limitOffsetPercent": -1,
+              "extendedHours": true, "sizings": [{"mode": "PERCENT_OF_POSITION", "value": 100}]}],
+ "orderGuards": {"regularHoursOnly": false}}
+```
+
+- Symbols: the event's stock; for `MARKET_DROP` what the automation's budgets hold, for `SECTOR_DROP` what they hold
+  in that sector. With `runTargets`, only the symbols the filters also match.
+- Skipped like scheduled runs when the master switch is off or the automation is paused. At most one event run per
+  `cooldownMinutes`.
+- PAPER runs at once. A run that places orders for a LIVE budget waits: the event is `AWAITING_CONFIRM` and the push
+  asks to confirm in the app; not confirmed within `confirmWithinMinutes` it becomes `EXPIRED`. The run plans with
+  the prices at confirm time.
+- Each event's `outcomes`: per matching automation `{automationId, name, status, runId?, expiresAt?}`; status is the
+  run's (`SUCCEEDED`, `PARTIAL`, `FAILED`, `SKIPPED`) or `COOLDOWN`, `AWAITING_CONFIRM`, `DECLINED`, `EXPIRED`.
+  Event status: `NEW` → `ACTING` → `DONE` / `FAILED` / `AWAITING_CONFIRM` → `DONE` / `DECLINED` / `EXPIRED`.
 
 ---
 

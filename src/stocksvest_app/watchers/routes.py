@@ -7,8 +7,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from ..deps import AppContext
-from . import store
+from . import dispatch, store
 from .thread import WATCHERS
+
+
+class ConfirmIn(BaseModel):
+    """Body of POST /v1/events/{id}/confirm.
+
+    Attributes:
+        confirm: true runs the automations waiting on the event, false declines them.
+    """
+    confirm: bool
 
 
 class WatcherIn(BaseModel):
@@ -36,10 +45,28 @@ def router(ctx: AppContext) -> APIRouter:
                 "lastRunAt": c["lastRunAt"], "lastError": c["lastError"]}
 
     @r.get("/v1/events")
-    def get_events(conn: Conn, status: Literal["NEW", "DONE", "FAILED"] | None = None,
+    def get_events(conn: Conn, status: Literal["NEW", "AWAITING_CONFIRM", "ACTING", "DONE", "FAILED", "DECLINED", "EXPIRED"] | None = None,
                    limit: Annotated[int, Query(ge=1, le=500)] = 100):
         """Events the watchers found, newest first."""
         return {"events": store.list_events(conn, status, limit)}
+
+    @r.get("/v1/events/{event_id}")
+    def get_event(event_id: str, conn: Conn):
+        """One event with what each matching automation did."""
+        ev = store.get_event(conn, event_id)
+        if not ev:
+            raise HTTPException(404, "no such event")
+        return ev
+
+    @r.post("/v1/events/{event_id}/confirm")
+    def confirm_event(event_id: str, body: ConfirmIn, conn: Conn):
+        """Confirm (run) or decline the LIVE automation runs waiting on this event."""
+        ev = dispatch.confirm(ctx, conn, event_id, body.confirm)
+        if ev is None:
+            if not store.get_event(conn, event_id):
+                raise HTTPException(404, "no such event")
+            raise HTTPException(409, "this event isn't waiting for a confirm (answered or expired)")
+        return ev
 
     @r.get("/v1/watchers")
     def get_watchers(conn: Conn):

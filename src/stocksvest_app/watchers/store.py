@@ -20,8 +20,9 @@ CREATE TABLE IF NOT EXISTS events (
     title         TEXT NOT NULL,
     body          TEXT NOT NULL,
     data          TEXT NOT NULL,                -- JSON
-    status        TEXT NOT NULL DEFAULT 'NEW',  -- NEW | DONE | FAILED (more with WATCH-3)
+    status        TEXT NOT NULL DEFAULT 'NEW',  -- NEW | AWAITING_CONFIRM | ACTING | DONE | FAILED | DECLINED | EXPIRED
     status_reason TEXT,
+    outcomes      TEXT NOT NULL DEFAULT '[]',   -- JSON: per matching automation {automationId, name, status, ...}
     created_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_by_status ON events(status, created_at);
@@ -55,7 +56,13 @@ def _row(r) -> dict:
     return {"id": r["id"], "key": r["key"], "watcher": r["watcher"], "kind": r["kind"], "symbol": r["symbol"],
             "sector": r["sector"], "severity": r["severity"], "title": r["title"], "body": r["body"],
             "data": json.loads(r["data"]), "status": r["status"], "statusReason": r["status_reason"],
-            "createdAt": r["created_at"]}
+            "outcomes": json.loads(r["outcomes"]), "createdAt": r["created_at"]}
+
+
+def get_event(conn, event_id: str) -> dict | None:
+    """Used by: dispatch.confirm, routes."""
+    r = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+    return _row(r) if r else None
 
 
 def list_events(conn, status: str | None = None, limit: int = 100) -> list[dict]:
@@ -74,10 +81,25 @@ def list_events(conn, status: str | None = None, limit: int = 100) -> list[dict]
     return [_row(r) for r in conn.execute(sql + " ORDER BY created_at DESC, rowid DESC LIMIT ?", (*args, limit))]
 
 
-def set_status(conn, event_id: str, status: str, reason: str | None = None) -> None:
-    """Used by: thread.dispatch."""
+def set_status(conn, event_id: str, status: str, reason: str | None = None, outcomes: list | None = None) -> None:
+    """Used by: dispatch."""
     with conn:
-        conn.execute("UPDATE events SET status = ?, status_reason = ? WHERE id = ?", (status, reason, event_id))
+        if outcomes is None:
+            conn.execute("UPDATE events SET status = ?, status_reason = ? WHERE id = ?", (status, reason, event_id))
+        else:
+            conn.execute("UPDATE events SET status = ?, status_reason = ?, outcomes = ? WHERE id = ?",
+                         (status, reason, json.dumps(outcomes), event_id))
+
+
+def claim(conn, event_id: str, from_status: str) -> bool:
+    """Move an event from `from_status` to ACTING, unless something else already did (a second confirm tap, the
+    expiry pass): only one caller gets True.
+
+    Used by: dispatch.confirm, dispatch.expire.
+    """
+    with conn:
+        return conn.execute("UPDATE events SET status = 'ACTING' WHERE id = ? AND status = ?",
+                            (event_id, from_status)).rowcount == 1
 
 
 def config(conn, watcher) -> dict:

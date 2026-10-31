@@ -225,9 +225,36 @@ def _run_targets(conn, ctx: AppContext, automation: dict) -> tuple[list[dict], s
     return targets, union, ev
 
 
+def _event_symbols(conn, ctx: AppContext, automation: dict, event: dict) -> tuple[list[dict], set[str], Evaluator]:
+    """The symbols an event run works on (see models.EventTrigger): the event's stock, or what the automation's
+    budgets hold (in the event's sector, if it has one); with runTargets, only those the filters also match.
+
+    Args:
+        conn: app DB connection.
+        ctx: app context.
+        automation: the automation dict.
+        event: the watcher event (watchers.store).
+
+    Returns:
+        Like _run_targets: (target results, symbols, Evaluator).
+    """
+    if event.get("symbol"):
+        symbols = {event["symbol"]}
+    else:
+        symbols = {p["symbol"] for b in budget_store.budgets_of(conn, automation["id"])
+                   for p in portfolios_store.positions(conn, b["portfolioId"], budget_id=b["id"])}
+        if event.get("sector"):
+            universe = ctx.market.universe()
+            symbols = {t for t in symbols if (universe.get(t) or {}).get("sector") == event["sector"]}
+    if not automation["runTargets"]:
+        return [], symbols, Evaluator(conn, ctx.market)
+    targets, matched, ev = _run_targets(conn, ctx, automation)
+    return targets, symbols & matched, ev
+
+
 def run_automation(ctx: AppContext, conn: sqlite3.Connection, automation: dict, trigger: str,
                    scheduled_for: datetime | None = None, schedule_id: str | None = None,
-                   fire_id: str | None = None, preview: bool = False) -> dict:
+                   fire_id: str | None = None, preview: bool = False, event: dict | None = None) -> dict:
     """Execute (or preview) one automation. A real run is stored in the run history and returned;
     a preview returns the same shape without storing anything or creating notifications.
 
@@ -235,29 +262,30 @@ def run_automation(ctx: AppContext, conn: sqlite3.Connection, automation: dict, 
     in (result["budgets"] has each budget's money before and after). A budget whose broker fails is reported and
     skipped; the others still trade.
 
-    Scheduled runs are skipped (stored as SKIPPED) when the global switch is off or the automation is paused;
+    Scheduled and event runs are skipped (stored as SKIPPED) when the global switch is off or the automation is paused;
     manual runs ignore both. A run already in progress for the automation gives SKIPPED / OVERLAP.
 
     Args:
         ctx: app context.
         conn: app DB connection.
         automation: the automation dict (its configuration is copied into the run).
-        trigger: "SCHEDULE" or "MANUAL".
+        trigger: "SCHEDULE", "MANUAL" or "EVENT".
         scheduled_for: the scheduled time (scheduled runs).
         schedule_id: the schedule that fired.
         fire_id: the fire record to link to the run.
         preview: plan and show, change nothing.
+        event: the watcher event of an EVENT run: its symbols replace the filters' (see _event_symbols).
 
     Returns:
         The stored run (with result), or {"preview": True, "status", "error", "result"}.
 
-    Used by: scheduler._tick_schedule, routes (run, preview, unsaved preview).
+    Used by: scheduler._tick_schedule, routes (run, preview, unsaved preview), watchers.dispatch (EVENT).
     """
     started = time.monotonic()
     now = datetime.now(timezone.utc)
     run_id = new_id("run")
     result = {
-        "trigger": {"type": trigger, "scheduleId": schedule_id,
+        "trigger": {"type": trigger, "scheduleId": schedule_id, "eventId": event["id"] if event else None,
                     "scheduledFor": scheduled_for.astimezone(timezone.utc).isoformat() if scheduled_for else None, "fireId": fire_id},
         "configVersion": automation["configVersion"],
         "skipReason": None,
@@ -311,7 +339,7 @@ def run_automation(ctx: AppContext, conn: sqlite3.Connection, automation: dict, 
             store.attach_run(conn, fire_id, run["id"])
         return run
 
-    if trigger == "SCHEDULE":
+    if trigger in ("SCHEDULE", "EVENT"):
         if not store.get_switch(conn)["automationsEnabled"]:
             result["skipReason"] = "SWITCH_OFF"
             return finish("SKIPPED")
@@ -350,7 +378,8 @@ def run_automation(ctx: AppContext, conn: sqlite3.Connection, automation: dict, 
 
         result["market"] = market_context(ctx, now)
         try:
-            result["targets"], symbols, ev = _run_targets(conn, ctx, automation)
+            result["targets"], symbols, ev = (_event_symbols(conn, ctx, automation, event) if event
+                                              else _run_targets(conn, ctx, automation))
             result["matched"] = ev.describe(symbols)
         except (EngineError, MarketError) as e:
             detail = e.detail if isinstance(e, MarketError) else str(e)
