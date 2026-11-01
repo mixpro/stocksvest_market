@@ -1,12 +1,17 @@
-import { Link } from 'expo-router';
+import { Link, useFocusEffect } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 
 import { LineChart, Point, Range, RANGES, sinceDays } from '@/components/LineChart';
 import { Card, ErrorNote, money, pct, Pills, Screen, Segmented, signedMoney, T } from '@/components/ui';
+import { seenAt, unseen, WatcherEvent } from '@/lib/alerts';
 import { useApi, useApp } from '@/lib/app';
+import { useMarketStatus } from '@/lib/market';
 import { PortfolioCard, usePortfolios } from '@/lib/portfolios';
+
+const OWNER = 'Saeed'; // ponytail: one user; a name setting when there are more
+const greeting = (h = new Date().getHours()) => (h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening');
 
 type Env = 'ALL' | 'PAPER' | 'LIVE';
 type Snap = { at: string; equity: number; allocated: number };
@@ -44,8 +49,17 @@ export default function Home() {
   const [env, setEnv] = useState<Env>('ALL');
   const { portfolios, error, loading, reload } = usePortfolios();
   const automations = useApi<{ automations: { status: string }[] }>('/v1/automations');
-  const waiting = useApi<{ events: unknown[] }>('/v1/events?status=AWAITING_CONFIRM');
-  const confirms = waiting.data?.events.length ?? 0;
+  const events = useApi<{ events: WatcherEvent[] }>('/v1/events?limit=50');
+  const list = events.data?.events ?? [];
+  const confirms = list.filter((e) => e.status === 'AWAITING_CONFIRM').length;
+  const market = useMarketStatus();
+  const [since, setSince] = useState(new Date());
+  const reloadEvents = events.reload;
+  useFocusEffect(useCallback(() => { // back from Activity: the bell goes quiet
+    seenAt().then(setSince);
+    reloadEvents();
+  }, [reloadEvents]));
+  const fresh = unseen(list, since);
 
   const shown = portfolios.filter((p) => env === 'ALL' || p.env === env);
   const equity = shown.reduce((s, p) => s + p.equity, 0);
@@ -57,15 +71,34 @@ export default function Home() {
   const returns = useCombinedReturns(shown.map((p) => p.id).join(','), range);
 
   return (
-    <Screen onRefresh={() => { reload(); automations.reload(); waiting.reload(); }} refreshing={loading}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-        <T size={22} weight="heavy">StocksVest</T>
+    <Screen onRefresh={() => { reload(); automations.reload(); events.reload(); market.reload(); }} refreshing={loading}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.accentSoft, alignItems: 'center',
+          justifyContent: 'center' }}>
+          <T size={17} weight="heavy" color={colors.accent}>{OWNER[0]}</T>
+        </View>
+        <View style={{ flex: 1 }}>
+          <T size={13} color={colors.muted}>{greeting()}</T>
+          <T size={17} weight="bold">{OWNER}</T>
+        </View>
+        <Link href={{ pathname: '/activity', params: { filter: 'Alerts' } }} asChild>
+          <Pressable accessibilityRole="button" accessibilityLabel={fresh ? `Alerts, ${fresh} new` : 'Alerts'}
+            style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.card, alignItems: 'center',
+              justifyContent: 'center', boxShadow: '0 2px 8px rgba(40, 40, 90, 0.06)' }}>
+            <SymbolView name={{ ios: 'bell', android: 'notifications', web: 'notifications' }} tintColor={colors.text} size={20} />
+            {fresh ? (
+              <View style={{ position: 'absolute', top: 4, right: 2, minWidth: 18, height: 18, paddingHorizontal: 4, borderRadius: 9,
+                backgroundColor: colors.danger, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: colors.card }}>
+                <T size={10} weight="heavy" color="#FFFFFF">{fresh > 9 ? '9+' : fresh}</T>
+              </View>
+            ) : null}
+          </Pressable>
+        </Link>
         <Link href="/kill-all" asChild>
           <Pressable accessibilityRole="button" accessibilityLabel="Kill all"
-            style={{ height: 44, paddingHorizontal: 14, borderRadius: 22, backgroundColor: colors.dangerSoft, flexDirection: 'row',
-              alignItems: 'center', gap: 6 }}>
-            <SymbolView name={{ ios: 'power', android: 'power_settings_new', web: 'power_settings_new' }} tintColor={colors.danger} size={18} />
-            <T size={13} weight="heavy" color={colors.danger}>Kill all</T>
+            style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.dangerSoft, alignItems: 'center',
+              justifyContent: 'center' }}>
+            <SymbolView name={{ ios: 'power', android: 'power_settings_new', web: 'power_settings_new' }} tintColor={colors.danger} size={20} />
           </Pressable>
         </Link>
       </View>
@@ -124,7 +157,7 @@ export default function Home() {
             </View>
             <View style={{ flex: 1 }}>
               <T weight="bold">{active} automations running</T>
-              <T size={12} color={colors.muted}>{autos.length - active} paused</T>
+              <T size={12} color={colors.muted}>{autos.length - active} paused{market.status ? ` · ${market.status}` : ''}</T>
             </View>
             <SymbolView name={{ ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' }} tintColor={colors.muted} size={16} />
           </Card>

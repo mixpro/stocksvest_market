@@ -42,13 +42,13 @@ export function Screen({ title, subtitle, back, children, onRefresh, refreshing 
   );
 }
 
-export function T({ children, size = 14, weight = 'regular', color, style, center }: {
+export function T({ children, size = 14, weight = 'regular', color, style, center, numberOfLines }: {
   children: ReactNode; size?: number; weight?: keyof typeof font; color?: string;
-  style?: StyleProp<TextStyle>; center?: boolean;
+  style?: StyleProp<TextStyle>; center?: boolean; numberOfLines?: number;
 }) {
   const { colors } = useApp();
   return (
-    <Text style={[{ fontFamily: font[weight], fontSize: size, color: color ?? colors.text, fontVariant: ['tabular-nums'] },
+    <Text numberOfLines={numberOfLines} style={[{ fontFamily: font[weight], fontSize: size, color: color ?? colors.text, fontVariant: ['tabular-nums'] },
       center && { textAlign: 'center' }, style]}>
       {children}
     </Text>

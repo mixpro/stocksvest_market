@@ -5,6 +5,7 @@ import { Pressable, View } from 'react-native';
 import { LineChart, Range, RANGES, sinceDays } from '@/components/LineChart';
 import { Card, ErrorNote, money, pct, Pills, Screen, Section, signedMoney, T } from '@/components/ui';
 import { useApi, useApp } from '@/lib/app';
+import { useNames } from '@/lib/market';
 import type { Portfolio } from '@/lib/portfolios';
 import { cardColors, gradient } from '@/lib/theme';
 
@@ -20,6 +21,7 @@ function useHistory(id: string, range: Range, closesOnly: boolean) {
 export default function PortfolioScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { colors } = useApp();
+  const names = useNames();
   const { data: p, error, loading, reload } = useApi<Portfolio>(`/v1/portfolios/${id}`);
   const accounts = useApi<{ accounts: { id: string; environment: string; name: string }[] }>('/v1/broker-accounts');
   const [returnRange, setReturnRange] = useState<Range>('3M');
@@ -81,7 +83,7 @@ export default function PortfolioScreen() {
                   <T size={10} weight="heavy" color={colors.accent}>{x.symbol}</T>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <T weight="bold">{x.symbol}</T>
+                  <T weight="bold" numberOfLines={1}>{names[x.symbol] ?? x.symbol}</T>
                   <T size={12} color={colors.muted}>{+x.quantity.toFixed(4)} shares{x.budgetId ? '' : ' · manual'}</T>
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>

@@ -5,6 +5,7 @@ import { Pressable, View } from 'react-native';
 import { LineChart, Range, RANGES, sinceDays } from '@/components/LineChart';
 import { Card, ErrorNote, money, pct, Pills, Screen, signedMoney, T } from '@/components/ui';
 import { useApi, useApp } from '@/lib/app';
+import { shortName } from '@/lib/market';
 import type { Portfolio } from '@/lib/portfolios';
 import { cardColors, gradient } from '@/lib/theme';
 
@@ -55,7 +56,7 @@ export default function HoldingScreen() {
       <ErrorNote error={p.error ?? bars.error} />
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
         <View style={{ flex: 1 }}>
-          <T size={20} weight="heavy">{info.data?.name ?? symbol}</T>
+          <T size={20} weight="heavy">{info.data ? shortName(info.data.name) : symbol}</T>
           <T size={13} color={colors.muted}>{[info.data?.exchange, info.data?.sector].filter(Boolean).join(' · ')}</T>
         </View>
         {info.data ? (

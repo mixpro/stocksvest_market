@@ -1,7 +1,9 @@
+import { Link, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 
 import { Card, ErrorNote, money, Pills, Screen, T } from '@/components/ui';
+import { markSeen, WatcherEvent } from '@/lib/alerts';
 import { useApp } from '@/lib/app';
 
 type Entry = {
@@ -9,7 +11,7 @@ type Entry = {
   error: string | null; details: Record<string, any>;
 };
 type Kind = 'Orders' | 'Alerts' | 'Money';
-type Item = { id: number; at: Date; kind: Kind; title: string; sub: string; amount?: number; badge: string };
+type Item = { id: string; at: Date; kind: Kind; title: string; sub: string; amount?: number; badge: string; event?: boolean };
 
 // The audit log records everything; the feed shows only what a person cares about.
 const ACTIONS: Record<string, Kind> = {
@@ -18,6 +20,13 @@ const ACTIONS: Record<string, Kind> = {
   AUTOMATION_RUNS_MISSED: 'Alerts',
   ACCOUNT_FEE: 'Money', DIVIDEND: 'Money', PORTFOLIO_CAPITAL_ALLOCATE: 'Money', PORTFOLIO_CAPITAL_WITHDRAW: 'Money',
 };
+
+// A watcher event (GET /v1/events): its severity as the badge, LIVE while a run waits for your confirm.
+const fromEvent = (e: WatcherEvent): Item => ({
+  id: e.id, at: new Date(e.createdAt), kind: 'Alerts', event: true, title: e.title,
+  badge: e.status === 'AWAITING_CONFIRM' ? 'LIVE' : `S${e.severity}`,
+  sub: e.status === 'AWAITING_CONFIRM' ? 'Waiting for your confirm' : e.body,
+});
 
 function describe(e: Entry, names: Record<string, string>): Omit<Item, 'id' | 'at' | 'kind'> {
   const d = e.details ?? {};
@@ -57,21 +66,30 @@ function describe(e: Entry, names: Record<string, string>): Omit<Item, 'id' | 'a
 export default function Activity() {
   const { api, colors } = useApp();
   const [items, setItems] = useState<Item[]>([]);
-  const [filter, setFilter] = useState<'All' | Kind>('All');
+  const params = useLocalSearchParams<{ filter?: Kind }>();
+  const [filter, setFilter] = useState<'All' | Kind>(params.filter ?? 'All');
+  useEffect(() => {
+    if (params.filter) setFilter(params.filter); // the Home bell opens Alerts
+  }, [params.filter]);
+  useFocusEffect(useCallback(() => {
+    markSeen();
+  }, []));
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [{ portfolios }, ...lists] = await Promise.all([
+      const [{ portfolios }, { events }, ...lists] = await Promise.all([
         api<{ portfolios: { id: string; name: string }[] }>('/v1/portfolios'),
+        api<{ events: WatcherEvent[] }>('/v1/events?limit=50'),
         ...Object.keys(ACTIONS).map((a) => api<{ entries: Entry[] }>(`/v1/activity?action=${a}&limit=30`)),
       ]);
       const names = Object.fromEntries(portfolios.map((p) => [p.id, p.name]));
-      setItems(lists.flatMap((l) => l.entries)
-        .map((e) => ({ id: e.id, at: new Date(e.at), kind: ACTIONS[e.action], ...describe(e, names) }))
-        .sort((a, b) => b.id - a.id).slice(0, 80));
+      setItems([...lists.flatMap((l) => l.entries)
+        .map((e) => ({ id: String(e.id), at: new Date(e.at), kind: ACTIONS[e.action], ...describe(e, names) })),
+      ...events.map(fromEvent)]
+        .sort((a, b) => b.at.getTime() - a.at.getTime()).slice(0, 100));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -92,7 +110,8 @@ export default function Activity() {
   }
   const badge = (i: Item) =>
     i.badge === 'SELL' ? [colors.downSoft, colors.down] : i.badge === 'BUY' ? [colors.accentSoft, colors.accent]
-      : i.badge === '$' ? [colors.upSoft, colors.up] : [colors.dangerSoft, colors.danger];
+      : i.badge === '$' ? [colors.upSoft, colors.up] : ['S1', 'S2', 'S3'].includes(i.badge) ? [colors.accentSoft, colors.accent]
+        : [colors.dangerSoft, colors.danger];
 
   return (
     <Screen title="Activity" onRefresh={load} refreshing={loading}>
@@ -104,15 +123,15 @@ export default function Activity() {
           <Card style={{ paddingVertical: 0 }}>
             {list.map((i, n) => {
               const [bg, fg] = badge(i);
-              return (
-                <View key={i.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 62, paddingVertical: 10,
+              const row = (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 62, paddingVertical: 10,
                   borderTopWidth: n ? 1 : 0, borderTopColor: colors.line }}>
                   <View style={{ width: 40, height: 38, borderRadius: 12, backgroundColor: bg, alignItems: 'center', justifyContent: 'center' }}>
                     <T size={10} weight="heavy" color={fg}>{i.badge}</T>
                   </View>
                   <View style={{ flex: 1 }}>
                     <T weight="bold">{i.title}</T>
-                    {i.sub ? <T size={12} color={colors.muted}>{i.sub}</T> : null}
+                    {i.sub ? <T size={12} color={colors.muted} numberOfLines={i.event ? 2 : undefined}>{i.sub}</T> : null}
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
                     {i.amount != null ? (
@@ -122,6 +141,9 @@ export default function Activity() {
                   </View>
                 </View>
               );
+              return i.event ? ( // details, outcomes and the LIVE confirm are on the Events screen
+                <Link key={i.id} href="/events" asChild><Pressable accessibilityRole="button">{row}</Pressable></Link>
+              ) : <View key={i.id}>{row}</View>;
             })}
           </Card>
         </View>
