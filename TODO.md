@@ -421,8 +421,18 @@ Suggested order: WATCH-2 → WATCH-3 → WATCH-4 → WATCH-5 → WATCH-6 → WAT
   - Not checked: lead times are against hourly bars (the live watcher checks every minute, so up to an hour less);
     survivorship bias (stocks that left the halal list are missing); illiquid stocks in the news replay
   - Seen: roundups naming 5 or fewer stocks ("Final Trades", "Stock Whisper") still get through as events
-- [ ] **WATCH-12: Clinical-stage biotech size cap**: smaller max position for biotechs without product revenue,
+- [~] **WATCH-12: Clinical-stage biotech size cap**: smaller max position for biotechs without product revenue,
   since much of their news is unscheduled (test with the backtester like RISK-1/RISK-2)
+  - Checked 2026-11-01 (5B, 2017-11..2026-10, $10k, today's stocks): "no product revenue" misses the case it was
+    for (IOVA: $264M revenue, $391M loss in 2025) and flags big foreign filers without us-gaap data (ARGX, SNY), so
+    the test used loss-making biotech: SIC 2834/2836/8731 with the last public annual net income below zero.
+    5B bought 22 of them in 9 years (IOVA 2020, MDGL, IBRX, TWST, TGTX...), together -$1.7k of $34.8k profit; 8 of
+    the 10 worst trades were not biotechs (CPSH, BEEM, CRDO, POWL, TSLA). A size cap is not worth building
+  - Leaving them out of the buy universe: +548% vs +368%, same -38% drop. Four placebos leaving out 26 random
+    non-biotechs: +390 / +424 / +429 / +456%, so the backtest swings ~90 points on which stocks are left out and
+    most of the gap is path luck; the rest (~90 points over the best placebo) is a hint, not a proof
+  - Not adopted. Before building an exclusion: more placebos and the with-delisted run (survivorship bias favours
+    the biotechs that are still listed)
 
 ## IDEA: Parked
 
