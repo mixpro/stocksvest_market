@@ -389,8 +389,25 @@ Suggested order: WATCH-2 → WATCH-3 → WATCH-4 → WATCH-5 → WATCH-6 → WAT
 - [x] **WATCH-10: Phone**: events list with reason and outcome, watcher on/off and settings, confirm screen for LIVE
   - Done: Events screen (`mobile/app/events.tsx`) from a Home card that turns red while a LIVE run waits; Confirm asks
     for Face ID; tapping an events push opens it. Event automations are still created through the API only
-- [ ] **WATCH-11: Proof before LIVE**: replay Alpaca news history (from 2015) and bars through the watchers; compare
+- [x] **WATCH-11: Proof before LIVE**: replay Alpaca news history (from 2015) and bars through the watchers; compare
   the next days' returns of flagged vs unflagged holdings, and what the rules would have saved or cost
+  - Done 2026-11-01 (`scripts/replay_watchers.py`, `scripts/replay_news.py`; 2 years of hourly bars with extended
+    hours, 879 stocks, liquid = $50M a day). Verdict: every watcher notifies; none should sell on its own.
+  - holdings-drop (8%, sold at the next hour's VWAP at the bid): regular-session and after-hours drops showed no edge
+    once averaged per day (the stock-level rebound came from crash days like April 2025). Pre-market drops kept
+    falling (~3% over 3 days, t -3), but only in 2026 (2025: none). 24%+ drops fell another ~5% (37 cases, not significant)
+  - market (median 2%, 27 days): the market was higher 3 and 10 days later on ~70% of them (median +1.4% / +1.9%):
+    selling on it would have cost. Sectors (3%, 136): nothing either way
+  - news (200 liquid 15%+ drop days, 200 quiet days, real haiku-news, 763 articles, < $1): 36% of drops had no
+    stock news (crash days: the price watchers cover these). At severity 3, 107 of the 200 drops got a news event,
+    97 before the first hourly price alert (54 over an hour ahead, 35 the day before: mostly the results date);
+    7.5% of quiet days got one too (false alarms; ~1.5 pushes a day for 20 holdings). With 15%+ drops on 0.2% of
+    stock-days, about 1 event in 65 comes before one. At severity 4: 71 drops caught, 1.5% of quiet days. The
+    model's direction is no guide: 30% of drop-day events said POSITIVE (results beat, guidance sank it)
+  - 68% of the drop-day events were results or guidance: earnings are where the big drops are (WATCH-9 next)
+  - Not checked: lead times are against hourly bars (the live watcher checks every minute, so up to an hour less);
+    survivorship bias (stocks that left the halal list are missing); illiquid stocks in the news replay
+  - Seen: roundups naming 5 or fewer stocks ("Final Trades", "Stock Whisper") still get through as events
 - [ ] **WATCH-12: Clinical-stage biotech size cap**: smaller max position for biotechs without product revenue,
   since much of their news is unscheduled (test with the backtester like RISK-1/RISK-2)
 
