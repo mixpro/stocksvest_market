@@ -32,10 +32,13 @@ def main(argv=None) -> None:
     p.add_argument("--steps", choices=STEP_MODES, default="SCHEDULE",
                    help="SCHEDULE: each automation at its own fire times (default); HOURLY: both every hour 10-15")
     p.add_argument("--spread-factor", type=float, default=1.0, help="cost stress: modelled spreads x this")
+    p.add_argument("--exclude", type=Path, help="file of tickers (space, comma or newline separated) never bought")
     p.add_argument("--out", type=Path, help="write the full result (equity per day, every trade) as JSON")
     a = p.parse_args(argv)
     hist = HistoricalMarket(a.market_db, a.start, a.end)
     hist.spread_factor = a.spread_factor
+    if a.exclude:
+        hist.exclude = set(a.exclude.read_text().replace(",", " ").split())
     result = run(a.app_db, a.market_db, a.buy, a.sell, a.start, a.end, a.budget, a.overrides, hist=hist,
                  progress=lambda day, eq: print(f"{day}  equity ${eq:,.2f}", file=sys.stderr), fill=a.fill,
                  steps=a.steps)

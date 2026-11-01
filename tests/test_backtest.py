@@ -202,3 +202,11 @@ def test_a_delisted_stock_is_closed_at_its_last_price(market_path, app_db):
     assert [(t["symbol"], t["filter"]) for t in sells] == [("DOWN", "DELISTED")]
     assert sells[0]["price"] == pytest.approx(hist.last_bar("DOWN")[1])
     assert datetime.fromisoformat(sells[0]["time"]).astimezone(ET).date().isoformat() == days[2]  # 1 day later
+
+
+def test_excluded_tickers_are_never_bought(market_path, app_db):
+    path, ids = app_db
+    hist = HistoricalMarket(market_path, date(2026, 10, 5), date(2026, 10, 7))
+    hist.exclude = {"DOWN"}
+    out = engine.run(path, market_path, ids["Buy"], ids["Sell"], date(2026, 10, 5), date(2026, 10, 7), hist=hist)
+    assert {t["symbol"] for t in out["trades"]} == {"UP"}

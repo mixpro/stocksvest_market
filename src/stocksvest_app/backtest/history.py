@@ -95,6 +95,7 @@ class HistoricalMarket:
         self._ind: dict[str, dict] = {}  # ticker -> indicators of the day self._ind_day (one day kept)
         self._ind_day = None
         self.spread_factor = 1.0  # cost stress: modelled spreads x this (e.g. 2). Used by: quotes, next_fill
+        self.exclude: set[str] = set()  # tickers left out of the universe (never bought). Used by: symbols
 
     def _load(self, conn, table: str, span: tuple[int, int] | None) -> dict[str, Series]:
         """Bars of a table by ticker.
@@ -217,7 +218,8 @@ class HistoricalMarket:
 
     def symbols(self, search=None, exchange=None, asset_type=None, sector=None, limit=None, offset=None) -> dict:
         rows = [{"id": s["id"], "ticker": s["ticker"], "name": s["name"], "exchange": s["exchange"],
-                 "assetType": s["asset_type"], "sector": s.get("sector")} for s in self.symbols_by_id.values()]
+                 "assetType": s["asset_type"], "sector": s.get("sector")} for s in self.symbols_by_id.values()
+                if s["ticker"] not in self.exclude]
         return {"total": len(rows), "symbols": sorted(rows, key=lambda r: r["ticker"])}
 
     def sectors(self) -> dict:

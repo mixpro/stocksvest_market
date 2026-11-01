@@ -115,6 +115,14 @@ Checked:
 - [x] **BT-9: Price gates on adjusted prices** (found from Kimi review 3): bars are split- and dividend-adjusted (`adjustment=all`), so in 2016 NVDA shows $1.73 (it traded ~$70) and the "price > $10" gate kept future split stocks (often the big winners) out of past runs. Live trading is unaffected (today's adjusted price is the real price).
   - Without the price gate (the $50M/day gate already keeps penny stocks out): 5B +409% → +459% (21.1%/yr, −39%); with delisted +357% → +435% (20.5%/yr, −38%, 2021 −9%). Core 40: no change (+438% vs +430%).
   - So the bias worked against 5B. Proper fix if price gates matter: store unadjusted closes (or the split factors) and compare SYMBOL_PRICE against them in the backtester. Until then: drop price gates in backtests.
+- [x] **BT-10: Placebo runs for exclusions**: `scripts/backtest_placebo.py` runs a strategy as is, without a candidate
+  list of tickers (`--exclude`, also on `python -m stocksvest_app.backtest`), and without N random sets of the same
+  number of stocks the baseline actually bought, then ranks the candidate among the placebos
+  - First use (2026-11-01, 5B, 2017-11..2026-10, 10 placebos): leaving out 58 biotechs with a loss year (19 bought)
+    +425% vs baseline +368%; placebos +366..+472% (median +400%), so it beats 8 of 10: luck. 10 of 10 placebos beat
+    or match the baseline: leaving out ANY ~19 bought stocks tends to help 5B (the freed cash goes to later
+    momentum buys), so "better than the baseline" never proves an exclusion. Rule from now on: an exclusion counts
+    only if it beats (nearly) every placebo
 
 - [x] **BT-1: Fill at the next price, not the signal's own close**
   - Today a buy is filled at the same hourly close the filter just saw, so results look better than reality.
@@ -433,6 +441,7 @@ Suggested order: WATCH-2 → WATCH-3 → WATCH-4 → WATCH-5 → WATCH-6 → WAT
     most of the gap is path luck; the rest (~90 points over the best placebo) is a hint, not a proof
   - Not adopted. Before building an exclusion: more placebos and the with-delisted run (survivorship bias favours
     the biotechs that are still listed)
+  - 10 placebos (BT-10): the biotech exclusion beats 8 of 10, inside the luck range. Closed
 
 ## IDEA: Parked
 
