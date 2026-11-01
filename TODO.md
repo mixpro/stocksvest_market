@@ -372,8 +372,13 @@ Suggested order: WATCH-2 → WATCH-3 → WATCH-4 → WATCH-5 → WATCH-6 → WAT
     Oct 26 trial data (07:05 and 18:02 ET), Oct 27 Q3 date, Oct 29 07:21 ET lung data. Iovance released nothing on
     Wed Oct 28: the Yahoo piece was commentary on the Oct 26 data. So no newswire RSS (GlobeNewswire also blocks
     automated access). Add one only if a missed release shows up
-- [ ] **WATCH-7: SEC filings watcher**: new 8-Ks (by item), S-3 / 424B (share offerings), going-concern warnings in
+- [~] **WATCH-7: SEC filings watcher**: new 8-Ks (by item), S-3 / 424B (share offerings), going-concern warnings in
   10-Q/10-K for held stocks, every 5 min (uses `SEC_USER_AGENT`)
+  - Parked 2026-11-01: 120 sampled stocks (60 healthcare), 87 days with a 424B filing in the past year. Alpaca news
+    carried the offering within a day on 28, often before the filing (the pricing release comes first): nearly every
+    real equity raise (CDXS, PYXS, TLSI, INNV, ESOA, VSEC, the Medline IPO, ATM agreements). The rest were investment-grade
+    notes (CVX, LLY, ORLY, ITW), resale prospectuses, next-day follow-ups and serial ATM takedowns of micro-caps (DVLT
+    x6, JDZG, WXM, CV), which the strategy ($10+, $50M a day) doesn't hold. Revisit if a missed offering hits a holding
 - [x] **WATCH-8: News reader (model)**: model `haiku-news` through LiteLLM (`https://litellm.hardansaeed.com`),
   key `LITELLM_KEY`, set on tinkergw only. Code filters first (held or watched, not seen, clear cases by rules); the model answers in a
   fixed schema (kind, date, date certainty, before/after the open, severity, quote); the quote must appear word for
