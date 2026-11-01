@@ -9,6 +9,7 @@ the model rated IOVA's 2026-10-29 lung data "2, unclear" and the stock fell 35%)
 (results date, trial readout, FDA decision) today or tomorrow. An event is stored at
 minSeverity or above, with the article text and the model's answer. After one, the same stock gets another within
 repeatHours only for a higher severity (Intel's results evening had about 20 articles at 3 or more).
+A results date the company announces is kept in state "dates" for the earnings watcher (WATCH-9).
 """
 
 import html
@@ -44,7 +45,8 @@ Answer with one JSON object and nothing else:
  "direction": one of {list(DIRECTIONS)} for the stock price,
  "severity": 1-5, how much this could move the stock in a day (1 routine, 3 notable, 5 could move it 20%+),
  "quote": one sentence copied exactly, word for word, from the article that supports your answer,
- "summary": one short sentence for a phone notification}}"""
+ "summary": one short sentence for a phone notification}}
+A roundup or list of several stocks (e.g. "Final Trades", "stocks moving") is severity 1 for this stock."""
 
 
 def plain(article: dict) -> str:
@@ -123,6 +125,9 @@ def check(ctx, conn, now, settings, state) -> list[dict]:
         text = plain(n)
         for sym in mine[:2]:  # ponytail: a merger names both sides; more than 2 held symbols is a roundup
             a = ask(ctx.settings, sym, text)
+            if a["checked"] and a["kind"] == "EARNINGS_DATE" and a.get("dateCertain") and a.get("eventDate"):
+                state.setdefault("dates", {})[sym] = {"date": a["eventDate"], "timing": a["timing"],
+                                                      "articleId": n["id"]}  # read by the earnings watcher
             sev = severity(a, now)
             last = state.setdefault("last", {}).get(sym)
             if sev < settings["minSeverity"] or (
@@ -142,4 +147,6 @@ def check(ctx, conn, now, settings, state) -> list[dict]:
     if articles:
         state["since"] = max(n["time"] for n in articles)
     state["seen"] = sorted(seen)[-500:]
+    old = (now.astimezone(ET).date() - timedelta(days=14)).isoformat()
+    state["dates"] = {k: v for k, v in state.get("dates", {}).items() if v["date"] >= old}
     return out

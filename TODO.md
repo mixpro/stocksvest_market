@@ -383,9 +383,17 @@ Suggested order: WATCH-2 → WATCH-3 → WATCH-4 → WATCH-5 → WATCH-6 → WAT
     through the code floor (the model said "2, unclear"; the stock fell 35%), the webcast notice at 07:32 came out 5;
     Intel's earnings preview came out 4 a day early. Repeat limit per stock (Intel's results evening: ~20 articles
     at 3+). Not done: notes below minSeverity aren't kept; run-up size and clinical-stage biotech (WATCH-9, WATCH-12)
-- [ ] **WATCH-9: Earnings watcher**: dates from FEAT-6 (estimated as last + 91 days) and, better, the company's own
+- [x] **WATCH-9: Earnings watcher**: dates from FEAT-6 (estimated as last + 91 days) and, better, the company's own
   "will report on" release from WATCH-8. Note FEAT-6's backtest: skipping buys before every earnings cost return
   (+287% vs +409%), so target the risky combination (big run-up + report tomorrow), not all earnings
+  - Done 2026-11-01: `watchers/earnings.py`, kind `EARNINGS_SOON`. The news watcher keeps announced dates (state
+    "dates"); else the 8-K estimate fires 3 days ahead (it is within 3 days of the real date only 46% of the time).
+  - Checked first (9,465 liquid reports since 2017, reaction = close the day after vs two days before): a 10%+ drop on
+    7.5% of reports; after a 20%+ month, 13-16%; after a 50%+ quarter, 17-21%. The average reaction stayed positive
+    in every group (+0.4% to +2.8%), so it warns (severity 4 after a runUpPercent month) and never sells
+  - The news prompt now rates roundups ("Final Trades", "Stock Whisper") 1: 4 of the 5 replay false alarms of that
+    kind dropped; real drop-day articles stayed 3+
+  - Not done: the watcher only knows dates announced from now on (the news watcher started 2026-10-31)
 - [x] **WATCH-10: Phone**: events list with reason and outcome, watcher on/off and settings, confirm screen for LIVE
   - Done: Events screen (`mobile/app/events.tsx`) from a Home card that turns red while a LIVE run waits; Confirm asks
     for Face ID; tapping an events push opens it. Event automations are still created through the API only

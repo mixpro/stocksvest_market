@@ -15,12 +15,12 @@ from zoneinfo import ZoneInfo
 from .. import db
 from ..audit import store as audit
 from ..market.client import MarketError
-from . import dispatch, holdings_drop, market, news, store
+from . import dispatch, earnings, holdings_drop, market, news, store
 
 log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
 TICK_SECONDS = 15  # Used by: WatcherThread._loop
-WATCHERS = {w.NAME: w for w in (holdings_drop, market, news)}
+WATCHERS = {w.NAME: w for w in (holdings_drop, market, news, earnings)}
 
 
 def in_hours(day: dict | None, hours: str, now: datetime) -> bool:

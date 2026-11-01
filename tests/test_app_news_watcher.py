@@ -51,7 +51,7 @@ def test_news_watcher_reads_held_stocks_news_once(tmp_path, monkeypatch):
     market = Market("2026-11-02", {"AAA": 0.0, "BBB": 0.0, "CCC": 0.0})
     market.news_items = ARTICLES
     ctx, conn, expo = setup(tmp_path, monkeypatch, market)
-    for w in ("holdings-drop", "market"):
+    for w in ("holdings-drop", "market", "earnings"):
         store.save_config(conn, thread.WATCHERS[w], enabled=False)
     model = FakeModel([
         json.dumps({"kind": "TRIAL_EVENT_SCHEDULED", "eventDate": "2026-11-03", "dateCertain": True, "timing": "BEFORE_OPEN",
@@ -74,12 +74,13 @@ def test_news_watcher_reads_held_stocks_news_once(tmp_path, monkeypatch):
     assert market.calls[-1][2] == "2026-11-02T12:08:00Z"  # asks only from the newest article on
 
     market.news_items = ARTICLES + MORE
-    model.answers += [answer("TRIAL_EVENT_SCHEDULED", 3, "BBB reports data tomorrow.", "2026-11-03"),
+    model.answers += [answer("EARNINGS_DATE", 3, "BBB reports data tomorrow.", "2026-11-03"),
                       answer("OFFERING", 2, "BBB priced an offering of 20 million shares at a discount.")]
     thread.tick(ctx, conn, at("2026-11-02", "08:10"))
     assert len(model.calls) == 4
     # the reminder (3 + tomorrow = 4, like the last event) and the offering (2, lifted to 3) stay quiet
     assert [e["key"] for e in store.list_events(conn)] == ["news:1:BBB"]
+    assert store.config(conn, news)["state"]["dates"]["BBB"]["date"] == "2026-11-03"  # for the earnings watcher
     model.answers.append(answer("OFFERING", 5, "BBB priced an offering of 20 million shares at a discount."))
     market.news_items = ARTICLES + MORE + [{**MORE[1], "id": 7, "time": "2026-11-02T13:30:00Z"}]
     thread.tick(ctx, conn, at("2026-11-02", "08:30"))
