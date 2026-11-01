@@ -13,7 +13,8 @@ const SCHEDULE_DEFAULTS = {
   ONCE: { at: null },
 };
 
-const st = { automations: [], filters: [], groups: [], portfolios: [], selectedId: null, draft: null };
+const st = { automations: [], filters: [], groups: [], portfolios: [], watchers: [], selectedId: null, draft: null };
+const EVENT_DEFAULT = { watchers: [], kinds: [], minSeverity: 3, cooldownMinutes: 60, confirmWithinMinutes: 15 };
 const RANK_KEYS = ["DAILY_CHANGE_PERCENT", "LAST_PRICE", "DAILY_VOLUME", "POSITION_VALUE", "UNREALIZED_PNL_PERCENT",
   "MOMENTUM_12_1", "MOMENTUM_6_1", "AVERAGE_DOLLAR_VOLUME_20", "VOLATILITY_20", "FROM_52W_HIGH"];
 const ORDER_DEFAULT = {
@@ -26,8 +27,10 @@ const GUARD_DEFAULT = { maxOrdersPerRun: 10, maxPositionValue: null, maxPosition
 // ------------------------------------------------------------------ loading
 
 async function loadAll() {
-  const [a, f, g, p] = await Promise.all([api("/v1/automations"), api("/v1/filters"), api("/v1/filter-groups"), api("/v1/portfolios")]);
+  const [a, f, g, p, w] = await Promise.all([api("/v1/automations"), api("/v1/filters"), api("/v1/filter-groups"),
+    api("/v1/portfolios"), api("/v1/watchers")]);
   st.portfolios = p.portfolios;
+  st.watchers = w.watchers;
   st.automations = a.automations;
   st.filters = f.filters;
   st.groups = g.groups;
@@ -62,7 +65,7 @@ function fromNow(iso) {
 
 function nextRunText(a) {
   if (a.status === "PAUSED") return "paused";
-  if (!a.nextRunAt) return "no upcoming runs";
+  if (!a.nextRunAt) return a.eventTrigger ? "on watcher events" : "no upcoming runs";
   const t = new Date(a.nextRunAt);
   const day = t.toLocaleDateString(undefined, { weekday: "short" });
   return `next ${day} ${t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${fromNow(a.nextRunAt)}`;
@@ -279,6 +282,8 @@ function renderEditor() {
     el("h3", {}, "Schedules"),
     ...d.schedules.map(scheduleRow),
     el("button", { onclick: () => { d.schedules.push({ type: "DAILY", ...structuredClone(SCHEDULE_DEFAULTS.DAILY) }); rerender(); } }, "+ Add schedule"),
+    el("h3", {}, "Watcher events ", el("span", { class: "muted" }, "(also run when a watcher finds one; LIVE orders wait for a confirm on the phone)")),
+    eventEditor(d),
     el("h3", {}, "Budgets ", el("span", { class: "muted" }, "(where its orders take money and shares from)")),
     budgetsLine(d),
     el("h3", {}, "Actions ", el("span", { class: "muted" }, "(in order)")),
@@ -304,6 +309,31 @@ function renderEditor() {
   );
 }
 
+// The automation's eventTrigger: which watchers and event kinds (none ticked = any), how severe, cooldown, confirm time.
+// Without schedules and run filters it runs on events only, on the event's stock.
+function eventEditor(d) {
+  const t = d.eventTrigger;
+  if (!t) return el("button", { onclick: () => { d.eventTrigger = structuredClone(EVENT_DEFAULT); rerender(); } }, "+ React to watcher events");
+  const chip = (list, value, label) => el("label", {}, el("input", { type: "checkbox", checked: list.includes(value),
+    onchange: (e) => { e.target.checked ? list.push(value) : list.splice(list.indexOf(value), 1); rerender(); } }), ` ${label}`);
+  const watchers = t.watchers.length ? st.watchers.filter((w) => t.watchers.includes(w.name)) : st.watchers;
+  const kinds = [...new Set(watchers.flatMap((w) => w.kinds))];
+  t.kinds = t.kinds.filter((k) => kinds.includes(k));  // a kind of a watcher no longer ticked
+  return el("div", {},
+    el("div", { class: "row" }, el("span", { class: "title" }, "Watchers"),
+      el("span", { class: "chips" }, ...st.watchers.map((w) => chip(t.watchers, w.name, w.name))),
+      el("span", { class: "muted" }, t.watchers.length ? "" : "any"),
+      el("button", { class: "link", title: "Stop reacting to events", onclick: () => { d.eventTrigger = null; rerender(); } }, "✕")),
+    el("div", { class: "row" }, el("span", { class: "title" }, "Kinds"),
+      el("span", { class: "chips" }, ...kinds.map((k) => chip(t.kinds, k, k.toLowerCase().replaceAll("_", " ")))),
+      el("span", { class: "muted" }, t.kinds.length ? "" : "any")),
+    el("div", { class: "row" },
+      el("span", { class: "title" }, "Severity at least"),
+      select_(["1", "2", "3", "4", "5"], String(t.minSeverity), (v) => (t.minSeverity = Number(v))),
+      el("span", {}, "at most once every"), numInput(t, "cooldownMinutes", { min: 0, style: "width:70px" }), el("span", {}, "min"),
+      el("span", {}, "· LIVE confirm within"), numInput(t, "confirmWithinMinutes", { min: 1, style: "width:60px" }), el("span", {}, "min")));
+}
+
 function budgetsLine(d) {
   const portfolioName = (id) => st.portfolios.find((p) => p.id === id)?.name || id;
   const budgets = d.budgets || [];
@@ -319,7 +349,8 @@ function body() {
   const d = st.draft;
   const trades = d.actions.some((a) => a.type === "PLACE_ORDER");
   return { name: d.name, description: d.description,
-    orderGuards: trades ? d.orderGuards : null, runTargets: d.runTargets, schedules: d.schedules, actions: d.actions };
+    orderGuards: trades ? d.orderGuards : null, runTargets: d.runTargets, schedules: d.schedules,
+    eventTrigger: d.eventTrigger || null, actions: d.actions };
 }
 
 // ------------------------------------------------------------------ actions

@@ -195,7 +195,7 @@ curl -X POST -H "X-API-Key: $APP_KEY" -H "Content-Type: application/json" \
 ```
 
 - **`runTargets`:** filters or filter groups. The matched symbols are the union of their results.
-- **`actions`:** run in order. In `NOTIFY` titles and messages, `{name}` is the automation's name and `{count}` the number of matches.
+- **`actions`:** run in order. In `NOTIFY` titles and messages, `{name}` is the automation's name, `{count}` the number of matches and `{event}` the watcher event's title (event runs). A `NOTIFY` lands in the inbox and is pushed to the phone (category `notify`).
 - **Saving:** every schedule gets a stable `id`, and every save raises `configVersion`.
 - **New automations** start `ACTIVE`.
 
@@ -563,7 +563,7 @@ Each finding is stored once (unique `key`) and pushed to the phone (category `ev
 
 | Method | Path | |
 |---|---|---|
-| GET | `/v1/watchers` | `{watchers: [{name, description, hours, everySeconds, enabled, settings, lastRunAt, lastError}]}` |
+| GET | `/v1/watchers` | `{watchers: [{name, description, hours, everySeconds, kinds, enabled, settings, lastRunAt, lastError}]}` (`kinds`: the event kinds it creates) |
 | PUT | `/v1/watchers/{name}` | `{"enabled": false}` and/or `{"settings": {"dropPercent": 10}}` (only known keys, above 0) |
 | GET | `/v1/events?status=&limit=` | `{events: [{id, key, watcher, kind, symbol, sector, severity, title, body, data, status, statusReason, outcomes, createdAt}]}`, newest first |
 | GET | `/v1/events/{id}` | one event |

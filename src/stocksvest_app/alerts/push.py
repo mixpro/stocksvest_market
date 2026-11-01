@@ -29,7 +29,8 @@ CATEGORIES = {  # key: label. All on until switched off. Used by: routes, send
     "money": "Dividends and fees",
     "problems": "Broker or market problem",
     "runs": "Automation run failed",
-    "events": "Holding or market drop",
+    "events": "Watcher events",
+    "notify": "Automation notifications",
 }
 EVENTS = {"FILL_IMPORTED": "fills", "ORDER_REJECTED": "rejected", "KILL_RULE": "kill", "KILL_ALL": "kill",
           "DIVIDEND": "money", "ACCOUNT_FEE": "money"}  # activity log action: category. Used by: events

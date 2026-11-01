@@ -49,7 +49,8 @@ def router(ctx: AppContext) -> APIRouter:
 
     def view(w, c: dict) -> dict:
         return {"name": w.NAME, "description": _describe(w), "hours": w.HOURS,
-                "everySeconds": int(w.EVERY.total_seconds()), "enabled": c["enabled"], "settings": c["settings"],
+                "everySeconds": int(w.EVERY.total_seconds()), "kinds": list(w.EVENT_KINDS), "enabled": c["enabled"],
+                "settings": c["settings"],
                 "lastRunAt": c["lastRunAt"], "lastError": c["lastError"]}
 
     @r.get("/v1/events")

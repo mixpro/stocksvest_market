@@ -15,6 +15,7 @@ EVERY = timedelta(minutes=1)
 HOURS = "EXTENDED"
 ENABLED = True
 DEFAULTS = {"dropPercent": 8.0}
+EVENT_KINDS = ("HOLDING_DROP",)
 ET = ZoneInfo("America/New_York")
 
 

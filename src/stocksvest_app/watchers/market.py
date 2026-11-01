@@ -14,6 +14,7 @@ EVERY = timedelta(minutes=5)
 HOURS = "REGULAR"
 ENABLED = True
 DEFAULTS = {"marketDropPercent": 2.0, "sectorDropPercent": 3.0, "minSectorStocks": 10}
+EVENT_KINDS = ("MARKET_DROP", "SECTOR_DROP")
 ET = ZoneInfo("America/New_York")
 
 

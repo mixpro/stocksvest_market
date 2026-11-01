@@ -241,7 +241,8 @@ class RunTarget(BaseModel):
 
 
 class NotifyAction(BaseModel):
-    """Send an in-app notification. In title and message, {name} = automation name, {count} = matches.
+    """Send an in-app notification, also pushed to the phone (category notify). In title and message, {name} =
+    automation name, {count} = matches, {event} = the watcher event's title in an event run.
 
     Attributes:
         title: required.

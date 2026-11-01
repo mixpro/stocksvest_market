@@ -94,3 +94,45 @@ def test_live_event_run_waits_for_a_confirm(client, setup, broker, market):
     assert store.get_event(conn, late)["status"] == "EXPIRED"
     assert client.post(f"/v1/events/{late}/confirm", headers=KEY, json={"confirm": True}).status_code == 409
     assert len([x for x in broker.orders.values() if x.side == "SELL"]) == 1  # only the confirmed one
+
+
+def test_notify_reaction_pushes_the_event(client, setup, broker, market, monkeypatch):
+    from stocksvest_app.alerts import push
+    from test_app_push import FakeExpo
+    body = {"name": "News watch", "eventTrigger": {"watchers": ["holdings-drop"], "minSeverity": 4, "cooldownMinutes": 0},
+            "actions": [{"type": "NOTIFY", "title": "{name}", "message": "{event}"}]}
+    notifier = client.post("/v1/automations", headers=KEY, json=body).json()
+    monkeypatch.setenv("ALERTS_ENABLED", "true")
+    expo = FakeExpo()
+    monkeypatch.setattr(push.requests, "post", expo.post)
+    ctx = AppContext(Settings(), market, broker_factory=lambda a: broker)
+    conn = db.connect(ctx.settings.db_path)
+    push._put(conn, "push:devices", {"tokens": ["ExponentPushToken[abc]"]})
+
+    event(conn, "drop:BBB:1")
+    dispatch.dispatch(ctx, conn)
+    sent = [(m["title"], m["body"], m["data"]["category"]) for m in expo.sent]
+    assert ("News watch", "BBB down", "notify") in sent  # the reaction's own push, apart from the event's
+    assert [w["kinds"] for w in client.get("/v1/watchers", headers=KEY).json()["watchers"]][0] == ["HOLDING_DROP"]
+    assert client.get("/v1/notifications", headers=KEY).json()["notifications"][0]["automationId"] == notifier["id"]
+
+
+def test_phone_reaction_sells_half_with_an_extended_hours_limit(client, setup, broker, market):
+    body = {"name": "Sell half on holdings drop 4+",  # what mobile/app/reactions.tsx sends
+            "eventTrigger": {"watchers": ["holdings-drop"], "kinds": [], "minSeverity": 4, "cooldownMinutes": 60,
+                             "confirmWithinMinutes": 15},
+            "actions": [{"type": "PLACE_ORDER", "side": "SELL", "orderType": "LIMIT", "timeInForce": "DAY",
+                         "extendedHours": True, "limitOffsetPercent": -3,
+                         "sizings": [{"mode": "PERCENT_OF_POSITION", "value": 50}]}],
+            "orderGuards": {"regularHoursOnly": False}}
+    r = client.post("/v1/automations", headers=KEY, json=body)
+    assert r.status_code == 201, r.text
+    holding_budget(client, setup, broker, r.json())
+    ctx = AppContext(Settings(), market, broker_factory=lambda a: broker)
+    conn = db.connect(ctx.settings.db_path)
+
+    event(conn, "drop:BBB:1")
+    dispatch.dispatch(ctx, conn)
+    [sell] = [x for x in broker.submitted if x.side == "SELL"]
+    assert (sell.symbol, sell.quantity, sell.type, sell.extended_hours) == ("BBB", 2, "LIMIT", True)  # half of 4
+    assert sell.limit_price is not None

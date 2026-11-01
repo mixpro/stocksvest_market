@@ -20,6 +20,7 @@ EVERY = timedelta(minutes=30)
 HOURS = "ALWAYS"
 ENABLED = True
 DEFAULTS = {"runUpPercent": 20.0}
+EVENT_KINDS = ("EARNINGS_SOON",)
 ET = ZoneInfo("America/New_York")
 ESTIMATE_DAYS = 3  # an estimated date fires this many days either side
 ODDS = ("Since 2017, liquid stocks up 20%+ in the month before results fell 10%+ on 13-16% of reports (7.5% overall), "

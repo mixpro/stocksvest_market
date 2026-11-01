@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from decimal import Decimal
 
+from ..alerts import push
 from ..brokers import store as brokers_store
 from ..brokers.base import BrokerError
 from ..db import new_id
@@ -172,15 +173,17 @@ def market_context(ctx: AppContext, now: datetime) -> dict:
     return out
 
 
-def _render(text: str, automation: dict, symbols: list[str]) -> str:
-    """Fill {name} and {count} in a notification title or message.
+def _render(text: str, automation: dict, symbols: list[str], event: dict | None = None) -> str:
+    """Fill {name}, {count} and {event} in a notification title or message.
 
     Args:
         text: the template.
         automation: provides the name.
         symbols: matched tickers (count).
+        event: the watcher event of an EVENT run ({event} = its title; empty otherwise).
     """
-    return text.replace("{name}", automation["name"]).replace("{count}", str(len(symbols)))
+    return (text.replace("{name}", automation["name"]).replace("{count}", str(len(symbols)))
+            .replace("{event}", (event or {}).get("title", "")))
 
 
 def _run_targets(conn, ctx: AppContext, automation: dict) -> tuple[list[dict], set[str], Evaluator]:
@@ -393,14 +396,16 @@ def run_automation(ctx: AppContext, conn: sqlite3.Connection, automation: dict, 
                     if action.get("skipWhenNoMatches") and not tickers:
                         entry["status"] = "SKIPPED"
                     else:
-                        title = _render(action["title"], automation, tickers)
-                        message = _render(action.get("message", ""), automation, tickers)
+                        title = _render(action["title"], automation, tickers, event)
+                        message = _render(action.get("message", ""), automation, tickers, event)
                         shown = tickers if action.get("includeMatchedSymbols", True) else []
                         if preview:
                             entry["wouldNotify"] = {"title": title, "message": message, "symbols": shown}
                         else:
                             n = store.add_notification(conn, automation["id"], None, title, message, shown)
                             entry["notificationId"] = n["id"]
+                            if ctx.settings.alerts_enabled:  # also to the phone (category "notify")
+                                push.send(conn, "notify", title, message or ", ".join(shown))
                 elif action["type"] == "PLACE_ORDER":
                     _place_orders(ctx, conn, automation, tradings, PlaceOrderAction.model_validate(action), index,
                                   tickers, ev, result["market"], entry, run_id, preview, live)

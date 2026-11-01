@@ -3,8 +3,9 @@
 never delays trading. Design: UML/WatchersFlow.mmd, UML/WatcherTick.mmd.
 
 A watcher is a module with NAME, EVERY (timedelta), HOURS (REGULAR | EXTENDED | ALWAYS), ENABLED (default on/off),
-DEFAULTS (its settings) and check(ctx, conn, now, settings, state) -> list of events (see store.add). It may change
-`state` in place; it is saved after a good pass. Adding one = one file + one line in WATCHERS.
+DEFAULTS (its settings), EVENT_KINDS (the kinds it creates, for automation editors) and
+check(ctx, conn, now, settings, state) -> list of events (see store.add). It may change `state` in place; it is saved
+after a good pass. Adding one = one file + one line in WATCHERS.
 """
 
 import logging
