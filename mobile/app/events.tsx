@@ -1,6 +1,7 @@
 // Watcher events (GET /v1/events): what each watcher found and what the automations did about it. A LIVE run waits
 // here for a confirm (Face ID) until it expires. Below: each watcher's switch and thresholds (PUT /v1/watchers/{name}).
 
+import { Link } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, TextInput, View } from 'react-native';
 
@@ -111,6 +112,18 @@ export default function Events() {
           );
         })}
       </Card>
+
+      <Link href="/reactions" asChild>
+        <Pressable accessibilityRole="button">
+          <Card style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <View style={{ flex: 1 }}>
+              <T weight="bold">Reactions</T>
+              <T size={12} color={colors.muted}>Sell or notify when a watcher finds something</T>
+            </View>
+            <T size={16} color={colors.muted}>›</T>
+          </Card>
+        </Pressable>
+      </Link>
 
       <Section title="Watchers" startOpen={false}>
         <ErrorNote error={watchers.error} />
