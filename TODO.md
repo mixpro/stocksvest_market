@@ -448,6 +448,11 @@ Suggested order: WATCH-2 → WATCH-3 → WATCH-4 → WATCH-5 → WATCH-6 → WAT
 - [ ] **IDEA-2..13: Research ideas (2026-10-26)**: see `docs/RESEARCH-IDEAS.md` (why, limits, how to test each). Ranked: IDEA-2 research gate, IDEA-3 tranches on different days (timing luck), IDEA-4 halal ETF core, IDEA-5 Core 40 banding, IDEA-6 residual momentum, IDEA-7 MAX vs frog-in-the-pan, then EAR, anti-chasing, quote-aware execution, asset growth, lookback ensemble, industry momentum. Not built.
 - [ ] **IDEA-1: Researcher / advisor**
   - An assistant that reviews filters, positions and results and suggests changes. You said leave it for now.
+- [ ] **IDEA-14: Graph editor (2026-11-05)**: a canvas where sources (universe, portfolio), filters, groups, schedules,
+  watchers and budgets are wired to automations and their actions. Postponed: "we gain almost nothing for now".
+  Notes: no Neo4j (the links already live in SQLite); a canvas library in the plain-JS web UI, touch-friendly so the
+  phone can load the same page in a WebView; it edits the existing filters and automations, not a new engine; two
+  lines into one box mean union; drafts until complete; first step a read-only view with live counts
 
 ---
 
