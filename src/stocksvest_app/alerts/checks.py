@@ -3,6 +3,7 @@
 Problems (one email when it starts, after its grace period, and one when it is resolved):
   broker:<account>   the broker sync failed, or found differences with the broker
   broker-cash:<acct> the broker account's cash is below zero (borrowing: margin interest)
+  watcher:<name>     an enabled watcher keeps failing (e.g. the news model's key is rejected)
   market:reachable   the market service doesn't answer
   market:sync        the market service reports a sync error
   market:stale       during the regular session, the market data hasn't synced for STALE_AFTER
@@ -227,6 +228,16 @@ def check(ctx, conn, now: datetime | None = None) -> None:
                   f"The broker reports cash of {cash}: that is borrowing, and the broker charges margin interest on "
                   f"it. Add money or sell, and keep about 1% of the account unallocated." if cash is not None
                   and cash < 0 else None, now)
+
+    # Watchers: the last pass failed (cleared by the next good one).
+    from ..watchers import store as watchers_store  # here: watchers -> automations -> alerts would be a cycle
+    from ..watchers.thread import WATCHERS
+    for w in WATCHERS.values():
+        c = watchers_store.config(conn, w)
+        err = c["lastError"] if c["enabled"] else None
+        if err and ("401" in err or "Unauthorized" in err):
+            err += "\n\nThe key was refused: renew LITELLM_KEY or the provider key behind the model in LiteLLM."
+        condition(conn, mailer, f"watcher:{w.NAME}", f"Watcher {w.NAME}", f"It fails: {err}" if err else None, now, GRACE)
 
     # Shares of stocks that left the halal universe: one email a day while any are held.
     today = now.astimezone(ET).date().isoformat()

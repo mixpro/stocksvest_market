@@ -202,3 +202,16 @@ def test_holdings_no_longer_halal_are_emailed_daily(env, monkeypatch):
     assert "BBB, PENDING" in halal[0] and "sell by hand" in halal[0]
     checks.check(ctx, conn, at(11, day=21))  # and again the next day while still held
     assert len([s for s in mailer.subjects() if "no longer halal" in s]) == 2
+
+
+def test_a_failing_watcher_is_a_problem(env):
+    ctx, conn, market, mailer = env
+    from stocksvest_app.watchers import news, store as watchers_store
+    watchers_store.save_config(conn, news, lastError="401 Client Error: Unauthorized for url: https://litellm/v1/chat")
+    checks.check(ctx, conn, at(11))
+    checks.check(ctx, conn, at(11, 11))
+    assert "Problem: Watcher news" in mailer.subjects()
+    assert "renew LITELLM_KEY" in next(t for s, t in mailer.sent if s == "Problem: Watcher news")
+    watchers_store.save_config(conn, news, lastError=None)
+    checks.check(ctx, conn, at(11, 22))
+    assert mailer.subjects()[-1] == "Resolved: Watcher news"
