@@ -26,6 +26,7 @@ from . import store
 # Market and stop buys can fill above the last price; reserve a little extra and release the rest later.
 # Used by: cost_basis_price, automations.planner.plan
 PRICE_BUFFER = Decimal("0.01")
+CASH_TOLERANCE = Decimal("1")  # ponytail: cent rounding of fractional fills that the per-sync charge missed
 # A PENDING order the broker has never heard of after this long is treated as rejected. Used by: sync_account
 PENDING_TIMEOUT = timedelta(minutes=5)
 # Alpaca lists a fill a few seconds after the order status and balances show it. For this long after the broker's
@@ -561,7 +562,7 @@ def sync_account(conn, broker: Broker, account: dict) -> dict:
                     if account.get("cash") is not None else None)
     brokers_store.set_balances(conn, account["id"], snap.cash, snap.buying_power, snap.equity)
     portfolios = pf.list_portfolios(conn, account["id"])
-    previous = store.last_sync(conn, account["id"])
+    previous = store.last_sync(conn, account["id"], ok_only=True)  # a failed sync in between changes nothing
 
     # Fills first, so final orders release only what their fills did not use.
     since_str = store.last_fill_time(conn, account["id"]) or account["createdAt"]
@@ -665,7 +666,7 @@ def sync_account(conn, broker: Broker, account: dict) -> dict:
                     pf.change_cash(conn, pid, "ROUNDING", gap * traded.count(pid) / len(traded),
                                    note="broker cash rounding")
             assigned = pf.assigned_cash(conn, account["id"])
-    if assigned > snap.cash and not awaiting_fills:
+    if assigned > snap.cash + CASH_TOLERANCE and not awaiting_fills:
         mismatches.append({"kind": "CASH", "appValue": float(assigned), "brokerValue": float(snap.cash),
                            "detail": "portfolios hold more cash than the broker account"})
     unassigned = {"cash": float(max(snap.cash - assigned, D0)), "shares": unassigned_shares}
@@ -700,9 +701,11 @@ def run_account_sync(conn, broker_factory, account: dict) -> dict:
         result = sync_account(conn, broker_factory(account), account)
     except BrokerError as e:
         brokers_store.set_status(conn, account["id"], "ERROR", str(e))
+        last = store.last_sync(conn, account["id"])
         store.add_sync(conn, account["id"], 0, 0, [], str(e))
-        audit.record(conn, "BROKER_SYNC_FAILED", "BROKER_ACCOUNT", account["id"], source="SYNC", outcome="FAILED",
-                     error=str(e))
+        if not (last and last["error"]):  # once per outage, not every minute of it
+            audit.record(conn, "BROKER_SYNC_FAILED", "BROKER_ACCOUNT", account["id"], source="SYNC",
+                         outcome="FAILED", error=str(e))
         raise
     brokers_store.set_status(conn, account["id"], "CONNECTED", synced=True)
     return result

@@ -515,16 +515,18 @@ def add_sync(conn, account_id: str, orders_updated: int, fills_imported: int, mi
     return last_sync(conn, account_id)
 
 
-def last_sync(conn, account_id: str) -> dict | None:
+def last_sync(conn, account_id: str, ok_only: bool = False) -> dict | None:
     """The newest sync record of a broker account, or None.
 
     Args:
         conn: app DB connection.
         account_id: the broker account's id.
+        ok_only: skip failed syncs.
 
     Used by: orders.service.sync_account, brokers.routes.overview, portfolios.routes.summary.
     """
-    r = conn.execute("SELECT * FROM broker_syncs WHERE broker_account_id = ? ORDER BY ran_at DESC, rowid DESC LIMIT 1",
+    r = conn.execute("SELECT * FROM broker_syncs WHERE broker_account_id = ?"
+                     + (" AND error IS NULL" if ok_only else "") + " ORDER BY ran_at DESC, rowid DESC LIMIT 1",
                      (account_id,)).fetchone()
     if not r:
         return None

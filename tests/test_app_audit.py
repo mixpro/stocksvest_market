@@ -138,9 +138,11 @@ def test_broker_problems_are_logged(client, broker, settings):
     original = broker.account_snapshot
     broker.account_snapshot = lambda: (_ for _ in ()).throw(BrokerError("Alpaca unreachable", retryable=True))
     assert client.post(f"/v1/portfolios/{pf['id']}/sync", headers=KEY).status_code == 502
+    assert client.post(f"/v1/portfolios/{pf['id']}/sync", headers=KEY).status_code == 502
     broker.account_snapshot = original
-    failed = log(client, action="BROKER_SYNC_FAILED")[0]
-    assert failed["source"] == "SYNC" and "unreachable" in failed["error"] and failed["entityId"] == acct["id"]
+    failed = log(client, action="BROKER_SYNC_FAILED")
+    assert len(failed) == 1  # once per outage
+    assert failed[0]["source"] == "SYNC" and "unreachable" in failed[0]["error"] and failed[0]["entityId"] == acct["id"]
 
 
 def test_scheduled_runs_are_logged(client, settings):

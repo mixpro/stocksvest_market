@@ -235,6 +235,13 @@ def test_outside_trades_are_unassigned_and_real_gaps_are_mismatches(client, port
         ("POSITION_QUANTITY", "AAA", 10.0, 4.0)]
 
 
+def test_cent_rounding_is_not_a_cash_mismatch(client, portfolio, broker):
+    broker.cash = Decimal("9999.98")  # the portfolio holds 10000: fractional fills rounded at the broker
+    assert sync(client, portfolio)["sync"]["mismatches"] == []
+    broker.cash = Decimal("9990")
+    assert [m["kind"] for m in sync(client, portfolio)["sync"]["mismatches"]] == ["CASH"]
+
+
 def test_external_fills_are_recorded_once(client, portfolio, broker):
     from datetime import datetime, timezone
     from stocksvest_app.brokers.base import BrokerFill
